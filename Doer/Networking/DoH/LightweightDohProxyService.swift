@@ -44,10 +44,16 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         lock.lock()
         let browserReady = proxy?.isRunning == true
         lock.unlock()
+        let mode = config.isGatewayMode ? "Gateway" : "CONNECT MITM"
+        let h2 = config.h2Mitm ? " · h2" : ""
+        lock.lock()
+        let port = proxy?.proxyPort
+        lock.unlock()
+        let portText = port.map { " · :\($0)" } ?? ""
         if #available(iOS 17.0, *), browserReady {
-            return "应用内 DoH · CONNECT MITM · 浏览器"
+            return "应用内 DoH · \(mode)\(h2)\(portText) · 浏览器"
         }
-        return "应用内 DoH · CONNECT MITM"
+        return "应用内 DoH · \(mode)\(h2)\(portText)"
     }
 
     func configureFromSettings() {
@@ -76,7 +82,11 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             lastError = nil
             lock.unlock()
             resolver.updateConfig(config)
-            EncryptedDnsService.applyFromDefaults()
+            if #available(iOS 17.0, *) {
+                EncryptedDnsService.disable()
+            } else {
+                EncryptedDnsService.applyFromDefaults()
+            }
             startQueue.async { [weak self] in
                 self?.startWebViewProxyNow()
             }
@@ -108,7 +118,10 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             publishAppClients()
             return
         }
-        let newProxy = LocalConnectProxy(resolver: resolver)
+        let newProxy = LocalConnectProxy(
+            resolver: resolver,
+            config: AppSettings.dohProxyConfig(from: .standard)
+        )
         newProxy.onListening = { [weak self] _ in
             guard let self else { return }
             self.lock.lock()
@@ -162,22 +175,27 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         NWParameters.PrivacyContext.default.flushCache()
     }
 
+    func resolverCacheStats() -> DohCacheStats {
+        resolver.cacheStats()
+    }
+
     func connectionProxyDictionary(for baseURL: String) -> [AnyHashable: Any]? {
         let config = URLSessionConfiguration.ephemeral
         apply(to: config, hostURL: baseURL)
         return config.connectionProxyDictionary
     }
 
-    /// FluxDo-style HTTP CONNECT to the in-app MITM proxy for linux.do.
-    /// Other sessions keep Encrypted DNS and no proxy dictionary.
-    func apply(to sessionConfiguration: URLSessionConfiguration, hostURL: String? = nil) {
-        let shouldAttach: Bool
-        if let hostURL, let host = Self.host(from: hostURL) {
-            shouldAttach = UserDefaults.standard.bool(forKey: "dohEnabled")
-        } else {
-            shouldAttach = false
-        }
-        guard shouldAttach, let port = ensureRunning() else {
+    /// Attach the local proxy. Gateway API sessions skip CONNECT so they can
+    /// speak plaintext HTTP to 127.0.0.1 (excepted from the proxy list).
+    func apply(
+        to sessionConfiguration: URLSessionConfiguration,
+        hostURL: String? = nil,
+        preferGateway: Bool = false
+    ) {
+        let enabled = UserDefaults.standard.bool(forKey: "dohEnabled")
+        let config = AppSettings.dohProxyConfig(from: .standard)
+        let useGateway = preferGateway && config.isGatewayMode
+        guard enabled, !useGateway, let port = ensureRunning() else {
             clearProxy(on: sessionConfiguration)
             return
         }
@@ -226,8 +244,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     private func applyImageDownloaderProxy() {
         let config = SDWebImageDownloader.shared.config.sessionConfiguration
             ?? URLSessionConfiguration.default
-        // Images use Encrypted DNS, not SOCKS. Mixing both aborts CFNetwork.
-        clearProxy(on: config)
+        apply(to: config, hostURL: "https://linux.do", preferGateway: false)
         SDWebImageDownloader.shared.config.sessionConfiguration = config
     }
 

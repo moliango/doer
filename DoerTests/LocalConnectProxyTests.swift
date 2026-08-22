@@ -1,3 +1,4 @@
+import Alamofire
 import XCTest
 @testable import Doer
 
@@ -35,6 +36,20 @@ final class LocalConnectProxyTests: XCTestCase {
         XCTAssertTrue(LocalConnectProxy.shouldMITM("linux.do"))
         XCTAssertTrue(LocalConnectProxy.shouldMITM("example.com"))
         XCTAssertFalse(LocalConnectProxy.shouldMITM("challenges.cloudflare.com"))
+    }
+
+    func testGatewayInterceptorNoopsWithoutRunningProxy() {
+        let interceptor = DohGatewayInterceptor()
+        var request = URLRequest(url: URL(string: "https://linux.do/t/1.json")!)
+        request.setValue("keep-me", forHTTPHeaderField: "Cookie")
+        let expectation = expectation(description: "adapt")
+        interceptor.adapt(request, for: Session()) { result in
+            let adapted = try? result.get()
+            XCTAssertEqual(adapted?.url?.host, "linux.do")
+            XCTAssertEqual(adapted?.value(forHTTPHeaderField: "Cookie"), "keep-me")
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 1)
     }
 
     func testSocks5GreetingAndDomainConnect() throws {

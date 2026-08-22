@@ -1,4 +1,5 @@
 import Alamofire
+import DohProxy
 import Foundation
 import UniformTypeIdentifiers
 
@@ -76,13 +77,22 @@ final class DiscourseAPI {
         config.waitsForConnectivity = false
         config.timeoutIntervalForRequest = 20
         config.timeoutIntervalForResource = 45
-        LightweightDohProxyService.shared.apply(to: config, hostURL: baseURL)
-        let trustManager: ServerTrustManager? = UserDefaults.standard.bool(forKey: "dohEnabled")
+        LightweightDohProxyService.shared.apply(
+            to: config,
+            hostURL: baseURL,
+            preferGateway: true
+        )
+        let doh = AppSettings.dohProxyConfig(from: .standard)
+        let trustManager: ServerTrustManager? = UserDefaults.standard.bool(forKey: "dohEnabled") && !doh.isGatewayMode
             ? FluxDoMitmTrustManager.make()
             : nil
+        let sessionInterceptor = Interceptor(
+            adapters: [interceptor, DohGatewayInterceptor()],
+            retriers: [interceptor]
+        )
         return Session(
             configuration: config,
-            interceptor: interceptor,
+            interceptor: sessionInterceptor,
             serverTrustManager: trustManager
         )
     }

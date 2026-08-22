@@ -22,6 +22,7 @@ let package = Package(
             name: "DohProxy",
             dependencies: [
                 .product(name: "NIO", package: "swift-nio"),
+                .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
                 .product(name: "NIOHTTP2", package: "swift-nio-http2"),
                 .product(name: "NIOTransportServices", package: "swift-nio-transport-services"),

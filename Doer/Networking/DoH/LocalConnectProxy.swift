@@ -1,3 +1,4 @@
+import DohProxy
 import Foundation
 import Network
 
@@ -5,6 +6,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
     private let queue = DispatchQueue(label: "doer.doh.connect-proxy")
     private let stateLock = NSLock()
     private let resolver: DohResolver
+    private let config: DohProxyConfig
     private let requestedPort: UInt16
     private var listener: NWListener?
     private var boundPort: UInt16?
@@ -15,8 +17,9 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
     var onListening: ((UInt16) -> Void)?
     var onFailed: ((Error) -> Void)?
 
-    init(resolver: DohResolver, port: UInt16 = 0) {
+    init(resolver: DohResolver, config: DohProxyConfig, port: UInt16 = 0) {
         self.resolver = resolver
+        self.config = config
         self.requestedPort = port
     }
 
@@ -223,6 +226,11 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
             let headerData = nextBuffer.subdata(in: nextBuffer.startIndex ..< headerRange.upperBound)
             let remainder = nextBuffer.subdata(in: headerRange.upperBound ..< nextBuffer.endIndex)
             do {
+                if let gateway = try DohGatewayHTTPRequest.parse(nextBuffer) {
+                    DohDebugLog.record("Gateway HTTP \(gateway.host):\(gateway.port)")
+                    openGateway(gateway, client: client)
+                    return
+                }
                 let request = try DohConnectRequest.parse(headerData)
                 guard request.port == 443 else {
                     reject(client, reason: "unsupported target \(request.host):\(request.port)")
@@ -323,7 +331,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         let target = addresses[addressIndex]
         let host = Self.endpointHost(from: target)
         let parameters = useMITM
-            ? Self.tlsTCPParameters(serverName: hostname)
+            ? tlsTCPParameters(serverName: hostname)
             : Self.streamTCPParameters()
         let upstream = NWConnection(host: host, port: port, using: parameters)
         let upstreamId = ObjectIdentifier(upstream)
@@ -441,7 +449,8 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
             bridge.preload(leftover)
         }
         DohDebugLog.record("MITM CONNECT \(hostname)")
-        bridge.start(identity: identity) { [weak self, weak client, weak upstream] ok in
+        let alpn = H2MitmALPN.protocols(h2Enabled: config.h2Mitm)
+        bridge.start(identity: identity, alpn: alpn) { [weak self, weak client, weak upstream] ok in
             guard let self, !ok else { return }
             self.queue.async {
                 if let client {
@@ -747,12 +756,64 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         return NWParameters(tls: nil, tcp: tcp)
     }
 
-    private static func tlsTCPParameters(serverName: String) -> NWParameters {
+    private func openGateway(_ request: DohGatewayHTTPRequest, client: NWConnection) {
+        resolver.resolve(host: request.host) { [weak self, weak client] result in
+            guard let self, let client else { return }
+            self.queue.async {
+                switch result {
+                case .failure(let error):
+                    DohDebugLog.record("Gateway resolve failed \(request.host): \(error)")
+                    self.reject(client, reason: "resolve failed")
+                case .success(let answer):
+                    let addresses = Self.preferredUpstreamAddresses(answer.addresses)
+                    guard let first = addresses.first, let port = NWEndpoint.Port(rawValue: request.port) else {
+                        self.reject(client, reason: "empty resolved address")
+                        return
+                    }
+                    let upstream = NWConnection(
+                        host: Self.endpointHost(from: first),
+                        port: port,
+                        using: self.tlsTCPParameters(serverName: request.host)
+                    )
+                    self.connections[ObjectIdentifier(upstream)] = upstream
+                    upstream.stateUpdateHandler = { [weak self, weak client, weak upstream] state in
+                        guard let self, let client, let upstream else { return }
+                        if case .ready = state {
+                            self.sendStreaming(upstream, content: request.originForm) { error in
+                                if error != nil {
+                                    self.close(client)
+                                    self.close(upstream)
+                                    return
+                                }
+                                self.startByteTunnel(
+                                    client: client,
+                                    upstream: upstream,
+                                    bufferedClientData: Data(),
+                                    addresses: addresses,
+                                    addressIndex: 0,
+                                    hostname: request.host,
+                                    readyReply: Data()
+                                )
+                            }
+                        }
+                    }
+                    upstream.start(queue: self.queue)
+                }
+            }
+        }
+    }
+
+    private func tlsTCPParameters(serverName: String) -> NWParameters {
         let tcp = NWProtocolTCP.Options()
         tcp.noDelay = true
         let tls = NWProtocolTLS.Options()
         serverName.withCString { pointer in
             sec_protocol_options_set_tls_server_name(tls.securityProtocolOptions, pointer)
+        }
+        for proto in H2MitmALPN.protocols(h2Enabled: config.h2Mitm) {
+            proto.withCString { pointer in
+                sec_protocol_options_add_tls_application_protocol(tls.securityProtocolOptions, pointer)
+            }
         }
         return NWParameters(tls: tls, tcp: tcp)
     }

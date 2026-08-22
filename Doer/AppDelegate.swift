@@ -21,6 +21,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         BackgroundNotificationRefreshService.shared.scheduleIfNeeded()
         UNUserNotificationCenter.current().delegate = self
         APNsPushRegistration.register()
+        MitmTrust.installWKWebViewHook()
         LightweightDohProxyService.shared.configureFromSettings()
         AvatarImageLoader.configureGlobalImageLoading()
         // Only wipe caches when the user explicitly enabled "clear on launch".

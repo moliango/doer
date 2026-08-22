@@ -22,6 +22,19 @@ nonisolated final class MitmCertificateAuthority: @unchecked Sendable {
         return caCertificate
     }
 
+    func derMaterial(for host: String) -> (certificate: Data, rsaPrivateKey: Data)? {
+        guard let identity = identity(for: host) else { return nil }
+        var certificate: SecCertificate?
+        SecIdentityCopyCertificate(identity, &certificate)
+        guard let certificate else { return nil }
+        var key: SecKey?
+        SecIdentityCopyPrivateKey(identity, &key)
+        guard let key, let keyDER = SecKeyCopyExternalRepresentation(key, nil) as Data? else {
+            return nil
+        }
+        return (SecCertificateCopyData(certificate) as Data, keyDER)
+    }
+
     func identity(for host: String) -> SecIdentity? {
         let normalized = host.lowercased()
         lock.lock()
