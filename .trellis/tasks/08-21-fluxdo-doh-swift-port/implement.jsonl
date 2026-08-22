@@ -1,4 +1,9 @@
-{"file": ".trellis/spec/frontend/fluxdo-porting.md", "reason": "Behavior from FluxDo by contract; native cards; secrets in Keychain; ponytail deviations."}
-{"file": ".trellis/spec/frontend/build-and-dependencies.md", "reason": "Tuist regenerate after new Swift files; SPM packages via Tuist/Package.swift .external like Alamofire; compile-only verification."}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Proxy config flows Settings → facade → URLSession/WKWebView/images; trust and DNS must stay consistent across those layers."}
+{"file": ".trellis/spec/frontend/fluxdo-porting.md", "reason": "Behavior from FluxDo by contract; native cards; secrets in Keychain. This task requires ECH/Gateway/MITM parity, not ponytail cuts."}
+{"file": ".trellis/spec/frontend/build-and-dependencies.md", "reason": "Tuist regenerate after new Swift files; SPM via Tuist/Package.swift .external; rustls FFI must not duplicate package graphs; compile-only verification."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Proxy config flows Settings → facade → URLSession/WKWebView/images; Gateway rewrite must not break Cookie/Host; trust and DNS stay consistent."}
 {"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse LocalConnectProxy, MitmCertificateAuthority, Socks5Handshake, DohConnectRequest, LightweightDohProxyService call sites."}
+{"file": "/Users/naine/Documents/AndroidWorkspace/fluxdo/docs/doh-proxy-swift-prd.md", "reason": "FluxDo Apple ECH+MITM hard requirements; system auto ECH is not acceptable."}
+{"file": "/Users/naine/Documents/AndroidWorkspace/fluxdo/lib/services/network/doh/network_settings_service.dart", "reason": "Defaults, cache, ECH server, gateway, h2, server list, apply/restart semantics."}
+{"file": "/Users/naine/Documents/AndroidWorkspace/fluxdo/lib/services/network/doh_proxy/doh_proxy_ffi.dart", "reason": "FFI config JSON contract: gateway_mode, mitm_connect, h2_mitm, lookupEchConfig."}
+{"file": "/Users/naine/Documents/AndroidWorkspace/fluxdo/lib/services/network/adapters/platform_adapter.dart", "reason": "Gateway URL rewrite that keeps interceptors on the original https URL."}
+{"file": "/Users/naine/Documents/AndroidWorkspace/fluxdo/ios/Runner/DohProxyCertHandler.swift", "reason": "Native WKWebView trust swizzle to copy for Doer MitmTrust."}

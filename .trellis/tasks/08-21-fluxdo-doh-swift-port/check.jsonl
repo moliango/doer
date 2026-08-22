@@ -1,3 +1,4 @@
-{"file": ".trellis/spec/frontend/fluxdo-porting.md", "reason": "Confirm FluxDo behavior was ported, UI stayed native, ECH/Gateway deviations are documented with ponytail."}
-{"file": ".trellis/spec/frontend/build-and-dependencies.md", "reason": "New DoH files and NIO packages must be in the generated project; no duplicate SPM graphs."}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "API, WebView, images, and settings must share one CONNECT path and clear it together when DoH is off."}
+{"file": ".trellis/spec/frontend/fluxdo-porting.md", "reason": "Confirm FluxDo behavior was ported 1:1, UI stayed native, only platform ponytails remain."}
+{"file": ".trellis/spec/frontend/build-and-dependencies.md", "reason": "New DoH files, NIO packages, and rustls FFI must be in the generated project; no duplicate SPM graphs."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "API, WebView, images, and settings must share one proxy; Gateway cookies stay on the original host; DoH off clears everything."}
+{"file": "/Users/naine/Documents/AndroidWorkspace/fluxdo/docs/doh-proxy-swift-prd.md", "reason": "ECH injected (not system auto), MITM default, CF tunnel, h2 real, upstream complete."}
