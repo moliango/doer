@@ -21,7 +21,7 @@ nonisolated enum EncryptedDnsService {
         guard let url = URL(string: trimmed), url.scheme?.lowercased() == "https" else {
             return nil
         }
-        let provider = AppSettings.DoHProvider(rawValue: providerRaw ?? AppSettings.DoHProvider.alidns.rawValue)
+        let provider = AppSettings.DoHProvider(rawValue: providerRaw ?? AppSettings.DoHProvider.dnspod.rawValue)
             ?? .alidns
         var ips = provider.bootstrapIPs
         if ips.isEmpty, let host = url.host, IPv4Address(host) != nil || IPv6Address(host) != nil {

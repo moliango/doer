@@ -1,3 +1,4 @@
+import DohProxy
 import Foundation
 import Network
 import SDWebImage
@@ -17,15 +18,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     private init() {}
 
     var currentSignature: String {
-        let defaults = UserDefaults.standard
-        let enabled = defaults.bool(forKey: "dohEnabled")
-        let provider = defaults.object(forKey: "dohProvider") as? Int ?? AppSettings.DoHProvider.alidns.rawValue
-        let url = DohProviderConfiguration.currentFromDefaults().url
-        return [
-            enabled ? "on" : "off",
-            "\(provider)",
-            url,
-        ].joined(separator: "|")
+        AppSettings.dohProxyConfig(from: .standard).signature
     }
 
     var sessionConfigurationSignature: String {

@@ -701,8 +701,8 @@ struct DohProviderConfiguration {
     static func currentFromDefaults() -> DohProviderConfiguration {
         let defaults = UserDefaults.standard
         let raw = defaults.object(forKey: "dohProvider") as? Int
-        let provider = AppSettings.DoHProvider(rawValue: raw ?? AppSettings.DoHProvider.alidns.rawValue)
-            ?? .alidns
+        let provider = AppSettings.DoHProvider(rawValue: raw ?? AppSettings.DoHProvider.dnspod.rawValue)
+            ?? .dnspod
         let url: String
         if provider == .custom {
             url = defaults.string(forKey: "dohCustomURL") ?? ""

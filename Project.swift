@@ -10,6 +10,7 @@ let project = Project(
     ),
     packages: [
         .local(path: "Packages/CookedHTML"),
+        .local(path: "Packages/DohProxy"),
         .remote(
             url: "https://github.com/scinfu/SwiftSoup.git",
             requirement: .upToNextMajor(from: "2.7.0")
@@ -54,6 +55,7 @@ let project = Project(
                 .external(name: "SDWebImageSVGCoder"),
                 .external(name: "Lightbox"),
                 .package(product: "CookedHTML"),
+                .package(product: "DohProxy"),
                 .package(product: "SwiftSoup"),
                 .target(name: "DoerShare"),
                 .target(name: "DoerWidget"),
