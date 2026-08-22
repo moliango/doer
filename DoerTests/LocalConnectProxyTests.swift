@@ -33,8 +33,8 @@ final class LocalConnectProxyTests: XCTestCase {
 
     func testMITMSkipsCloudflareChallengeHost() {
         XCTAssertTrue(LocalConnectProxy.shouldMITM("linux.do"))
+        XCTAssertTrue(LocalConnectProxy.shouldMITM("example.com"))
         XCTAssertFalse(LocalConnectProxy.shouldMITM("challenges.cloudflare.com"))
-        XCTAssertFalse(LocalConnectProxy.shouldMITM("example.com"))
     }
 
     func testSocks5GreetingAndDomainConnect() throws {

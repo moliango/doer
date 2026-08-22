@@ -272,22 +272,6 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         }
 
         let useMITM = Self.shouldMITM(host)
-        // WKWebView may send every HTTPS host. Only linux.do uses DoH IPs.
-        guard DohResolver.isAllowedHost(host) else {
-            DohDebugLog.record("Proxy passthrough \(host):\(port) (system DNS)")
-            connectUpstream(
-                addresses: [host],
-                port: upstreamPort,
-                addressIndex: 0,
-                client: client,
-                bufferedClientData: bufferedClientData,
-                hostname: host,
-                readyReply: readyReply,
-                useMITM: false
-            )
-            return
-        }
-
         resolver.resolve(host: host) { [weak self, weak client] result in
             guard let self, let client else { return }
             self.queue.async {
@@ -774,7 +758,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
     }
 
     static func shouldMITM(_ host: String) -> Bool {
-        DohResolver.isAllowedHost(host) && !MitmCertificateAuthority.isCloudflareChallengeHost(host)
+        !MitmCertificateAuthority.isCloudflareChallengeHost(host)
     }
 
     private static func hexPrefix(_ data: Data, limit: Int = 16) -> String {

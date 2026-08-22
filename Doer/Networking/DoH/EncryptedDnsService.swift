@@ -22,7 +22,7 @@ nonisolated enum EncryptedDnsService {
             return nil
         }
         let provider = AppSettings.DoHProvider(rawValue: providerRaw ?? AppSettings.DoHProvider.dnspod.rawValue)
-            ?? .alidns
+            ?? .dnspod
         var ips = provider.bootstrapIPs
         if ips.isEmpty, let host = url.host, IPv4Address(host) != nil || IPv6Address(host) != nil {
             ips = [host]

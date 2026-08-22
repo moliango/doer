@@ -37,8 +37,9 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         if let activeError {
             return "启动失败：\(activeError.localizedDescription)"
         }
-        guard EncryptedDnsService.spec(fromDefaults: .standard) != nil else {
-            return "未启动"
+        let config = AppSettings.dohProxyConfig(from: .standard)
+        guard config.bootstrapReady else {
+            return "启动失败：DoH 服务器没有 bootstrap IP"
         }
         lock.lock()
         let browserReady = proxy?.isRunning == true
@@ -62,11 +63,10 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         lock.unlock()
 
         if shouldEnable {
-            if EncryptedDnsService.spec(fromDefaults: .standard) == nil {
+            let config = AppSettings.dohProxyConfig(from: .standard)
+            if !config.bootstrapReady {
                 lock.lock()
-                lastError = DohResolverError.invalidProviderURL(
-                    DohProviderConfiguration.currentFromDefaults().url
-                )
+                lastError = DohProxyError.bootstrapUnavailable(config.serverURL)
                 lock.unlock()
                 EncryptedDnsService.disable()
                 stop()
@@ -75,6 +75,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             lock.lock()
             lastError = nil
             lock.unlock()
+            resolver.updateConfig(config)
             EncryptedDnsService.applyFromDefaults()
             startQueue.async { [weak self] in
                 self?.startWebViewProxyNow()
@@ -172,7 +173,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     func apply(to sessionConfiguration: URLSessionConfiguration, hostURL: String? = nil) {
         let shouldAttach: Bool
         if let hostURL, let host = Self.host(from: hostURL) {
-            shouldAttach = UserDefaults.standard.bool(forKey: "dohEnabled") && DohResolver.isAllowedHost(host)
+            shouldAttach = UserDefaults.standard.bool(forKey: "dohEnabled")
         } else {
             shouldAttach = false
         }
