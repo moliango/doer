@@ -90,4 +90,20 @@ public enum DohServerCatalog: Sendable {
         if trimmed.contains("://") { return trimmed }
         return "https://\(trimmed)"
     }
+
+    /// Bootstrap IPs when the user did not type any. Cloudflare Gateway
+    /// hostnames share Cloudflare anycast, so 1.1.1.1 can reach them.
+    public static func inferredBootstrapIPs(for urlString: String) -> [String] {
+        guard let host = URL(string: normalize(urlString))?.host?.lowercased() else { return [] }
+        if host.hasSuffix("cloudflare-gateway.com") {
+            return ["162.159.36.1", "162.159.46.1"]
+        }
+        if host == "cloudflare-dns.com" || host.hasSuffix(".cloudflare-dns.com") {
+            return cloudflare.bootstrapIPs
+        }
+        if let known = builtIn(url: urlString), !known.bootstrapIPs.isEmpty {
+            return known.bootstrapIPs
+        }
+        return []
+    }
 }

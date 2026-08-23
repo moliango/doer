@@ -28,7 +28,7 @@ public protocol DohOriginTLS: Sendable {
     ) async throws
 }
 
-/// Placeholder until rustls-ffi is linked. Lookup is real; injecting ECH is not.
+/// Lookup is DNS HTTPS; origin inject is BoringSSL `SSL_set1_ech_config_list`.
 public struct DohEchClient: Sendable {
     public init() {}
 

@@ -82,8 +82,8 @@ final class DiscourseAPI {
             hostURL: baseURL,
             preferGateway: true
         )
-        let doh = AppSettings.dohProxyConfig(from: .standard)
-        let trustManager: ServerTrustManager? = UserDefaults.standard.bool(forKey: "dohEnabled") && !doh.isGatewayMode
+        let trustManager: ServerTrustManager? = UserDefaults.standard.bool(forKey: "dohEnabled")
+            && LocalConnectProxy.shouldMITM(URL(string: baseURL)?.host ?? "")
             ? FluxDoMitmTrustManager.make()
             : nil
         let sessionInterceptor = Interceptor(

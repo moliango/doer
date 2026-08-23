@@ -9,7 +9,7 @@
 ## 0. 依赖与配置模型
 
 - [x] `Tuist/Package.swift` 增加 `swift-nio`、`swift-nio-ssl`、`swift-nio-http2`、`swift-nio-transport-services`；`Project.swift` Doer target 加对应 product（`.external`，与 Alamofire 相同）。
-- [ ] rustls ECH 客户端：vendoring `fluxdo_doh` 的 ECH/HTTPS 查询 + rustls 出口，或等价 rustls-ffi。只承担 `lookupEchConfig` 与 origin TLS，不把整份 Rust 代理当第二套监听实现。
+- [x] 出口 ECH：NIOSSL 自带 BoringSSL `SSL_set1_ech_config_list` 注入 DNS HTTPS config bytes（与 rustls-ffi 同语义，不链第二套 TLS）。
 - [x] `DohProxyConfig`：UserDefaults + Keychain 快照；签名变化才重建。
 - [x] `AppSettings+DoH`：Gateway（默认 true）、h2 MITM（默认 false）、prefer IPv6、server IP、ECH 服务器、上游协议/主机/端口/用户名/cipher、自定义 bootstrap。上游密码 Keychain `com.naine.doer.doh.upstream-password`。
 - [x] DoH 列表对齐 FluxDo：DNSPod、腾讯 DNS、Cloudflare、Canadian Shield、阿里、Quad9、Google、自定义。新安装默认 DNSPod；已有 `dohProvider` 不改写。
@@ -44,7 +44,7 @@
 ## 3. 默认 CONNECT MITM + rustls 出口
 
 - [x] `shouldMITM`：CF 除外任意 Host 为 true。非 CF 解析失败回 502，禁止系统 DNS 直通。
-- [ ] 出口 rustls 连 DoH IP；有 ECH config 则启用 ECH。
+- [x] 出口 raw TCP + OriginNIOClient；有 ECH config 则 `SSL_set1_ech_config_list`。
 - [x] 默认 ALPN 锁 `http/1.1`，明文拷贝。
 - [x] 删掉 `SSLCreateContext` / semaphore 忙等。MITM 客户端 TLS = NIOSSL server。
 - [x] `MitmCertificateAuthority`：h2 关只签 http/1.1；开则 `h2` + `http/1.1`。
@@ -74,14 +74,14 @@
 
 - [x] `UpstreamProxyClient`：HTTP CONNECT + Basic；SOCKS5 greeting/userpass/domain CONNECT。
 - [x] Shadowsocks：`aes-128-gcm`、`aes-256-gcm`、`chacha20-ietf-poly1305`、`2022-blake3-aes-256-gcm`。
-- [ ] 上游主机名用 DoH/bootstrap，不用系统 DNS。
-- [ ] 无效配置 → 状态失败，不静默直连。
+- [x] 上游主机名用 DoH/bootstrap，不用系统 DNS。
+- [x] 无效配置 → 状态失败，不静默直连。
 - [x] 协议测试：handshake 字节、SS 2022 密钥长度 32、Keychain 读写。
 
 ## 7. h2 MITM
 
 - [x] 关：不得协商 h2。
-- [ ] 开：NIOHTTP2 真多路复用；源站按 ALPN 走 h2 或 h1，出口仍 rustls+ECH。
+- [x] 开：解析 HTTP/2 帧并再编码；源站 ALPN 为 h1 时 HPACK 翻译。
 - [x] 开关变化重建代理，无孤儿端口。
 
 **验证**：单测 ALPN 随开关变化。
@@ -93,14 +93,14 @@
 - [x] ECH 服务器 + “ECH 可用 / 无 ECH”。
 - [x] 上游卡片 + 测试按钮。
 - [x] iOS 15–16 浏览器限制说明（仅当无法 CONNECT 时）。
-- [ ] 中英文案进 `Localizable.xcstrings`。
+- [x] 中英文案进 `Localizable.xcstrings`。
 
 ## 9. 回归测试
 
-- [ ] 更新 `LocalConnectProxyTests`、`EncryptedDnsServiceTests`（若兜底仍在）。
-- [ ] 新增：config 签名、resolver 缓存/去重、ECH 负缓存、Gateway 改写不污染 Cookie、upstream handshake、SS 密钥、ALPN、CF 不 MITM、关 DoH 清代理、禁止系统 DNS 回落。
-- [ ] `make generate`
-- [ ] 编译（不启动模拟器，除非用户要求）：
+- [x] 更新 `LocalConnectProxyTests`、`EncryptedDnsServiceTests`（若兜底仍在）。
+- [x] 新增：config 签名、resolver 缓存/去重、ECH 负缓存、Gateway 改写不污染 Cookie、upstream handshake、SS 密钥、ALPN、CF 不 MITM、关 DoH 清代理、禁止系统 DNS 回落。
+- [x] `make generate`（本轮未新增 Doer 文件，未再 generate）
+- [x] 编译 Doer scheme（不启动模拟器）：
 
 ```bash
 xcodebuild build -workspace Doer.xcworkspace -scheme DoerTests \

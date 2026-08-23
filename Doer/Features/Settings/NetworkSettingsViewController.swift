@@ -23,19 +23,13 @@ final class NetworkSettingsViewController: ObservableViewController {
     }()
 
     private let dohToggleRow = ReadingToggleRowView()
-    private let cloudflareRow = DataManagementActionRowView()
-    private let providerRow = DataManagementActionRowView()
-    private let customURLRow = DataManagementActionRowView()
     private let statusRow = DataManagementActionRowView()
-    private let gatewayRow = ReadingToggleRowView()
-    private let h2Row = ReadingToggleRowView()
-    private let ipv6Row = ReadingToggleRowView()
-    private let cacheRow = DataManagementActionRowView()
-    private let echRow = DataManagementActionRowView()
-    private let serverIPRow = DataManagementActionRowView()
-    private let upstreamRow = DataManagementActionRowView()
+    private let testRow = DataManagementActionRowView()
+    private let moreRow = DataManagementActionRowView()
+    private let cloudflareRow = DataManagementActionRowView()
     private let avatarLoadingCard = AvatarLoadingProfileCardView()
-    private let debugLogRow = DataManagementActionRowView()
+    private var lastProbe: LightweightDohProxyService.ProbeResult?
+    private var isProbing = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -64,27 +58,8 @@ final class NetworkSettingsViewController: ObservableViewController {
             refreshDataViews()
         }
         cloudflareRow.addTarget(self, action: #selector(openCloudflare), for: .touchUpInside)
-        providerRow.addTarget(self, action: #selector(pickProvider), for: .touchUpInside)
-        customURLRow.addTarget(self, action: #selector(editCustomURL), for: .touchUpInside)
-        cacheRow.addTarget(self, action: #selector(clearDNSCache), for: .touchUpInside)
-        serverIPRow.addTarget(self, action: #selector(editServerIP), for: .touchUpInside)
-        upstreamRow.addTarget(self, action: #selector(editUpstream), for: .touchUpInside)
-        debugLogRow.addTarget(self, action: #selector(openDebugLog), for: .touchUpInside)
-        gatewayRow.onValueChanged = { [weak self] isOn in
-            self?.settings.dohGatewayEnabled = isOn
-            LightweightDohProxyService.shared.configureFromSettings()
-            self?.refreshDataViews()
-        }
-        h2Row.onValueChanged = { [weak self] isOn in
-            self?.settings.dohH2Mitm = isOn
-            LightweightDohProxyService.shared.configureFromSettings()
-            self?.refreshDataViews()
-        }
-        ipv6Row.onValueChanged = { [weak self] isOn in
-            self?.settings.dohPreferIPv6 = isOn
-            LightweightDohProxyService.shared.configureFromSettings()
-            self?.refreshDataViews()
-        }
+        testRow.addTarget(self, action: #selector(testDoH), for: .touchUpInside)
+        moreRow.addTarget(self, action: #selector(openDoHDetail), for: .touchUpInside)
         avatarLoadingCard.onValueChanged = { [weak self] profile in
             guard let self else { return }
             settings.avatarLoadingProfile = profile
@@ -115,16 +90,14 @@ final class NetworkSettingsViewController: ObservableViewController {
             $0.removeFromSuperview()
         }
 
-        let proxyStack = UIStackView(arrangedSubviews: [
-            dohToggleRow, providerRow, customURLRow, statusRow,
-            gatewayRow, h2Row, ipv6Row, echRow, cacheRow, serverIPRow, upstreamRow,
-        ])
-        proxyStack.axis = .vertical
-        proxyStack.spacing = 12
+        let dohRows: [UIView] = [dohToggleRow, statusRow, testRow, moreRow]
+        let dohStack = UIStackView(arrangedSubviews: dohRows)
+        dohStack.axis = .vertical
+        dohStack.spacing = 12
         contentStack.addArrangedSubview(makeSection(
-            title: String(localized: "settings.network.section.proxy", defaultValue: "网络代理"),
+            title: String(localized: "settings.network.section.doh", defaultValue: "DNS over HTTPS"),
             symbolName: "lock.shield",
-            body: proxyStack
+            body: dohStack
         ))
 
         let auxStack = UIStackView(arrangedSubviews: [cloudflareRow, avatarLoadingCard])
@@ -134,15 +107,6 @@ final class NetworkSettingsViewController: ObservableViewController {
             title: String(localized: "settings.network.section.auxiliary", defaultValue: "辅助功能"),
             symbolName: "slider.horizontal.3",
             body: auxStack
-        ))
-
-        let debugStack = UIStackView(arrangedSubviews: [debugLogRow])
-        debugStack.axis = .vertical
-        debugStack.spacing = 12
-        contentStack.addArrangedSubview(makeSection(
-            title: String(localized: "settings.network.section.debug", defaultValue: "调试"),
-            symbolName: "ant.fill",
-            body: debugStack
         ))
     }
 
@@ -180,107 +144,49 @@ final class NetworkSettingsViewController: ObservableViewController {
             backgroundColor: card
         )
 
-        let customDetail = settings.dohServerURL.isEmpty
-            ? String(localized: "settings.not_set")
-            : settings.dohServerURL
-        providerRow.configure(
-            title: String(localized: "settings.network.provider"),
-            subtitle: settings.dohProvider.title,
-            symbolName: "server.rack",
-            tintColor: accent,
-            backgroundColor: card
-        )
-        customURLRow.configure(
-            title: String(localized: "settings.network.custom_url"),
-            subtitle: customDetail,
-            symbolName: "link",
-            tintColor: accent,
-            backgroundColor: card
-        )
         statusRow.configure(
-            title: String(localized: "settings.network.doh_status", defaultValue: "DoH 状态"),
-            subtitle: LightweightDohProxyService.shared.statusDescription,
-            symbolName: "waveform.path.ecg",
+            title: String(localized: "settings.network.doh_status", defaultValue: "状态"),
+            subtitle: LightweightDohProxyService.shared.statusDescription
+                + " · "
+                + settings.dohProvider.title,
+            symbolName: "checkmark.circle",
             tintColor: accent,
             backgroundColor: card
         )
-        // Status is informational; don't look tappable.
         statusRow.isUserInteractionEnabled = false
         statusRow.alpha = 0.92
 
-        gatewayRow.configure(
-            title: String(localized: "settings.network.gateway", defaultValue: "Gateway 反代"),
-            subtitle: String(localized: "settings.network.gateway.subtitle", defaultValue: "API 走 127.0.0.1 明文，Cookie 仍用原域名"),
-            symbolName: "arrow.triangle.swap",
-            isOn: settings.dohGatewayEnabled,
-            accentColor: accent,
-            backgroundColor: card
-        )
-        h2Row.configure(
-            title: String(localized: "settings.network.h2", defaultValue: "h2 MITM"),
-            subtitle: String(localized: "settings.network.h2.subtitle", defaultValue: "关闭锁 HTTP/1.1，打开协商 HTTP/2"),
-            symbolName: "point.3.connected.trianglepath.dotted",
-            isOn: settings.dohH2Mitm,
-            accentColor: accent,
-            backgroundColor: card
-        )
-        ipv6Row.configure(
-            title: String(localized: "settings.network.ipv6", defaultValue: "IPv6 优先"),
-            subtitle: String(localized: "settings.network.ipv6.subtitle", defaultValue: "DoH bootstrap 与解析优先 AAAA"),
-            symbolName: "network",
-            isOn: settings.dohPreferIPv6,
-            accentColor: accent,
-            backgroundColor: card
-        )
-        let stats = LightweightDohProxyService.shared.resolverCacheStats()
-        cacheRow.configure(
-            title: String(localized: "settings.network.dns_cache", defaultValue: "DNS 缓存"),
-            subtitle: "\(stats.hostEntries) · "
-                + String(localized: "settings.network.dns_cache.clear", defaultValue: "点按清空"),
-            symbolName: "internaldrive",
-            tintColor: accent,
-            backgroundColor: card
-        )
-        echRow.configure(
-            title: String(localized: "settings.network.ech", defaultValue: "ECH"),
-            subtitle: stats.echAvailable > 0
-                ? String(localized: "settings.network.ech.on", defaultValue: "已解析到 ECH 配置")
-                : String(localized: "settings.network.ech.off", defaultValue: "无 ECH"),
-            symbolName: "eye.slash",
-            tintColor: accent,
-            backgroundColor: card
-        )
-        echRow.isUserInteractionEnabled = false
-        serverIPRow.configure(
-            title: String(localized: "settings.network.server_ip", defaultValue: "固定 server IP"),
-            subtitle: settings.dohServerIP.isEmpty
-                ? String(localized: "settings.not_set")
-                : settings.dohServerIP,
-            symbolName: "number",
-            tintColor: accent,
-            backgroundColor: card
-        )
-        let upstream = settings.dohUpstreamHost.isEmpty
-            ? String(localized: "settings.not_set")
-            : "\(settings.dohUpstreamProtocol) \(settings.dohUpstreamHost):\(settings.dohUpstreamPort)"
-        upstreamRow.configure(
-            title: String(localized: "settings.network.upstream", defaultValue: "上游代理"),
-            subtitle: upstream,
-            symbolName: "point.topleft.down.to.point.bottomright.curvepath",
-            tintColor: accent,
-            backgroundColor: card
-        )
-        if #unavailable(iOS 17.0) {
-            statusRow.configure(
-                title: String(localized: "settings.network.doh_status", defaultValue: "DoH 状态"),
-                subtitle: LightweightDohProxyService.shared.statusDescription
-                    + " · "
-                    + String(localized: "settings.network.ios15.webview", defaultValue: "iOS 15–16 浏览器无 CONNECT MITM"),
-                symbolName: "waveform.path.ecg",
-                tintColor: accent,
-                backgroundColor: card
+        let testSubtitle: String
+        if isProbing {
+            testSubtitle = String(localized: "settings.network.doh_test.running", defaultValue: "测试中…")
+        } else if let lastProbe {
+            testSubtitle = lastProbe.subtitle
+        } else {
+            testSubtitle = String(
+                localized: "settings.network.doh_test.idle",
+                defaultValue: "解析 linux.do，确认当前服务器能用"
             )
         }
+        testRow.configure(
+            title: String(localized: "settings.network.doh_test", defaultValue: "测试 DoH"),
+            subtitle: testSubtitle,
+            symbolName: "speedometer",
+            tintColor: accent,
+            backgroundColor: card
+        )
+        testRow.isUserInteractionEnabled = !isProbing
+        testRow.alpha = isProbing ? 0.7 : 1
+
+        moreRow.configure(
+            title: String(localized: "settings.network.more", defaultValue: "更多设置"),
+            subtitle: String(
+                localized: "settings.network.more.subtitle",
+                defaultValue: "服务器、缓存与高级选项"
+            ),
+            symbolName: "slider.horizontal.3",
+            tintColor: accent,
+            backgroundColor: card
+        )
 
         let hasClearance = URL(string: ForumInstance.linuxDoBaseURL)
             .map { WebCookieStore.shared.hasCookie(named: "cf_clearance", for: $0) } ?? false
@@ -301,16 +207,6 @@ final class NetworkSettingsViewController: ObservableViewController {
             accentColor: accent,
             backgroundColor: card
         )
-        debugLogRow.configure(
-            title: String(localized: "settings.network.debug_log", defaultValue: "调试日志"),
-            subtitle: String(
-                localized: "settings.network.debug_log.subtitle",
-                defaultValue: "查看并复制最近 200 行"
-            ),
-            symbolName: "doc.text.magnifyingglass",
-            tintColor: accent,
-            backgroundColor: card
-        )
     }
 
     @objc private func openCloudflare() {
@@ -329,105 +225,20 @@ final class NetworkSettingsViewController: ObservableViewController {
         }
     }
 
-    @objc private func pickProvider() {
-        let alert = UIAlertController(
-            title: String(localized: "settings.network.provider"),
-            message: nil,
-            preferredStyle: .actionSheet
-        )
-        for provider in AppSettings.DoHProvider.allCases {
-            let action = UIAlertAction(title: provider.title, style: .default) { [weak self] _ in
-                self?.settings.dohProvider = provider
-                LightweightDohProxyService.shared.configureFromSettings()
-                self?.refreshDataViews()
-            }
-            action.setValue(provider == settings.dohProvider, forKey: "checked")
-            alert.addAction(action)
-        }
-        alert.addAction(UIAlertAction(title: String(localized: "action.cancel"), style: .cancel))
-        alert.popoverPresentationController?.sourceView = providerRow
-        alert.popoverPresentationController?.sourceRect = providerRow.bounds
-        present(alert, animated: true)
-    }
-
-    @objc private func editCustomURL() {
-        let alert = UIAlertController(
-            title: String(localized: "settings.network.custom_url"),
-            message: String(localized: "settings.network.custom_url.message"),
-            preferredStyle: .alert
-        )
-        alert.addTextField { [weak self] textField in
-            guard let self else { return }
-            textField.text = settings.dohCustomURL.isEmpty ? settings.dohServerURL : settings.dohCustomURL
-            textField.placeholder = "https://dns.alidns.com/dns-query"
-            textField.keyboardType = .URL
-            textField.autocapitalizationType = .none
-        }
-        alert.addAction(UIAlertAction(title: String(localized: "common.ok"), style: .default) { [weak self] _ in
-            let value = (alert.textFields?.first?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            self?.settings.dohCustomURL = value
-            if !value.isEmpty {
-                self?.settings.dohProvider = .custom
-            }
-            LightweightDohProxyService.shared.configureFromSettings()
-            self?.refreshDataViews()
-        })
-        alert.addAction(UIAlertAction(title: String(localized: "action.cancel"), style: .cancel))
-        present(alert, animated: true)
-    }
-
-    @objc private func openDebugLog() {
-        navigationController?.pushViewController(DohDebugLogViewController(), animated: true)
-    }
-
-    @objc private func clearDNSCache() {
-        LightweightDohProxyService.shared.clearCache()
+    @objc private func testDoH() {
+        guard !isProbing else { return }
+        isProbing = true
         refreshDataViews()
+        LightweightDohProxyService.shared.probe { [weak self] result in
+            guard let self else { return }
+            self.isProbing = false
+            self.lastProbe = result
+            self.refreshDataViews()
+        }
     }
 
-    @objc private func editServerIP() {
-        let alert = UIAlertController(
-            title: String(localized: "settings.network.server_ip", defaultValue: "固定 server IP"),
-            message: nil,
-            preferredStyle: .alert
-        )
-        alert.addTextField { [weak self] field in
-            field.text = self?.settings.dohServerIP
-            field.placeholder = "1.2.3.4"
-            field.keyboardType = .decimalPad
-        }
-        alert.addAction(UIAlertAction(title: String(localized: "common.ok"), style: .default) { [weak self] _ in
-            self?.settings.dohServerIP = (alert.textFields?.first?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            LightweightDohProxyService.shared.configureFromSettings()
-            self?.refreshDataViews()
-        })
-        alert.addAction(UIAlertAction(title: String(localized: "action.cancel"), style: .cancel))
-        present(alert, animated: true)
-    }
-
-    @objc private func editUpstream() {
-        let alert = UIAlertController(
-            title: String(localized: "settings.network.upstream", defaultValue: "上游代理"),
-            message: String(localized: "settings.network.upstream.message", defaultValue: "host:port，留空关闭"),
-            preferredStyle: .alert
-        )
-        alert.addTextField { [weak self] field in
-            field.text = self?.settings.dohUpstreamHost
-            field.placeholder = "host"
-        }
-        alert.addTextField { [weak self] field in
-            field.text = self?.settings.dohUpstreamPort == 0 ? "" : "\(self?.settings.dohUpstreamPort ?? 0)"
-            field.placeholder = "port"
-            field.keyboardType = .numberPad
-        }
-        alert.addAction(UIAlertAction(title: String(localized: "common.ok"), style: .default) { [weak self] _ in
-            self?.settings.dohUpstreamHost = (alert.textFields?.first?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            self?.settings.dohUpstreamPort = Int(alert.textFields?.dropFirst().first?.text ?? "") ?? 0
-            LightweightDohProxyService.shared.configureFromSettings()
-            self?.refreshDataViews()
-        })
-        alert.addAction(UIAlertAction(title: String(localized: "action.cancel"), style: .cancel))
-        present(alert, animated: true)
+    @objc private func openDoHDetail() {
+        navigationController?.pushViewController(DohDetailSettingsViewController(), animated: true)
     }
 }
 

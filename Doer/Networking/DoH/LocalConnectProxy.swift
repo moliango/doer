@@ -12,7 +12,13 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
     private var boundPort: UInt16?
     private var connections: [ObjectIdentifier: NWConnection] = [:]
     private var mitmBridges: [ObjectIdentifier: MitmTLSBridge] = [:]
+    private var originClients: [ObjectIdentifier: OriginNIOClient] = [:]
+    private var ssSessions: [ObjectIdentifier: ShadowsocksAEADSession] = [:]
     private var hostAttemptOffsets: [String: Int] = [:]
+    private var gatewayOriginInflight = 0
+    private var gatewayOriginWaiters: [() -> Void] = []
+    private let gatewayOriginLimit = 2
+    private var streamContexts: [ObjectIdentifier: NWConnection.ContentContext] = [:]
     var onTLSHandshakeReset: ((String) -> Void)?
     var onListening: ((UInt16) -> Void)?
     var onFailed: ((Error) -> Void)?
@@ -89,6 +95,12 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
     func stop() {
         let active = connections.values
         connections.removeAll()
+        mitmBridges.removeAll()
+        originClients.removeAll()
+        ssSessions.removeAll()
+        streamContexts.removeAll()
+        gatewayOriginWaiters.removeAll()
+        gatewayOriginInflight = 0
         active.forEach { $0.cancel() }
         stateLock.lock()
         let currentListener = listener
@@ -292,10 +304,16 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                         for: host,
                         addresses: Self.preferredUpstreamAddresses(answer.addresses)
                     )
+                    if let ech = answer.echConfig, !ech.isEmpty {
+                        DohDebugLog.record("ECH config for \(host) (\(ech.count) bytes)")
+                    }
                     DohDebugLog.record("Resolved \(host) -> \(addresses.joined(separator: ", "))")
                     guard !addresses.isEmpty else {
                         self.reject(client, reason: "empty resolved address", socks: readyReply == Socks5Handshake.connectOK)
                         return
+                    }
+                    if !useMITM {
+                        DohDebugLog.record("CONNECT pass-through \(host) via DoH IP \(addresses[0])")
                     }
                     self.connectUpstream(
                         addresses: addresses,
@@ -305,7 +323,8 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                         bufferedClientData: bufferedClientData,
                         hostname: host,
                         readyReply: readyReply,
-                        useMITM: useMITM
+                        useMITM: useMITM,
+                        echConfig: answer.echConfig
                     )
                 }
             }
@@ -321,8 +340,25 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         hostname: String,
         readyReply: Data,
         replayHello: Data? = nil,
-        useMITM: Bool = false
+        useMITM: Bool = false,
+        echConfig: Data? = nil
     ) {
+        if addressIndex == 0, let hop = config.upstream, hop.isValid {
+            connectViaConfiguredUpstream(
+                hop,
+                client: client,
+                bufferedClientData: bufferedClientData,
+                hostname: hostname,
+                readyReply: readyReply,
+                useMITM: useMITM,
+                echConfig: echConfig
+            )
+            return
+        }
+        if addressIndex == 0, let hop = config.upstream, !hop.host.isEmpty {
+            reject(client, reason: "invalid upstream")
+            return
+        }
         guard addressIndex < addresses.count else {
             reject(client, reason: "all upstream addresses failed")
             return
@@ -330,47 +366,56 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
 
         let target = addresses[addressIndex]
         let host = Self.endpointHost(from: target)
-        let parameters = useMITM
-            ? tlsTCPParameters(serverName: hostname)
-            : Self.streamTCPParameters()
+        let parameters = Self.streamTCPParameters()
         let upstream = NWConnection(host: host, port: port, using: parameters)
         let upstreamId = ObjectIdentifier(upstream)
-        var didBindTunnel = false
+        let gate = HandshakeGate()
         connections[upstreamId] = upstream
+        let timeout = DispatchWorkItem { [weak upstream] in
+            guard let upstream else { return }
+            DohDebugLog.record("Upstream timeout \(target):\(port.rawValue)")
+            upstream.cancel()
+        }
+        queue.asyncAfter(deadline: .now() + 8, execute: timeout)
         upstream.stateUpdateHandler = { [weak self, weak upstream, weak client] state in
             guard let self, let upstream else { return }
             switch state {
+            case .waiting(let error):
+                DohDebugLog.record("Upstream waiting \(target): \(error)")
             case .ready:
-                guard !didBindTunnel else { return }
-                didBindTunnel = true
-                DohDebugLog.record("Upstream connected \(target):\(port.rawValue)")
-                if let replayHello, !replayHello.isEmpty {
-                    DohDebugLog.record("Replaying ClientHello to \(target)")
-                    self.startByteTunnel(
-                        client: client,
-                        upstream: upstream,
-                        bufferedClientData: replayHello,
-                        addresses: addresses,
-                        addressIndex: addressIndex,
-                        hostname: hostname,
-                        readyReply: readyReply
-                    )
-                } else {
-                    self.sendConnectSuccess(
-                        to: client,
-                        upstream: upstream,
-                        bufferedClientData: bufferedClientData,
-                        addresses: addresses,
-                        addressIndex: addressIndex,
-                        hostname: hostname,
-                        readyReply: readyReply,
-                        useMITM: useMITM
-                    )
+                gate.settle {
+                    timeout.cancel()
+                    DohDebugLog.record("Upstream connected \(target):\(port.rawValue)")
+                    if let replayHello, !replayHello.isEmpty {
+                        DohDebugLog.record("Replaying ClientHello to \(target)")
+                        self.startByteTunnel(
+                            client: client,
+                            upstream: upstream,
+                            bufferedClientData: replayHello,
+                            addresses: addresses,
+                            addressIndex: addressIndex,
+                            hostname: hostname,
+                            readyReply: readyReply
+                        )
+                    } else {
+                        self.sendConnectSuccess(
+                            to: client,
+                            upstream: upstream,
+                            bufferedClientData: bufferedClientData,
+                            addresses: addresses,
+                            addressIndex: addressIndex,
+                            hostname: hostname,
+                            readyReply: readyReply,
+                            useMITM: useMITM,
+                            echConfig: echConfig
+                        )
+                    }
                 }
             case .failed, .cancelled:
+                timeout.cancel()
                 self.connections.removeValue(forKey: ObjectIdentifier(upstream))
-                if didBindTunnel { return }
-                if case .failed = state, let client {
+                gate.settle {
+                    guard let client else { return }
                     DohDebugLog.record("Upstream failed \(target):\(port.rawValue), trying next")
                     self.connectUpstream(
                         addresses: addresses,
@@ -381,7 +426,8 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                         hostname: hostname,
                         readyReply: readyReply,
                         replayHello: replayHello,
-                        useMITM: useMITM
+                        useMITM: useMITM,
+                        echConfig: echConfig
                     )
                 }
             default:
@@ -399,7 +445,9 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         addressIndex: Int,
         hostname: String,
         readyReply: Data,
-        useMITM: Bool
+        useMITM: Bool,
+        echConfig: Data? = nil,
+        originNeedsTLS: Bool? = nil
     ) {
         guard let client else {
             close(upstream)
@@ -415,7 +463,14 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                 return
             }
             if useMITM {
-                self.startMITM(client: client, upstream: upstream, hostname: hostname, leftover: bufferedClientData)
+                self.startMITM(
+                    client: client,
+                    upstream: upstream,
+                    hostname: hostname,
+                    leftover: bufferedClientData,
+                    originNeedsTLS: originNeedsTLS ?? true,
+                    echConfig: echConfig
+                )
                 return
             }
             DohDebugLog.record("CONNECT tunnel established")
@@ -435,31 +490,45 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         client: NWConnection,
         upstream: NWConnection,
         hostname: String,
-        leftover: Data
+        leftover: Data,
+        originNeedsTLS: Bool = false,
+        echConfig: Data? = nil
     ) {
-        guard let identity = MitmCertificateAuthority.shared.identity(for: hostname) else {
+        guard let material = MitmCertificateAuthority.shared.derMaterial(for: hostname) else {
             DohDebugLog.record("MITM identity missing for \(hostname)")
             reject(client, reason: "mitm identity", socks: false)
             close(upstream)
             return
         }
         let bridge = MitmTLSBridge(client: client, upstream: upstream)
+        if let ss = ssSessions[ObjectIdentifier(upstream)] {
+            bridge.wrapUpstreamWrite = { ss.encrypt($0) }
+            bridge.wrapUpstreamRead = { ss.decrypt($0) }
+        }
         mitmBridges[ObjectIdentifier(client)] = bridge
         if !leftover.isEmpty {
             bridge.preload(leftover)
         }
         DohDebugLog.record("MITM CONNECT \(hostname)")
         let alpn = H2MitmALPN.protocols(h2Enabled: config.h2Mitm)
-        bridge.start(identity: identity, alpn: alpn) { [weak self, weak client, weak upstream] ok in
-            guard let self, !ok else { return }
-            self.queue.async {
-                if let client {
-                    self.mitmBridges.removeValue(forKey: ObjectIdentifier(client))
-                    self.close(client)
+        bridge.start(
+            certificateDER: material.certificate,
+            rsaPrivateKeyDER: material.rsaPrivateKey,
+            alpn: alpn,
+            originNeedsTLS: originNeedsTLS,
+            sni: hostname,
+            echConfig: echConfig,
+            completion: { [weak self, weak client, weak upstream] ok in
+                guard let self, !ok else { return }
+                self.queue.async {
+                    if let client {
+                        self.mitmBridges.removeValue(forKey: ObjectIdentifier(client))
+                        self.close(client)
+                    }
+                    self.close(upstream)
                 }
-                self.close(upstream)
             }
-        }
+        )
     }
 
     private func startByteTunnel(
@@ -469,7 +538,8 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         addresses: [String],
         addressIndex: Int,
         hostname: String,
-        readyReply: Data
+        readyReply: Data,
+        requestAlreadySent: Bool = false
     ) {
         guard let client else {
             close(upstream)
@@ -494,6 +564,12 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
             )
         }
 
+        if requestAlreadySent {
+            DohDebugLog.record("Gateway pipes \(hostname)")
+            beginPipes(Data())
+            return
+        }
+
         if !bufferedClientData.isEmpty {
             diagnostics.logClientHelloIfNeeded(bufferedClientData)
             sendStreaming(upstream, content: bufferedClientData) { [weak self, weak client, weak upstream] sendError in
@@ -516,79 +592,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
             return
         }
 
-        receiveFirstPayload(from: client, sourceRole: "client", diagnostics: diagnostics) { [weak self, weak client, weak upstream] firstBytes in
-            guard let self, let client, let upstream else { return }
-            guard let firstBytes else {
-                self.close(client)
-                self.close(upstream)
-                return
-            }
-            self.sendStreaming(upstream, content: firstBytes) { [weak self, weak client, weak upstream] sendError in
-                guard let self, let client, let upstream else { return }
-                if sendError != nil {
-                    DohDebugLog.record("First client payload send failed: \(String(describing: sendError))")
-                    self.retryOrClose(
-                        client: client,
-                        upstream: upstream,
-                        hello: firstBytes,
-                        addresses: addresses,
-                        addressIndex: addressIndex,
-                        hostname: hostname,
-                        readyReply: readyReply
-                    )
-                    return
-                }
-                beginPipes(firstBytes)
-            }
-        }
-    }
-
-    private func receiveFirstPayload(
-        from source: NWConnection,
-        sourceRole: String,
-        diagnostics: TunnelDiagnostics?,
-        allowSpuriousComplete: Bool = true,
-        completion: @escaping (Data?) -> Void
-    ) {
-        source.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { [weak self, weak source] data, _, isComplete, error in
-            guard let self, let source else {
-                completion(nil)
-                return
-            }
-            if let data, !data.isEmpty {
-                diagnostics?.logClientHelloIfNeeded(data)
-                completion(data)
-                return
-            }
-            if let error {
-                DohDebugLog.record("Tunnel receive failed (\(sourceRole)): \(error)")
-                completion(nil)
-                return
-            }
-            if isComplete {
-                if allowSpuriousComplete {
-                    DohDebugLog.record("Ignoring empty complete on \(sourceRole) before first payload")
-                    self.receiveFirstPayload(
-                        from: source,
-                        sourceRole: sourceRole,
-                        diagnostics: diagnostics,
-                        allowSpuriousComplete: false,
-                        completion: completion
-                    )
-                    return
-                }
-                DohDebugLog.record("Tunnel side closed (\(sourceRole)) before first payload")
-                completion(nil)
-                return
-            }
-            self.receiveFirstPayload(
-                from: source,
-                sourceRole: sourceRole,
-                diagnostics: diagnostics,
-                allowSpuriousComplete: allowSpuriousComplete,
-                completion: completion
-            )
-        }
+        beginPipes(Data())
     }
 
     private func pipe(
@@ -604,7 +608,25 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
             if let data, !data.isEmpty {
                 diagnostics?.logClientHelloIfNeeded(data)
                 let isUpstream = sourceRole == "upstream"
-                self.sendStreaming(target, content: data) { [weak self, weak source, weak target] sendError in
+                if isUpstream, !sawUpstreamData {
+                    DohDebugLog.record("Gateway origin first bytes \(data.count) from \(relay.hostname)")
+                }
+                var payload = data
+                if isUpstream, let ss = self.ssSessions[ObjectIdentifier(source)] {
+                    payload = ss.decrypt(data)
+                    if payload.isEmpty {
+                        self.pipe(
+                            from: source,
+                            to: target,
+                            sourceRole: sourceRole,
+                            diagnostics: diagnostics,
+                            relay: relay,
+                            sawUpstreamData: sawUpstreamData
+                        )
+                        return
+                    }
+                }
+                self.sendStreaming(target, content: payload) { [weak self, weak source, weak target] sendError in
                     guard let self, let source, let target else { return }
                     if sendError != nil {
                         DohDebugLog.record("Tunnel send failed (\(sourceRole)): \(String(describing: sendError))")
@@ -719,9 +741,15 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
             completion(nil)
             return
         }
+        let payload: Data
+        if let ss = ssSessions[ObjectIdentifier(connection)] {
+            payload = ss.encrypt(content)
+        } else {
+            payload = content
+        }
         connection.send(
-            content: content,
-            contentContext: Self.streamContext(),
+            content: payload,
+            contentContext: streamingContext(for: connection),
             isComplete: false,
             completion: .contentProcessed { error in
                 completion(error)
@@ -741,10 +769,17 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         }
     }
 
-    /// TCP streaming context. `defaultMessage` is final and can FIN the
-    /// socket after the CONNECT 200, so URLSession never sends ClientHello.
-    private static func streamContext() -> NWConnection.ContentContext {
-        NWConnection.ContentContext(identifier: "doer.doh.stream", isFinal: false)
+    /// Reuse one non-final context per connection. A new context per send
+    /// leaves each chunk incomplete; `defaultMessage` is final and can FIN
+    /// the socket after the CONNECT 200.
+    private func streamingContext(for connection: NWConnection) -> NWConnection.ContentContext {
+        let id = ObjectIdentifier(connection)
+        if let existing = streamContexts[id] {
+            return existing
+        }
+        let context = NWConnection.ContentContext(identifier: "doer.doh.stream", isFinal: false)
+        streamContexts[id] = context
+        return context
     }
 
     static let connectSuccessResponse = Data("HTTP/1.1 200 Connection Established\r\n\r\n".utf8)
@@ -752,55 +787,406 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
     private static func streamTCPParameters() -> NWParameters {
         let tcp = NWProtocolTCP.Options()
         tcp.noDelay = true
-        tcp.enableKeepalive = false
-        return NWParameters(tls: nil, tcp: tcp)
+        tcp.enableKeepalive = true
+        let parameters = NWParameters(tls: nil, tcp: tcp)
+        if #available(iOS 16.0, *) {
+            parameters.preferNoProxies = true
+        }
+        return parameters
     }
 
-    private func openGateway(_ request: DohGatewayHTTPRequest, client: NWConnection) {
-        resolver.resolve(host: request.host) { [weak self, weak client] result in
+    private func connectViaConfiguredUpstream(
+        _ hop: DohUpstreamConfig,
+        client: NWConnection,
+        bufferedClientData: Data,
+        hostname: String,
+        readyReply: Data,
+        useMITM: Bool,
+        echConfig: Data? = nil,
+        gatewayRequest: DohGatewayHTTPRequest? = nil
+    ) {
+        resolver.resolve(host: hop.host) { [weak self, weak client] result in
             guard let self, let client else { return }
             self.queue.async {
                 switch result {
                 case .failure(let error):
-                    DohDebugLog.record("Gateway resolve failed \(request.host): \(error)")
-                    self.reject(client, reason: "resolve failed")
+                    DohDebugLog.record("Upstream resolve failed \(hop.host): \(error)")
+                    self.reject(client, reason: "upstream resolve failed")
                 case .success(let answer):
-                    let addresses = Self.preferredUpstreamAddresses(answer.addresses)
-                    guard let first = addresses.first, let port = NWEndpoint.Port(rawValue: request.port) else {
-                        self.reject(client, reason: "empty resolved address")
+                    guard let ip = Self.preferredUpstreamAddresses(answer.addresses).first,
+                          let port = NWEndpoint.Port(rawValue: UInt16(clamping: hop.port))
+                    else {
+                        self.reject(client, reason: "upstream empty address")
                         return
                     }
-                    let upstream = NWConnection(
-                        host: Self.endpointHost(from: first),
+                    let hopConnection = NWConnection(
+                        host: Self.endpointHost(from: ip),
                         port: port,
-                        using: self.tlsTCPParameters(serverName: request.host)
+                        using: Self.streamTCPParameters()
                     )
-                    self.connections[ObjectIdentifier(upstream)] = upstream
-                    upstream.stateUpdateHandler = { [weak self, weak client, weak upstream] state in
-                        guard let self, let client, let upstream else { return }
-                        if case .ready = state {
-                            self.sendStreaming(upstream, content: request.originForm) { error in
+                    self.connections[ObjectIdentifier(hopConnection)] = hopConnection
+                    hopConnection.stateUpdateHandler = { [weak self, weak client, weak hopConnection] state in
+                        guard let self, let client, let hopConnection else { return }
+                        guard case .ready = state else { return }
+                        let handshake: Data
+                        switch hop.protocolKind {
+                        case .http:
+                            handshake = UpstreamHandshake.httpConnect(
+                                host: hostname,
+                                port: 443,
+                                username: hop.username,
+                                password: hop.password
+                            )
+                        case .socks5:
+                            handshake = UpstreamHandshake.socks5Greeting(userpass: hop.username != nil)
+                        case .shadowsocks:
+                            guard let cipher = ShadowsocksAEAD.Cipher(name: hop.cipher) else {
+                                self.reject(client, reason: "unsupported shadowsocks cipher")
+                                return
+                            }
+                            let session = ShadowsocksAEADSession(
+                                password: hop.password ?? "",
+                                cipher: cipher
+                            )
+                            self.sendStreaming(
+                                hopConnection,
+                                content: session.openingPrefix(host: hostname, port: 443)
+                            ) { error in
                                 if error != nil {
-                                    self.close(client)
-                                    self.close(upstream)
+                                    self.reject(client, reason: "shadowsocks prefix")
                                     return
                                 }
-                                self.startByteTunnel(
+                                self.ssSessions[ObjectIdentifier(hopConnection)] = session
+                                self.finishUpstreamHop(
+                                    hopConnection,
                                     client: client,
-                                    upstream: upstream,
-                                    bufferedClientData: Data(),
-                                    addresses: addresses,
-                                    addressIndex: 0,
-                                    hostname: request.host,
-                                    readyReply: Data()
+                                    bufferedClientData: bufferedClientData,
+                                    hostname: hostname,
+                                    readyReply: readyReply,
+                                    useMITM: useMITM,
+                                    echConfig: echConfig,
+                                    gatewayRequest: gatewayRequest
                                 )
+                            }
+                            return
+                        }
+                        self.sendStreaming(hopConnection, content: handshake) { error in
+                            if error != nil {
+                                self.reject(client, reason: "upstream handshake send")
+                                return
+                            }
+                            hopConnection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, _, _, _ in
+                                self.queue.async {
+                                    guard let data, !data.isEmpty else {
+                                        self.reject(client, reason: "upstream handshake empty")
+                                        return
+                                    }
+                                    if hop.protocolKind == .socks5 {
+                                        let userpass = hop.username != nil
+                                        if userpass {
+                                            let auth = UpstreamHandshake.socks5UserPass(
+                                                username: hop.username ?? "",
+                                                password: hop.password ?? ""
+                                            )
+                                            self.sendStreaming(hopConnection, content: auth) { _ in
+                                                let connect = UpstreamHandshake.socks5Connect(host: hostname, port: 443)
+                                                self.sendStreaming(hopConnection, content: connect) { _ in
+                                                    self.finishUpstreamHop(
+                                                        hopConnection,
+                                                        client: client,
+                                                        bufferedClientData: bufferedClientData,
+                                                        hostname: hostname,
+                                                        readyReply: readyReply,
+                                                        useMITM: useMITM,
+                                                        echConfig: echConfig,
+                                                        gatewayRequest: gatewayRequest
+                                                    )
+                                                }
+                                            }
+                                            return
+                                        }
+                                        let connect = UpstreamHandshake.socks5Connect(host: hostname, port: 443)
+                                        self.sendStreaming(hopConnection, content: connect) { _ in
+                                            self.finishUpstreamHop(
+                                                hopConnection,
+                                                client: client,
+                                                bufferedClientData: bufferedClientData,
+                                                hostname: hostname,
+                                                readyReply: readyReply,
+                                                useMITM: useMITM,
+                                                echConfig: echConfig,
+                                                gatewayRequest: gatewayRequest
+                                            )
+                                        }
+                                        return
+                                    }
+                                    let text = String(data: data, encoding: .utf8) ?? ""
+                                    guard text.contains(" 200 ") else {
+                                        self.reject(client, reason: "upstream CONNECT failed")
+                                        return
+                                    }
+                                    self.finishUpstreamHop(
+                                        hopConnection,
+                                        client: client,
+                                        bufferedClientData: bufferedClientData,
+                                        hostname: hostname,
+                                        readyReply: readyReply,
+                                        useMITM: useMITM,
+                                        echConfig: echConfig,
+                                        gatewayRequest: gatewayRequest
+                                    )
+                                }
                             }
                         }
                     }
-                    upstream.start(queue: self.queue)
+                    hopConnection.start(queue: self.queue)
                 }
             }
         }
+    }
+
+    private func finishUpstreamHop(
+        _ hopConnection: NWConnection,
+        client: NWConnection,
+        bufferedClientData: Data,
+        hostname: String,
+        readyReply: Data,
+        useMITM: Bool,
+        echConfig: Data? = nil,
+        gatewayRequest: DohGatewayHTTPRequest? = nil
+    ) {
+        if let gatewayRequest {
+            startGatewayOrigin(
+                client: client,
+                upstream: hopConnection,
+                request: gatewayRequest,
+                echConfig: echConfig,
+                originAddress: hostname
+            )
+            return
+        }
+        sendConnectSuccess(
+            to: client,
+            upstream: hopConnection,
+            bufferedClientData: bufferedClientData,
+            addresses: [],
+            addressIndex: 0,
+            hostname: hostname,
+            readyReply: readyReply,
+            useMITM: useMITM,
+            echConfig: echConfig
+        )
+    }
+
+    private func startGatewayOrigin(
+        client: NWConnection,
+        upstream: NWConnection,
+        request: DohGatewayHTTPRequest,
+        echConfig: Data?,
+        originAddress: String
+    ) {
+        do {
+            let alpn = H2MitmALPN.protocols(h2Enabled: config.h2Mitm)
+            let origin = try OriginNIOClient(
+                sni: request.host,
+                applicationProtocols: alpn,
+                echConfig: echConfig
+            )
+            originClients[ObjectIdentifier(client)] = origin
+            DohDebugLog.record("Gateway origin TLS NIOSSL \(request.host) \(originAddress)")
+            startGatewayNIOOrigin(origin, client: client, upstream: upstream, request: request)
+        } catch {
+            DohDebugLog.record("Gateway origin TLS failed: \(error)")
+            reject(client, reason: "gateway tls")
+            close(upstream)
+        }
+    }
+
+    private func startGatewayNIOOrigin(
+        _ origin: OriginNIOClient,
+        client: NWConnection,
+        upstream: NWConnection,
+        request: DohGatewayHTTPRequest
+    ) {
+            var loggedHello = false
+            origin.start(
+                socketRead: { [weak self, weak upstream] deliver in
+                    guard let self, let upstream else { return }
+                    func receive() {
+                        upstream.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { data, _, _, _ in
+                            guard let data else {
+                                deliver(nil)
+                                return
+                            }
+                            if let ss = self.ssSessions[ObjectIdentifier(upstream)] {
+                                let payload = ss.decrypt(data)
+                                if payload.isEmpty {
+                                    receive()
+                                    return
+                                }
+                                deliver(payload)
+                            } else {
+                                deliver(data)
+                            }
+                        }
+                    }
+                    receive()
+                },
+                socketWrite: { [weak self, weak upstream] data, done in
+                    guard let self, let upstream else {
+                        done()
+                        return
+                    }
+                    if !loggedHello {
+                        loggedHello = true
+                        DohDebugLog.record("Gateway origin ClientHello \(data.count) bytes to \(request.host)")
+                    }
+                    self.sendStreaming(upstream, content: data) { _ in
+                        done()
+                    }
+                },
+                appRead: { [weak self, weak client] plaintext in
+                    guard let self, let client else { return }
+                    self.sendStreaming(client, content: plaintext) { _ in }
+                },
+                completion: { [weak self, weak client, weak upstream] ok in
+                    guard let self, !ok else { return }
+                    self.queue.async {
+                        self.close(client)
+                        self.close(upstream)
+                    }
+                }
+            )
+            origin.writeApplication(request.originForm) { [weak self, weak upstream] payload, done in
+                guard let self, let upstream else {
+                    done()
+                    return
+                }
+                self.sendStreaming(upstream, content: payload) { _ in
+                    done()
+                }
+            }
+            pipeGatewayClient(client, origin: origin)
+    }
+
+    private func enqueueGatewayOrigin(_ work: @escaping () -> Void) {
+        if gatewayOriginInflight >= gatewayOriginLimit {
+            gatewayOriginWaiters.append(work)
+            return
+        }
+        gatewayOriginInflight += 1
+        work()
+    }
+
+    private func completeGatewayOrigin() {
+        if let next = gatewayOriginWaiters.first {
+            gatewayOriginWaiters.removeFirst()
+            next()
+            return
+        }
+        gatewayOriginInflight = max(0, gatewayOriginInflight - 1)
+    }
+
+    /// TLS to the hostname via Network.framework. Connecting to a Cloudflare
+    /// anycast IP with a clear SNI ClientHello is reset (POSIX 54).
+    private func startOriginSystemTLS(
+        host: String,
+        port: UInt16,
+        attempt: Int = 0,
+        onReady: @escaping (NWConnection) -> Void,
+        onFail: @escaping (Error?) -> Void
+    ) {
+        startOriginConnection(
+            host: host,
+            port: port,
+            useTLS: true,
+            attempt: attempt,
+            onReady: onReady,
+            onFail: onFail
+        )
+    }
+
+    private func startOriginConnection(
+        host: String,
+        port: UInt16,
+        useTLS: Bool,
+        attempt: Int = 0,
+        onReady: @escaping (NWConnection) -> Void,
+        onFail: @escaping (Error?) -> Void
+    ) {
+        guard let nwPort = NWEndpoint.Port(rawValue: port) else {
+            onFail(nil)
+            return
+        }
+        let label = useTLS ? "system TLS" : "pass-through TCP"
+        DohDebugLog.record("Gateway origin \(label) \(host) attempt=\(attempt)")
+        let parameters = useTLS ? tlsTCPParameters(serverName: host) : Self.streamTCPParameters()
+        let upstream = NWConnection(
+            host: .name(host, nil),
+            port: nwPort,
+            using: parameters
+        )
+        connections[ObjectIdentifier(upstream)] = upstream
+        let gate = HandshakeGate()
+        let timeout = DispatchWorkItem { [weak self, weak upstream] in
+            guard let self, let upstream else { return }
+            gate.settle {
+                DohDebugLog.record("Gateway origin \(label) timeout \(host)")
+                self.close(upstream)
+                if attempt < 1 {
+                    self.startOriginConnection(
+                        host: host,
+                        port: port,
+                        useTLS: useTLS,
+                        attempt: attempt + 1,
+                        onReady: onReady,
+                        onFail: onFail
+                    )
+                } else {
+                    onFail(nil)
+                }
+            }
+        }
+        queue.asyncAfter(deadline: .now() + 10, execute: timeout)
+        upstream.stateUpdateHandler = { [weak self, weak upstream] state in
+            guard let self, let upstream else { return }
+            switch state {
+            case .waiting(let error):
+                DohDebugLog.record("Gateway origin \(label) waiting \(host): \(error)")
+            case .ready:
+                gate.settle {
+                    timeout.cancel()
+                    DohDebugLog.record("Gateway origin \(label) ready \(host)")
+                    onReady(upstream)
+                }
+            case .failed(let error):
+                gate.settle {
+                    timeout.cancel()
+                    DohDebugLog.record("Gateway origin \(label) failed \(host): \(error)")
+                    self.close(upstream)
+                    if attempt < 1 {
+                        self.startOriginConnection(
+                            host: host,
+                            port: port,
+                            useTLS: useTLS,
+                            attempt: attempt + 1,
+                            onReady: onReady,
+                            onFail: onFail
+                        )
+                    } else {
+                        onFail(error)
+                    }
+                }
+            case .cancelled:
+                gate.settle {
+                    timeout.cancel()
+                    onFail(nil)
+                }
+            default:
+                break
+            }
+        }
+        upstream.start(queue: queue)
     }
 
     private func tlsTCPParameters(serverName: String) -> NWParameters {
@@ -815,11 +1201,106 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                 sec_protocol_options_add_tls_application_protocol(tls.securityProtocolOptions, pointer)
             }
         }
-        return NWParameters(tls: tls, tcp: tcp)
+        let parameters = NWParameters(tls: tls, tcp: tcp)
+        if #available(iOS 16.0, *) {
+            parameters.preferNoProxies = true
+        }
+        return parameters
     }
 
+    private func pipeGatewayClient(_ client: NWConnection, origin: OriginNIOClient) {
+        client.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { [weak self, weak client] data, _, isComplete, error in
+            guard let self, let client else { return }
+            if let data, !data.isEmpty {
+                origin.writeApplication(data) { _, _ in }
+                self.pipeGatewayClient(client, origin: origin)
+                return
+            }
+            if error != nil || isComplete { return }
+            self.pipeGatewayClient(client, origin: origin)
+        }
+    }
+
+    private func openGateway(_ request: DohGatewayHTTPRequest, client: NWConnection) {
+        resolver.resolve(host: request.host) { [weak self, weak client] result in
+            guard let self, let client else { return }
+            self.queue.async {
+                switch result {
+                case .failure(let error):
+                    DohDebugLog.record("Gateway resolve failed \(request.host): \(error)")
+                    self.reject(client, reason: "resolve failed")
+                case .success(let answer):
+                    let addresses = Self.preferredUpstreamAddresses(answer.addresses)
+                    guard let first = addresses.first else {
+                        self.reject(client, reason: "empty resolved address")
+                        return
+                    }
+                    DohDebugLog.record("Gateway resolved \(request.host) -> \(addresses.joined(separator: ", "))")
+                    if let ech = answer.echConfig, !ech.isEmpty {
+                        DohDebugLog.record(
+                            "Gateway ECH config \(ech.count) bytes unused until inject works"
+                        )
+                    }
+                    if let hop = self.config.upstream, hop.isValid {
+                        self.connectViaConfiguredUpstream(
+                            hop,
+                            client: client,
+                            bufferedClientData: request.originForm,
+                            hostname: request.host,
+                            readyReply: Data(),
+                            useMITM: false,
+                            echConfig: answer.echConfig,
+                            gatewayRequest: request
+                        )
+                        return
+                    }
+                    self.enqueueGatewayOrigin {
+                        self.startOriginSystemTLS(host: request.host, port: request.port) { tlsConn in
+                            self.completeGatewayOrigin()
+                            DohDebugLog.record(
+                                "Gateway origin HTTP send \(request.originForm.count) bytes \(request.host)"
+                            )
+                            self.sendStreaming(tlsConn, content: request.originForm) { error in
+                                if error != nil {
+                                    DohDebugLog.record(
+                                        "Gateway origin HTTP send failed: \(String(describing: error))"
+                                    )
+                                    self.close(client)
+                                    self.close(tlsConn)
+                                    return
+                                }
+                                self.startByteTunnel(
+                                    client: client,
+                                    upstream: tlsConn,
+                                    bufferedClientData: Data(),
+                                    addresses: [first],
+                                    addressIndex: 0,
+                                    hostname: request.host,
+                                    readyReply: Data(),
+                                    requestAlreadySent: true
+                                )
+                            }
+                        } onFail: { error in
+                            self.completeGatewayOrigin()
+                            DohDebugLog.record(
+                                "Gateway origin system TLS gave up \(request.host): \(String(describing: error))"
+                            )
+                            self.reject(client, reason: "gateway tls")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Origin ECH inject is not available on device yet. Until it is, CONNECT
+    /// pass-through lets URLSession speak real HTTPS (h2) so Cloudflare does
+    /// not 403 `cf-mitigated: challenge` on HTTP/1.1 Gateway hops.
+    static var originECHReady = false
+
     static func shouldMITM(_ host: String) -> Bool {
-        !MitmCertificateAuthority.isCloudflareChallengeHost(host)
+        guard originECHReady else { return false }
+        return !MitmCertificateAuthority.isCloudflareChallengeHost(host)
     }
 
     private static func hexPrefix(_ data: Data, limit: Int = 16) -> String {
@@ -858,8 +1339,23 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
 
     private func close(_ connection: NWConnection?) {
         guard let connection else { return }
-        connections.removeValue(forKey: ObjectIdentifier(connection))
+        let id = ObjectIdentifier(connection)
+        connections.removeValue(forKey: id)
+        ssSessions.removeValue(forKey: id)
+        originClients.removeValue(forKey: id)
+        mitmBridges.removeValue(forKey: id)
+        streamContexts.removeValue(forKey: id)
         connection.cancel()
+    }
+}
+
+private final class HandshakeGate {
+    private var settled = false
+
+    func settle(_ body: () -> Void) {
+        guard !settled else { return }
+        settled = true
+        body()
     }
 }
 

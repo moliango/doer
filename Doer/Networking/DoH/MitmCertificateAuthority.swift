@@ -12,6 +12,7 @@ nonisolated final class MitmCertificateAuthority: @unchecked Sendable {
     private var caKey: SecKey?
     private var leafKey: SecKey?
     private var leafCache: [String: SecIdentity] = [:]
+    private var leafDERCache: [String: (certificate: Data, rsaPrivateKey: Data)] = [:]
 
     private init() {}
 
@@ -23,16 +24,33 @@ nonisolated final class MitmCertificateAuthority: @unchecked Sendable {
     }
 
     func derMaterial(for host: String) -> (certificate: Data, rsaPrivateKey: Data)? {
-        guard let identity = identity(for: host) else { return nil }
-        var certificate: SecCertificate?
-        SecIdentityCopyCertificate(identity, &certificate)
-        guard let certificate else { return nil }
-        var key: SecKey?
-        SecIdentityCopyPrivateKey(identity, &key)
-        guard let key, let keyDER = SecKeyCopyExternalRepresentation(key, nil) as Data? else {
+        let normalized = host.lowercased()
+        lock.lock()
+        defer { lock.unlock() }
+        ensureCA()
+        if let cached = leafDERCache[normalized] {
+            return cached
+        }
+        guard let caKey, let leafKey, let leafPublic = SecKeyCopyPublicKey(leafKey) else {
+            DohDebugLog.record("MITM leaf keys missing for \(normalized)")
             return nil
         }
-        return (SecCertificateCopyData(certificate) as Data, keyDER)
+        guard let leafData = X509Issuer.leaf(host: normalized, caKey: caKey, leafPublicKey: leafPublic) else {
+            DohDebugLog.record("MITM leaf encode failed for \(normalized)")
+            return nil
+        }
+        guard SecCertificateCreateWithData(nil, leafData as CFData) != nil else {
+            DohDebugLog.record("MITM leaf DER invalid for \(normalized)")
+            return nil
+        }
+        guard let keyDER = SecKeyCopyExternalRepresentation(leafKey, nil) as Data? else {
+            DohDebugLog.record("MITM leaf key export failed for \(normalized)")
+            return nil
+        }
+        let material = (certificate: leafData, rsaPrivateKey: keyDER)
+        leafDERCache[normalized] = material
+        DohDebugLog.record("MITM leaf issued for \(normalized) cert=\(leafData.count) key=\(keyDER.count)")
+        return material
     }
 
     func identity(for host: String) -> SecIdentity? {

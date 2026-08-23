@@ -116,6 +116,9 @@ enum AvatarImageLoader {
         let imageSession = SDWebImageDownloader.shared.config.sessionConfiguration
             ?? URLSessionConfiguration.default
         LightweightDohProxyService.shared.apply(to: imageSession)
+        imageSession.httpMaximumConnectionsPerHost = max(6, profile.maxConcurrentDownloads)
+        imageSession.waitsForConnectivity = false
+        imageSession.timeoutIntervalForRequest = 15
         SDWebImageDownloader.shared.config.sessionConfiguration = imageSession
         SDWebImageDownloader.shared.config.maxConcurrentDownloads = profile.maxConcurrentDownloads
         SDWebImagePrefetcher.shared.maxConcurrentPrefetchCount = UInt(profile.maxConcurrentPrefetchCount)

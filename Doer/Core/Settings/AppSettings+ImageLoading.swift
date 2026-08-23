@@ -24,15 +24,23 @@ extension AppSettings {
         var summary: String {
             switch self {
             case .low:
-                return "2 / 1 / 4"
+                return "4 / 2 / 8"
             case .medium:
-                return "3 / 1 / 8"
+                return "6 / 3 / 16"
             case .high:
-                return "4 / 2 / 16"
+                return "8 / 4 / 24"
             }
         }
 
         var maxConcurrentDownloads: Int {
+            switch self {
+            case .low: return 4
+            case .medium: return 6
+            case .high: return 8
+            }
+        }
+
+        var maxConcurrentPrefetchCount: Int {
             switch self {
             case .low: return 2
             case .medium: return 3
@@ -40,18 +48,11 @@ extension AppSettings {
             }
         }
 
-        var maxConcurrentPrefetchCount: Int {
-            switch self {
-            case .low, .medium: return 1
-            case .high: return 2
-            }
-        }
-
         var homeAvatarPrefetchLimit: Int {
             switch self {
-            case .low: return 4
-            case .medium: return 8
-            case .high: return 16
+            case .low: return 8
+            case .medium: return 16
+            case .high: return 24
             }
         }
     }

@@ -22,6 +22,20 @@ final class DohProxyConfigTests: XCTestCase {
         )
     }
 
+    func testCloudflareGatewayInfersBootstrap() {
+        let ips = DohServerCatalog.inferredBootstrapIPs(
+            for: "https://i4cm5lqxfu.cloudflare-gateway.com/dns-query"
+        )
+        XCTAssertEqual(ips, ["162.159.36.1", "162.159.46.1"])
+        XCTAssertFalse(ips.contains("1.1.1.1"))
+        let config = DohProxyConfig(
+            enabled: true,
+            serverURL: "https://i4cm5lqxfu.cloudflare-gateway.com/dns-query",
+            bootstrapIPs: ips
+        )
+        XCTAssertTrue(config.bootstrapReady)
+    }
+
     func testCustomURLWithoutBootstrapFailsReadyCheck() {
         let config = DohProxyConfig(
             enabled: true,

@@ -32,10 +32,35 @@ final class LocalConnectProxyTests: XCTestCase {
         XCTAssertEqual(dict["ExceptionsList"] as? [String], ["127.0.0.1", "localhost", "::1"])
     }
 
+    func testDoHProbeResultSubtitleIncludesLatencyAndIPs() {
+        let ok = LightweightDohProxyService.ProbeResult(
+            ok: true,
+            latencyMs: 128,
+            host: "linux.do",
+            addresses: ["104.20.16.234", "172.66.166.61"],
+            errorDescription: nil
+        )
+        XCTAssertEqual(ok.subtitle, "128 ms · linux.do → 104.20.16.234, 172.66.166.61")
+
+        let failed = LightweightDohProxyService.ProbeResult(
+            ok: false,
+            latencyMs: 20,
+            host: "linux.do",
+            addresses: [],
+            errorDescription: "timeout"
+        )
+        XCTAssertEqual(failed.subtitle, "timeout")
+    }
+
     func testMITMSkipsCloudflareChallengeHost() {
+        let previous = LocalConnectProxy.originECHReady
+        LocalConnectProxy.originECHReady = false
+        XCTAssertFalse(LocalConnectProxy.shouldMITM("linux.do"))
+        LocalConnectProxy.originECHReady = true
         XCTAssertTrue(LocalConnectProxy.shouldMITM("linux.do"))
         XCTAssertTrue(LocalConnectProxy.shouldMITM("example.com"))
         XCTAssertFalse(LocalConnectProxy.shouldMITM("challenges.cloudflare.com"))
+        LocalConnectProxy.originECHReady = previous
     }
 
     func testGatewayInterceptorNoopsWithoutRunningProxy() {

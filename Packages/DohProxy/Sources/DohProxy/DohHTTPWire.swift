@@ -9,8 +9,11 @@ enum DohHTTPWire {
             throw DohProxyError.malformedHTTPResponse
         }
         let lines = headerText.components(separatedBy: "\r\n")
-        guard let statusLine = lines.first, statusLine.contains(" 200 ") else {
-            throw DohProxyError.queryFailed("DoH server")
+        guard let statusLine = lines.first else {
+            throw DohProxyError.queryFailed("DoH empty status")
+        }
+        guard statusLine.contains(" 200 ") else {
+            throw DohProxyError.queryFailed(statusLine)
         }
         let headers = lines.dropFirst().reduce(into: [String: String]()) { result, line in
             guard let separatorIndex = line.firstIndex(of: ":") else { return }

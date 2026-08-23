@@ -9,6 +9,7 @@ public final class MitmNIOPipe: @unchecked Sendable {
     private let context: NIOSSLContext
     private let lock = NSLock()
     private var channel: EmbeddedChannel?
+    private var handler: NIOSSLServerHandler?
     private var started = false
 
     public init(certificateDER: Data, rsaPrivateKeyDER: Data, applicationProtocols: [String]) throws {
@@ -22,7 +23,12 @@ public final class MitmNIOPipe: @unchecked Sendable {
         context = try NIOSSLContext(configuration: configuration)
     }
 
-    public var negotiatedALPN: String? { nil }
+    public var negotiatedALPN: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let handler else { return nil }
+        return BoringSSLECH.negotiatedALPN(handler)
+    }
 
     public func start(
         clientRead: @escaping (@escaping (Data?) -> Void) -> Void,
@@ -38,7 +44,9 @@ public final class MitmNIOPipe: @unchecked Sendable {
             return
         }
         started = true
-        let channel = EmbeddedChannel(handler: NIOSSLServerHandler(context: context))
+        let handler = NIOSSLServerHandler(context: context)
+        self.handler = handler
+        let channel = EmbeddedChannel(handler: handler)
         self.channel = channel
         lock.unlock()
 

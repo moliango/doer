@@ -25,6 +25,28 @@ final class EncryptedDnsServiceTests: XCTestCase {
         XCTAssertEqual(spec.bootstrapIPs, ["223.5.5.5"])
     }
 
+    func testOrderedBootstrapIPsPreferLiveIPv4() {
+        XCTAssertEqual(
+            EncryptedDnsService.orderedBootstrapIPs(
+                [
+                    "162.159.36.1",
+                    "2606:4700:5c::a29f:2e07",
+                    "162.159.36.20",
+                    "162.159.36.1",
+                ],
+                preferIPv6: false
+            ),
+            ["162.159.36.1", "162.159.36.20"]
+        )
+    }
+
+    func testLockedBootstrapIPsCannotDropInferred() {
+        let url = "https://i4cm5lqxfu.cloudflare-gateway.com/dns-query"
+        let locked = AppSettings.lockedBootstrapIPs(for: url, extras: ["1.1.1.1"])
+        XCTAssertTrue(locked.contains("162.159.36.1"))
+        XCTAssertTrue(locked.contains("1.1.1.1"))
+    }
+
     func testRejectsNonHTTPSURL() {
         XCTAssertNil(
             EncryptedDnsService.spec(

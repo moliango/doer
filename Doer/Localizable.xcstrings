@@ -21917,6 +21917,40 @@
         }
       }
     },
+    "settings.network.bootstrap" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bootstrap IPs"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bootstrap IP"
+          }
+        }
+      }
+    },
+    "settings.network.bootstrap.message" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Comma-separated IPs used to reach the DoH server without system DNS."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "逗号分隔，用来连上 DoH 服务器，不走系统 DNS"
+          }
+        }
+      }
+    },
     "settings.network.cloudflare_ready" : {
       "localizations" : {
         "en" : {
@@ -22079,13 +22113,221 @@
         }
       }
     },
+    "settings.network.dns_cache" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DNS cache"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DNS 缓存"
+          }
+        }
+      }
+    },
+    "settings.network.dns_cache.clear" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tap to clear"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "点按清空"
+          }
+        }
+      }
+    },
+    "settings.network.doh_detail" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "DoH 设置"
+          }
+        }
+      }
+    },
+    "settings.network.doh_detail.advanced" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "高级"
+          }
+        }
+      }
+    },
+    "settings.network.doh_detail.servers" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "服务器"
+          }
+        }
+      }
+    },
+    "settings.network.doh_server.add" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "添加服务器"
+          }
+        }
+      }
+    },
+    "settings.network.doh_server.add.message" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "填写名称和 https:// 地址。Bootstrap IP 由系统自动锁定，不能删除。"
+          }
+        }
+      }
+    },
+    "settings.network.doh_server.add.subtitle" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "自定义 DoH 地址，长按可删除"
+          }
+        }
+      }
+    },
+    "settings.network.doh_server.delete" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "删除服务器"
+          }
+        }
+      }
+    },
+    "settings.network.doh_server.name" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "名称"
+          }
+        }
+      }
+    },
     "settings.network.doh_status" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "DoH 状态"
+            "value" : "状态"
+          }
+        }
+      }
+    },
+    "settings.network.doh_test" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "测试 DoH"
+          }
+        }
+      }
+    },
+    "settings.network.doh_test.all" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "测试全部服务器"
+          }
+        }
+      }
+    },
+    "settings.network.doh_test.all.subtitle" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "用当前列表解析 linux.do"
+          }
+        }
+      }
+    },
+    "settings.network.doh_test.empty" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "没有解析到地址"
+          }
+        }
+      }
+    },
+    "settings.network.doh_test.failed" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "测试失败"
+          }
+        }
+      }
+    },
+    "settings.network.doh_test.idle" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "解析 linux.do，确认当前服务器能用"
+          }
+        }
+      }
+    },
+    "settings.network.doh_test.no_bootstrap" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "没有 Bootstrap IP，无法连接 DoH 服务器"
+          }
+        }
+      }
+    },
+    "settings.network.doh_test.running" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "测试中…"
           }
         }
       }
@@ -22095,13 +22337,244 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Resolve linux.do inside the app. No system DNS profile."
+            "value" : "Resolve hosts inside the app. No system DNS profile."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在 App 内解析 linux.do，不用去系统设置"
+            "value" : "在 App 内解析域名，不用去系统设置"
+          }
+        }
+      }
+    },
+    "settings.network.ech" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ECH"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ECH"
+          }
+        }
+      }
+    },
+    "settings.network.ech.off" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No ECH"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无 ECH"
+          }
+        }
+      }
+    },
+    "settings.network.ech.on" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ECH config resolved"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已解析到 ECH 配置"
+          }
+        }
+      }
+    },
+    "settings.network.ech.server" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ECH lookup server"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ECH 查询服务器"
+          }
+        }
+      }
+    },
+    "settings.network.ech.server.message" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "HTTPS record lookup URL. Leave empty to use the DoH server."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "HTTPS 记录查询 URL，留空则与 DoH 相同"
+          }
+        }
+      }
+    },
+    "settings.network.ech.server.same" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Same as DoH"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "与 DoH 相同"
+          }
+        }
+      }
+    },
+    "settings.network.gateway" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway reverse proxy"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway 反代"
+          }
+        }
+      }
+    },
+    "settings.network.gateway.subtitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API uses plaintext 127.0.0.1; cookies stay on the original host"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API 走 127.0.0.1 明文，Cookie 仍用原域名"
+          }
+        }
+      }
+    },
+    "settings.network.h2" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "h2 MITM"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "h2 MITM"
+          }
+        }
+      }
+    },
+    "settings.network.h2.subtitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Off locks HTTP/1.1; on negotiates HTTP/2"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭锁 HTTP/1.1，打开协商 HTTP/2"
+          }
+        }
+      }
+    },
+    "settings.network.ios15.webview" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iOS 15–16 browser has no CONNECT MITM"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iOS 15–16 浏览器无 CONNECT MITM"
+          }
+        }
+      }
+    },
+    "settings.network.ipv6" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prefer IPv6"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "IPv6 优先"
+          }
+        }
+      }
+    },
+    "settings.network.ipv6.subtitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prefer AAAA for DoH bootstrap and lookups"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DoH bootstrap 与解析优先 AAAA"
+          }
+        }
+      }
+    },
+    "settings.network.more" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "更多设置"
+          }
+        }
+      }
+    },
+    "settings.network.more.subtitle" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "服务器、缓存与高级选项"
           }
         }
       }
@@ -22156,13 +22629,29 @@
         }
       }
     },
-    "settings.network.section.proxy" : {
+    "settings.network.section.doh" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "网络代理"
+            "value" : "DNS over HTTPS"
+          }
+        }
+      }
+    },
+    "settings.network.server_ip" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pinned server IP"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "固定 server IP"
           }
         }
       }
@@ -22191,6 +22680,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "DoH 服務商和連接選項"
+          }
+        }
+      }
+    },
+    "settings.network.upstream" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Upstream proxy"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上游代理"
+          }
+        }
+      }
+    },
+    "settings.network.upstream.message" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "host:port, leave empty to disable"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "host:port，留空关闭"
           }
         }
       }

@@ -13,6 +13,7 @@ nonisolated final class DohResolver: @unchecked Sendable {
 
     init(config: DohProxyConfig = AppSettings.dohProxyConfig(from: .standard)) {
         inner = DohBootstrapResolver(config: config)
+        DohBootstrapTransport.log = { DohDebugLog.record($0) }
         DohDebugLog.record("Resolver engine: bootstrap DoH (no system DNS)")
     }
 

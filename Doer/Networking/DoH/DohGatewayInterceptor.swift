@@ -12,6 +12,7 @@ final class DohGatewayInterceptor: RequestInterceptor {
     ) {
         let config = AppSettings.dohProxyConfig(from: .standard)
         guard config.isGatewayMode,
+              LocalConnectProxy.originECHReady,
               let port = LightweightDohProxyService.shared.ensureRunning(),
               let url = urlRequest.url,
               url.scheme?.lowercased() == "https",

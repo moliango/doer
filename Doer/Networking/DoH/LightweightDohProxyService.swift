@@ -14,6 +14,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     private(set) var lastError: Error?
     private(set) var configurationVersion: Int = 0
     private var lastSignature = ""
+    private var applyGeneration = 0
 
     private init() {}
 
@@ -44,6 +45,9 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         lock.lock()
         let browserReady = proxy?.isRunning == true
         lock.unlock()
+        if !LocalConnectProxy.originECHReady {
+            return "应用内 DoH · Encrypted DNS"
+        }
         let mode = config.isGatewayMode ? "Gateway" : "CONNECT MITM"
         let h2 = config.h2Mitm ? " · h2" : ""
         lock.lock()
@@ -58,6 +62,8 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
 
     func configureFromSettings() {
         lock.lock()
+        applyGeneration += 1
+        let generation = applyGeneration
         let signature = currentSignature
         if signature == lastSignature {
             lock.unlock()
@@ -68,32 +74,66 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         let shouldEnable = UserDefaults.standard.bool(forKey: "dohEnabled")
         lock.unlock()
 
+        startQueue.async { [weak self] in
+            self?.applyConfiguration(shouldEnable: shouldEnable, generation: generation)
+        }
+    }
+
+    private func applyConfiguration(shouldEnable: Bool, generation: Int) {
+        lock.lock()
+        let current = applyGeneration
+        lock.unlock()
+        guard current == generation else { return }
+
         if shouldEnable {
             let config = AppSettings.dohProxyConfig(from: .standard)
             if !config.bootstrapReady {
                 lock.lock()
                 lastError = DohProxyError.bootstrapUnavailable(config.serverURL)
                 lock.unlock()
+                DohDebugLog.record("DoH start aborted: no bootstrap IP for \(config.serverURL)")
                 EncryptedDnsService.disable()
-                stop()
+                stop(clearError: false)
+                publishAppClients()
+                return
+            }
+            if let upstream = config.upstream, !upstream.isValid {
+                lock.lock()
+                lastError = DohProxyError.queryFailed("upstream")
+                lock.unlock()
+                DohDebugLog.record("DoH start aborted: invalid upstream \(upstream.host):\(upstream.port)")
+                EncryptedDnsService.disable()
+                stop(clearError: false)
+                publishAppClients()
                 return
             }
             lock.lock()
             lastError = nil
             lock.unlock()
             resolver.updateConfig(config)
-            if #available(iOS 17.0, *) {
+            DohDebugLog.record(
+                "DoH starting \(config.serverURL) bootstrap=\(config.bootstrapIPs.joined(separator: ","))"
+            )
+            if LocalConnectProxy.originECHReady {
                 EncryptedDnsService.disable()
+                stop(clearError: false)
+                startWebViewProxyNow()
             } else {
-                EncryptedDnsService.applyFromDefaults()
-            }
-            startQueue.async { [weak self] in
-                self?.startWebViewProxyNow()
+                stop(clearError: false)
+                if let spec = EncryptedDnsService.spec(fromDefaults: .standard) {
+                    EncryptedDnsService.apply(spec)
+                    prewarmForumDNS()
+                } else {
+                    EncryptedDnsService.disable()
+                    DohDebugLog.record("Encrypted DNS skipped: no bootstrap IPs")
+                }
+                DohDebugLog.record("DoH Encrypted DNS only; CONNECT off until ECH inject works")
             }
         } else {
             lock.lock()
             lastError = nil
             lock.unlock()
+            DohDebugLog.record("DoH disabled; not starting local proxy")
             EncryptedDnsService.disable()
             stop()
         }
@@ -158,16 +198,29 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         }
     }
 
-    func stop() {
+    func stop(clearError: Bool = true) {
         lock.lock()
         let oldProxy = proxy
         proxy = nil
-        lastError = nil
+        if clearError { lastError = nil }
         configurationVersion += 1
         lock.unlock()
 
         oldProxy?.stop()
         publishAppClients()
+    }
+
+    private func prewarmForumDNS() {
+        resolver.resolve(host: "linux.do") { result in
+            switch result {
+            case .success(let answer):
+                DohDebugLog.record(
+                    "DoH prewarm linux.do -> \(answer.addresses.prefix(2).joined(separator: ", "))"
+                )
+            case .failure(let error):
+                DohDebugLog.record("DoH prewarm linux.do failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     func clearCache() {
@@ -177,6 +230,88 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
 
     func resolverCacheStats() -> DohCacheStats {
         resolver.cacheStats()
+    }
+
+    struct ProbeResult: Equatable {
+        var ok: Bool
+        var latencyMs: Int
+        var host: String
+        var addresses: [String]
+        var errorDescription: String?
+
+        var subtitle: String {
+            if ok {
+                let ips = addresses.prefix(2).joined(separator: ", ")
+                return "\(latencyMs) ms · \(host) → \(ips)"
+            }
+            return errorDescription
+                ?? String(localized: "settings.network.doh_test.failed", defaultValue: "测试失败")
+        }
+    }
+
+    /// Resolves `host` through the given DoH server (or the current one).
+    func probe(
+        serverURL: String? = nil,
+        bootstrapIPs: [String]? = nil,
+        host: String = "linux.do",
+        completion: @escaping (ProbeResult) -> Void
+    ) {
+        var config = AppSettings.dohProxyConfig(from: .standard)
+        if let serverURL {
+            config.serverURL = serverURL
+            if let bootstrapIPs, !bootstrapIPs.isEmpty {
+                config.bootstrapIPs = bootstrapIPs
+            } else if let builtIn = DohServerCatalog.builtIn(url: serverURL) {
+                config.bootstrapIPs = builtIn.bootstrapIPs
+            } else {
+                config.bootstrapIPs = DohServerCatalog.inferredBootstrapIPs(for: serverURL)
+            }
+        }
+        config.enabled = true
+        guard config.bootstrapReady else {
+            completion(
+                ProbeResult(
+                    ok: false,
+                    latencyMs: 0,
+                    host: host,
+                    addresses: [],
+                    errorDescription: String(
+                        localized: "settings.network.doh_test.no_bootstrap",
+                        defaultValue: "没有 Bootstrap IP，无法连接 DoH 服务器"
+                    )
+                )
+            )
+            return
+        }
+        let started = Date()
+        let probeResolver = DohResolver(config: config)
+        probeResolver.resolve(host: host) { result in
+            let ms = max(1, Int(Date().timeIntervalSince(started) * 1000))
+            let probe: ProbeResult
+            switch result {
+            case .success(let answer):
+                probe = ProbeResult(
+                    ok: !answer.addresses.isEmpty,
+                    latencyMs: ms,
+                    host: host,
+                    addresses: answer.addresses,
+                    errorDescription: answer.addresses.isEmpty
+                        ? String(localized: "settings.network.doh_test.empty", defaultValue: "没有解析到地址")
+                        : nil
+                )
+            case .failure(let error):
+                probe = ProbeResult(
+                    ok: false,
+                    latencyMs: ms,
+                    host: host,
+                    addresses: [],
+                    errorDescription: error.localizedDescription
+                )
+            }
+            DispatchQueue.main.async {
+                completion(probe)
+            }
+        }
     }
 
     func connectionProxyDictionary(for baseURL: String) -> [AnyHashable: Any]? {
@@ -194,8 +329,8 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     ) {
         let enabled = UserDefaults.standard.bool(forKey: "dohEnabled")
         let config = AppSettings.dohProxyConfig(from: .standard)
-        let useGateway = preferGateway && config.isGatewayMode
-        guard enabled, !useGateway, let port = ensureRunning() else {
+        let useGateway = preferGateway && config.isGatewayMode && LocalConnectProxy.originECHReady
+        guard enabled, LocalConnectProxy.originECHReady, !useGateway, let port = ensureRunning() else {
             clearProxy(on: sessionConfiguration)
             return
         }
@@ -205,7 +340,8 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
                 sessionConfiguration.proxyConfigurations = [proxy]
             }
         }
-        DohDebugLog.record("Using local CONNECT MITM proxy on 127.0.0.1:\(port)")
+        let mode = LocalConnectProxy.originECHReady ? "MITM" : "pass-through"
+        DohDebugLog.record("Using local CONNECT \(mode) proxy on 127.0.0.1:\(port)")
     }
 
     private func publishAppClients() {

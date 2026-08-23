@@ -1,3 +1,4 @@
+import DohProxy
 import Foundation
 import Network
 
@@ -12,8 +13,13 @@ nonisolated enum EncryptedDnsService {
     }
 
     static func spec(fromDefaults defaults: UserDefaults = .standard) -> ResolverSpec? {
-        let provider = DohProviderConfiguration.currentFromDefaults()
-        return spec(urlString: provider.url, providerRaw: defaults.object(forKey: "dohProvider") as? Int)
+        let config = AppSettings.dohProxyConfig(from: defaults)
+        guard let url = URL(string: config.serverURL), url.scheme?.lowercased() == "https" else {
+            return nil
+        }
+        let ips = orderedBootstrapIPs(config.bootstrapIPs, preferIPv6: config.preferIPv6)
+        guard !ips.isEmpty else { return nil }
+        return ResolverSpec(url: url, bootstrapIPs: ips)
     }
 
     static func spec(urlString: String, providerRaw: Int?) -> ResolverSpec? {
@@ -39,29 +45,61 @@ nonisolated enum EncryptedDnsService {
         apply(spec)
     }
 
+    private static let applyLock = NSLock()
+    private static var lastApplied: ResolverSpec?
+
     static func apply(_ spec: ResolverSpec) {
-        let endpoints = bootstrapEndpoints(spec.bootstrapIPs)
+        var ips = spec.bootstrapIPs
+        if let host = spec.url.host {
+            for ip in DohBootstrapTransport.systemAddresses(for: host) where !ips.contains(ip) {
+                ips.insert(ip, at: 0)
+            }
+        }
+        ips = orderedBootstrapIPs(ips, preferIPv6: false)
+        let normalized = ResolverSpec(url: spec.url, bootstrapIPs: ips)
+        applyLock.lock()
+        let alreadyApplied = lastApplied == normalized
+        lastApplied = normalized
+        applyLock.unlock()
+        let endpoints = bootstrapEndpoints(ips)
         let resolver = NWParameters.PrivacyContext.ResolverConfiguration.https(
-            spec.url,
+            normalized.url,
             serverAddresses: endpoints
         )
         NWParameters.PrivacyContext.default.requireEncryptedNameResolution(
             true,
             fallbackResolver: resolver
         )
-        NWParameters.PrivacyContext.default.flushCache()
+        if !alreadyApplied {
+            NWParameters.PrivacyContext.default.flushCache()
+        }
         DohDebugLog.record(
-            "Encrypted DNS on \(spec.url.absoluteString) bootstrap=\(spec.bootstrapIPs.joined(separator: ","))"
+            "Encrypted DNS on \(normalized.url.absoluteString) bootstrap=\(ips.joined(separator: ","))"
         )
     }
 
     static func disable() {
+        applyLock.lock()
+        lastApplied = nil
+        applyLock.unlock()
         NWParameters.PrivacyContext.default.requireEncryptedNameResolution(
             false,
             fallbackResolver: nil
         )
         NWParameters.PrivacyContext.default.flushCache()
         DohDebugLog.record("Encrypted DNS off")
+    }
+
+    /// Live resolver IPs first, IPv4 before IPv6. Hardcoded anycast like
+    /// 162.159.36.1 often times out on the same network that can reach .5/.20.
+    static func orderedBootstrapIPs(_ ips: [String], preferIPv6: Bool) -> [String] {
+        var seen = Set<String>()
+        let unique = ips.filter { seen.insert($0).inserted }
+        let v4 = unique.filter { IPv4Address($0) != nil }
+        let v6 = unique.filter { IPv6Address($0) != nil }
+        if preferIPv6, !v6.isEmpty { return v6 + v4 }
+        if !v4.isEmpty { return v4 }
+        return v6
     }
 
     static func bootstrapEndpoints(_ ips: [String]) -> [NWEndpoint] {
