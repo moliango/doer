@@ -52,7 +52,7 @@ class ChatTopicDetailViewController: ObservableViewController {
     lazy var readingTracker = TopicReadingTracker(api: api)
 
     private lazy var tableView: UITableView = {
-        let tv = ChatTopicTableView(frame: .zero, style: .plain)
+        let tv = TopicDetailPopAwareTableView(frame: .zero, style: .plain)
         tv.translatesAutoresizingMaskIntoConstraints = false
         registerChatCells(on: tv)
         tv.separatorStyle = .none
@@ -938,6 +938,11 @@ class ChatTopicDetailViewController: ObservableViewController {
                     TagTopicsViewController(api: api, tagName: tagName),
                     animated: true
                 )
+            case let .user(username):
+                navigationController?.pushViewController(
+                    UserProfileViewController(api: api, username: username),
+                    animated: true
+                )
             }
         } else {
             DoerSafariPresenter.present(
@@ -1103,22 +1108,19 @@ class ChatTopicDetailViewController: ObservableViewController {
     }
 }
 
-/// Same system edge-pop as classic Topic Detail. Incoming chat bubbles sit on the
-/// left edge, so the table pan must not begin on a rightward swipe from that strip
-/// — otherwise it wins and the nav gesture never starts. No `require(toFail:)`:
-/// waiting on the edge recognizer delays every left-edge pan and can freeze.
-private final class ChatTopicTableView: UITableView {
-    private static let systemPopEdgeWidth: CGFloat = 20
-
+/// Topic Detail table: a rightward back-swipe from the system pop edge must not
+/// start vertical scrolling. No `require(toFail:)` on the edge recognizer —
+/// waiting on it delays every left-edge pan and can freeze.
+final class TopicDetailPopAwareTableView: UITableView {
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         if gestureRecognizer === panGestureRecognizer,
            let pan = gestureRecognizer as? UIPanGestureRecognizer {
             let location = pan.location(in: self)
-            let translation = pan.translation(in: self)
-            let velocity = pan.velocity(in: self)
-            let dx = abs(translation.x) >= 1 ? translation.x : velocity.x
-            let dy = abs(translation.y) >= 1 ? translation.y : velocity.y
-            if location.x <= Self.systemPopEdgeWidth, dx > 0, abs(dx) >= abs(dy) {
+            if NavigationPopGesturePriority.shouldYieldScrollPanToSystemPop(
+                locationX: location.x,
+                translation: pan.translation(in: self),
+                velocity: pan.velocity(in: self)
+            ) {
                 return false
             }
         }

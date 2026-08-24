@@ -101,6 +101,8 @@ extension ChatTopicDetailViewController {
             Task { await jumpToFloor(floor) }
         case .readingSettings:
             navigationController?.pushViewController(ReadingSettingsViewController(), animated: true)
+        case .tableOfContents:
+            break
         case .markUnreadStepBack:
             markTopicUnread(mode: .stepBack)
         case .markUnreadClear:

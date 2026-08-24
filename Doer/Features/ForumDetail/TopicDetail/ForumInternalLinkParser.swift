@@ -1,9 +1,10 @@
 import Foundation
 
-enum ForumInternalLinkDestination {
+enum ForumInternalLinkDestination: Equatable {
     case topic(id: Int, postNumber: Int?)
     case category(slug: String, id: Int)
     case tag(name: String)
+    case user(username: String)
 }
 
 enum ForumInternalLinkParser {
@@ -38,6 +39,9 @@ enum ForumInternalLinkParser {
         }
         if let tagName = parseTagName(from: url) {
             return .tag(name: tagName)
+        }
+        if let username = parseUsername(from: url) {
+            return .user(username: username)
         }
         return nil
     }
@@ -81,12 +85,86 @@ enum ForumInternalLinkParser {
         return nil
     }
 
+    static func categoryURL(slug: String, id: Int, baseURL: String) -> URL? {
+        let encoded = slug.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? slug
+        let base = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return URL(string: "\(base)/c/\(encoded)/\(id)")
+    }
+
+    static func tagURL(name: String, baseURL: String) -> URL? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? trimmed
+        let base = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return URL(string: "\(base)/tag/\(encoded)")
+    }
+
     private static func parseTagName(from url: URL) -> String? {
         let components = url.pathComponents
         guard let tagIndex = components.firstIndex(where: { $0 == "tag" || $0 == "tags" }),
               tagIndex + 1 < components.count
         else { return nil }
-        return components[tagIndex + 1].removingPercentEncoding ?? components[tagIndex + 1]
+        let raw = components[tagIndex + 1]
+        let decoded = raw.removingPercentEncoding ?? raw
+        let trimmed = decoded.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "l", !trimmed.hasSuffix(".json") else { return nil }
+        return trimmed.replacingOccurrences(of: ".json", with: "")
+    }
+
+    /// Mention and profile links: `/u/username`, `/u/username/summary`, `/users/username`.
+    /// Skips Discourse utility routes such as `/u/search/users`.
+    private static func parseUsername(from url: URL) -> String? {
+        let components = url.pathComponents
+        if let usersIndex = components.firstIndex(of: "users"),
+           usersIndex + 3 < components.count,
+           components[usersIndex + 1] == "by-id" {
+            return sanitizedUsername(components[usersIndex + 3])
+        }
+
+        guard let userIndex = components.firstIndex(where: { $0 == "u" || $0 == "users" }),
+              userIndex + 1 < components.count
+        else { return nil }
+
+        if components[userIndex] == "users", components[userIndex + 1] == "by-id" {
+            return nil
+        }
+
+        return sanitizedUsername(components[userIndex + 1])
+    }
+
+    private static let reservedUserPathComponents: Set<String> = [
+        "account-created",
+        "admin",
+        "confirm-new-email",
+        "confirm-old-email",
+        "hp",
+        "login",
+        "password-reset",
+        "preferences",
+        "recent-searches",
+        "search",
+        "signup",
+        "toggle-anon",
+        "user-menu",
+    ]
+
+    private static func sanitizedUsername(_ raw: String) -> String? {
+        var value = (raw.removingPercentEncoding ?? raw)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if value.lowercased().hasSuffix(".json") {
+            value = String(value.dropLast(5))
+        }
+        if value.hasPrefix("@") {
+            value.removeFirst()
+        }
+        guard !value.isEmpty,
+              value.count <= 60,
+              !reservedUserPathComponents.contains(value.lowercased())
+        else { return nil }
+
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+        guard value.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return nil }
+        return value
     }
 }
 

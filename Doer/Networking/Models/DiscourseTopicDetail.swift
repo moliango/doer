@@ -303,9 +303,41 @@ struct DiscourseTopicDetail: Decodable {
     }
 
     struct Tag: Decodable {
-        let id: Int
+        let id: Int?
         let name: String
         let slug: String
+
+        enum CodingKeys: String, CodingKey {
+            case id, name, slug
+        }
+
+        init(id: Int? = nil, name: String, slug: String? = nil) {
+            self.id = id
+            self.name = name
+            self.slug = slug?.isEmpty == false ? slug! : name
+        }
+
+        init(from decoder: Decoder) throws {
+            if let single = try? decoder.singleValueContainer(),
+               let value = try? single.decode(String.self) {
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.init(name: trimmed)
+                return
+            }
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let decodedName = (try? container.decodeIfPresent(String.self, forKey: .name))?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let decodedSlug = (try? container.decodeIfPresent(String.self, forKey: .slug))?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let resolvedName = decodedName.isEmpty ? decodedSlug : decodedName
+            self.init(
+                id: container.decodeLossyInt(forKey: .id),
+                name: resolvedName,
+                slug: decodedSlug.isEmpty ? resolvedName : decodedSlug
+            )
+        }
+        /// Discourse `/tag/:name` uses the tag name, not a separate latin slug.
+        var routeName: String { name.isEmpty ? slug : name }
     }
 
     struct ReplyToUser: Decodable {

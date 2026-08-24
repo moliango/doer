@@ -161,7 +161,7 @@ enum DiscourseRouter {
         case .categoryFilteredTopics(let slug, let id, let filter, let page):
             return "/c/\(slug)/\(id)/l/\(filter).json?page=\(page)"
         case .tagTopics(let name, let page):
-            return "/tag/\(name).json?page=\(page)"
+            return "/tag/\(Self.pathComponent(name)).json?page=\(page)"
         case .siteInfo:
             return "/site.json"
         case .basicInfo:

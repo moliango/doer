@@ -553,6 +553,8 @@ final class TopicDetailCoordinator {
             openInternalViewController(CategoryTopicsViewController(api: api, category: category))
         case let .tag(tagName):
             openInternalViewController(TagTopicsViewController(api: api, tagName: tagName))
+        case let .user(username):
+            openInternalViewController(UserProfileViewController(api: api, username: username))
         }
     }
 

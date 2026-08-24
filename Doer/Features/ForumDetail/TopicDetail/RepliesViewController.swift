@@ -417,6 +417,8 @@ extension RepliesViewController: PostCellDelegate {
         case let .tag(tagName):
             let vc = TagTopicsViewController(api: api, tagName: tagName)
             openInternalViewController(vc)
+        case let .user(username):
+            openInternalViewController(UserProfileViewController(api: api, username: username))
         }
     }
 
