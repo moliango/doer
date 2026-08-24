@@ -253,6 +253,40 @@ final class TopicDetailNativeLayoutTests: XCTestCase {
         )
     }
 
+    func testStyledAttributedStringReplacesEmojiShortcodes() {
+        let config = NativeRenderConfig.default(
+            contentWidth: 320,
+            baseURL: "https://linux.do"
+        )
+        let attributed = config.styledAttributedString(from: [
+            .text("🔥 :rocket:起飞咯~"),
+        ])
+
+        XCTAssertFalse(attributed.string.contains(":rocket:"))
+        var foundAttachment = false
+        attributed.enumerateAttribute(
+            .attachment,
+            in: NSRange(location: 0, length: attributed.length)
+        ) { value, _, stop in
+            if value is EmojiTextAttachment {
+                foundAttachment = true
+                stop.pointee = true
+            }
+        }
+        XCTAssertTrue(foundAttachment)
+    }
+
+    func testStyledAttributedStringKeepsShortcodesInsideInlineCode() {
+        let config = NativeRenderConfig.default(
+            contentWidth: 320,
+            baseURL: "https://linux.do"
+        )
+        let attributed = config.styledAttributedString(from: [
+            .code(":rocket:"),
+        ])
+        XCTAssertTrue(attributed.string.contains(":rocket:"))
+    }
+
     func testInlineTopicHashtagUsesIconAndTextInsteadOfHashPrefix() {
         let config = NativeRenderConfig.default(
             contentWidth: 320,
