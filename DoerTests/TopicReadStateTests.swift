@@ -234,6 +234,51 @@ final class TopicReadStateTests: XCTestCase {
         )
     }
 
+    func testNavigationPopGesturePriorityYieldsHorizontalEdgeSwipeButKeepsVerticalScroll() {
+        XCTAssertTrue(
+            NavigationPopGesturePriority.shouldYieldScrollPanToSystemPop(
+                locationX: 12,
+                translation: CGPoint(x: 8, y: 1),
+                velocity: .zero
+            )
+        )
+        XCTAssertFalse(
+            NavigationPopGesturePriority.shouldYieldScrollPanToSystemPop(
+                locationX: 12,
+                translation: CGPoint(x: 1, y: 10),
+                velocity: .zero
+            )
+        )
+        XCTAssertFalse(
+            NavigationPopGesturePriority.shouldYieldScrollPanToSystemPop(
+                locationX: 80,
+                translation: CGPoint(x: 12, y: 0),
+                velocity: .zero
+            )
+        )
+        XCTAssertFalse(
+            NavigationPopGesturePriority.shouldYieldScrollPanToSystemPop(
+                locationX: 12,
+                translation: .zero,
+                velocity: .zero
+            )
+        )
+    }
+
+    func testChatAvatarTimestampIncludesDateOnTodayAndCompactIsSingleLine() {
+        let now = Date()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let iso = formatter.string(from: now)
+        let twoLine = ChatAvatarTimestamp.text(forCreatedAt: iso, now: now)
+        XCTAssertTrue(twoLine.contains("\n"))
+        XCTAssertTrue(twoLine.contains("/"))
+        let compact = ChatAvatarTimestamp.compactText(forCreatedAt: iso, now: now)
+        XCTAssertFalse(compact.contains("\n"))
+        XCTAssertTrue(compact.contains(" "))
+        XCTAssertTrue(compact.contains("/"))
+    }
+
     func testChatDateSeparatorHidesOnSameCalendarDay() {
         let morning = "2026-01-15T02:00:00.000Z"
         let evening = "2026-01-15T18:00:00.000Z"

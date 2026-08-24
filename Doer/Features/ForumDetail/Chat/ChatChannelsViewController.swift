@@ -650,6 +650,9 @@ final class ChatRoomViewController: ObservableViewController, UITableViewDataSou
             if who.isEmpty { return clipped }
             return "\(who): \(clipped)"
         }()
+        cell.onOpenImages = { [weak self] current, all in
+            self?.presentTopicImageGallery(currentURL: current, imageURLs: all)
+        }
         cell.configure(
             message: msg,
             isOutgoing: isOutgoing,
@@ -698,6 +701,16 @@ private final class ChatBubbleCell: UITableViewCell {
         return label
     }()
 
+    private let uploadsStack: UIStackView = {
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 6
+        stack.alignment = .leading
+        stack.isHidden = true
+        return stack
+    }()
+
     private let replyPreviewLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -731,7 +744,8 @@ private final class ChatBubbleCell: UITableViewCell {
     private var replyPreviewHeightConstraint: NSLayoutConstraint?
     private var bodyTopToReplyConstraint: NSLayoutConstraint?
     private var bodyTopToBubbleConstraint: NSLayoutConstraint?
-
+    private var uploadsTopConstraint: NSLayoutConstraint?
+    var onOpenImages: ((URL, [URL]) -> Void)?
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         selectionStyle = .none
@@ -744,6 +758,7 @@ private final class ChatBubbleCell: UITableViewCell {
         contentView.addSubview(bubbleView)
         bubbleView.addSubview(replyPreviewLabel)
         bubbleView.addSubview(bodyLabel)
+        bubbleView.addSubview(uploadsStack)
 
         let avatarLead = avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12)
         let avatarTrail = avatarView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12)
@@ -785,7 +800,10 @@ private final class ChatBubbleCell: UITableViewCell {
 
             bodyLabel.leadingAnchor.constraint(equalTo: bubbleView.leadingAnchor, constant: 12),
             bodyLabel.trailingAnchor.constraint(equalTo: bubbleView.trailingAnchor, constant: -12),
-            bodyLabel.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: -10),
+
+            uploadsStack.leadingAnchor.constraint(equalTo: bubbleView.leadingAnchor, constant: 8),
+            uploadsStack.trailingAnchor.constraint(lessThanOrEqualTo: bubbleView.trailingAnchor, constant: -8),
+            uploadsStack.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: -8),
 
             bubbleLead,
             bubbleTrail,
@@ -806,6 +824,9 @@ private final class ChatBubbleCell: UITableViewCell {
         let bodyToBubble = bodyLabel.topAnchor.constraint(equalTo: bubbleView.topAnchor, constant: 10)
         bodyTopToReplyConstraint = bodyToReply
         bodyTopToBubbleConstraint = bodyToBubble
+        let uploadsTop = uploadsStack.topAnchor.constraint(equalTo: bodyLabel.bottomAnchor, constant: 6)
+        uploadsTopConstraint = uploadsTop
+        uploadsTop.isActive = true
         bodyToBubble.isActive = true
     }
 
@@ -854,13 +875,23 @@ private final class ChatBubbleCell: UITableViewCell {
             bodyTopToBubbleConstraint?.isActive = true
         }
 
-        TitleEmojiRenderer.apply(
-            message.displayBody,
-            to: bodyLabel,
-            font: bodyLabel.font ?? .systemFont(ofSize: 16),
-            textColor: bodyLabel.textColor,
-            baseURL: baseURL
-        )
+        let body = message.displayBody
+        let imageURLs = message.displayImageURLs(baseURL: baseURL)
+        bodyLabel.isHidden = body.isEmpty
+        if body.isEmpty {
+            bodyLabel.text = nil
+            bodyLabel.attributedText = nil
+        } else {
+            TitleEmojiRenderer.apply(
+                body,
+                to: bodyLabel,
+                font: bodyLabel.font ?? .systemFont(ofSize: 16),
+                textColor: bodyLabel.textColor,
+                baseURL: baseURL
+            )
+        }
+        uploadsTopConstraint?.constant = body.isEmpty ? 0 : 6
+        installUploadImages(imageURLs)
         bodyLabel.textColor = isOutgoing
             ? (chatStyle == .telegram && isDark ? .white : .label)
             : .label
@@ -917,18 +948,95 @@ private final class ChatBubbleCell: UITableViewCell {
         }
     }
 
+    private func installUploadImages(_ urls: [URL]) {
+        clearUploadImages()
+        guard !urls.isEmpty else {
+            uploadsStack.isHidden = true
+            return
+        }
+        uploadsStack.isHidden = false
+        let many = urls.count > 1
+        let maxWidth: CGFloat = many ? 132 : 220
+        for url in urls {
+            let imageView = ChatBubbleImageView(url: url, maxWidth: maxWidth)
+            imageView.onTap = { [weak self] tapped in
+                self?.onOpenImages?(tapped, urls)
+            }
+            uploadsStack.addArrangedSubview(imageView)
+        }
+    }
+
+    private func clearUploadImages() {
+        uploadsStack.arrangedSubviews.forEach {
+            uploadsStack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        uploadsStack.isHidden = true
+    }
+
     override func prepareForReuse() {
         super.prepareForReuse()
         avatarView.sd_cancelCurrentImageLoad()
         avatarView.image = nil
         bodyLabel.text = nil
         bodyLabel.attributedText = nil
+        bodyLabel.isHidden = false
+        clearUploadImages()
+        onOpenImages = nil
         replyPreviewLabel.text = nil
         replyPreviewLabel.isHidden = true
         nameLabel.text = nil
         timeLabel.text = nil
         timeLabel.isHidden = false
         accessibilityLabel = nil
+    }
+}
+
+private final class ChatBubbleImageView: UIView {
+    var onTap: ((URL) -> Void)?
+    private let url: URL
+    private let imageView = SDAnimatedImageView()
+
+    init(url: URL, maxWidth: CGFloat) {
+        self.url = url
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        layer.cornerRadius = 10
+        layer.cornerCurve = .continuous
+        clipsToBounds = true
+        backgroundColor = .secondarySystemFill
+
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.contentMode = .scaleAspectFill
+        imageView.clipsToBounds = true
+        addSubview(imageView)
+
+        let width = widthAnchor.constraint(equalToConstant: maxWidth)
+        let height = heightAnchor.constraint(equalToConstant: min(max(maxWidth * 0.75, 88), 240))
+        NSLayoutConstraint.activate([
+            width,
+            height,
+            imageView.topAnchor.constraint(equalTo: topAnchor),
+            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
+        imageView.sd_setImage(with: url)
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+        addGestureRecognizer(tap)
+        isUserInteractionEnabled = true
+        accessibilityTraits = .image
+        accessibilityLabel = String(localized: "chat.image", defaultValue: "图片")
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    @objc private func handleTap() {
+        onTap?(url)
     }
 }
 

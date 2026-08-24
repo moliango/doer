@@ -271,6 +271,57 @@ enum ChatTopicStyle: Equatable {
     }
 }
 
+/// Compact date+time under WeChat / Telegram avatars so a scrolled-to message still shows the calendar day.
+enum ChatAvatarTimestamp {
+    /// Two-line stamp: `M/d` (or `yyyy/M/d` across years) + `HH:mm`.
+    static func text(forCreatedAt iso: String?, now: Date = Date()) -> String {
+        guard let parts = dateAndTime(iso: iso, now: now) else { return "" }
+        return parts.date + "\n" + parts.time
+    }
+
+    /// Single-line stamp when there is no avatar gutter (Telegram outgoing).
+    static func compactText(forCreatedAt iso: String?, now: Date = Date()) -> String {
+        guard let parts = dateAndTime(iso: iso, now: now) else { return "" }
+        return parts.date + " " + parts.time
+    }
+
+    private static func dateAndTime(iso: String?, now: Date) -> (date: String, time: String)? {
+        guard let iso, let date = parseISODate(iso) else { return nil }
+        let timeFormatter = DateFormatter()
+        timeFormatter.locale = .current
+        timeFormatter.dateFormat = "HH:mm"
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = .current
+        dateFormatter.dateFormat = Calendar.current.component(.year, from: date)
+            == Calendar.current.component(.year, from: now)
+            ? "M/d"
+            : "yyyy/M/d"
+        return (dateFormatter.string(from: date), timeFormatter.string(from: date))
+    }
+
+    fileprivate static func parseISODate(_ iso: String) -> Date? {
+        let trimmed = iso.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = withFraction.date(from: trimmed) { return date }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        if let date = plain.date(from: trimmed) { return date }
+        // ISO8601DateFormatter rejects 1/2/6-digit fractional seconds; strip them and retry.
+        if let dot = trimmed.firstIndex(of: ".") {
+            var suffix = trimmed[trimmed.index(after: dot)...]
+            while let first = suffix.first, first.isNumber {
+                suffix = suffix.dropFirst()
+            }
+            let stripped = String(trimmed[..<dot]) + suffix
+            if let date = plain.date(from: stripped) { return date }
+            if let date = withFraction.date(from: stripped) { return date }
+        }
+        return nil
+    }
+}
+
 enum ChatDateSeparator {
     static func text(forCreatedAt current: String, previousCreatedAt: String?) -> String? {
         let currentDay = dayKey(fromISO: current)
@@ -304,11 +355,7 @@ enum ChatDateSeparator {
     }
 
     private static func parseISODate(_ iso: String) -> Date? {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = formatter.date(from: iso) { return d }
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: iso)
+        ChatAvatarTimestamp.parseISODate(iso)
     }
 }
 

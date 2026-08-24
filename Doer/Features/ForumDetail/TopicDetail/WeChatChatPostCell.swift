@@ -172,12 +172,14 @@ class WeChatChatPostCell: UITableViewCell {
     private var contentStackBottomConstraint: NSLayoutConstraint?
     private var contentStackWidthConstraint: NSLayoutConstraint?
 
-    /// Reply time under the avatar (WeChat / Telegram incoming).
+    /// Reply date + time under the avatar (WeChat / Telegram incoming).
     private let avatarTimeLabel: UILabel = {
         let label = UILabel()
         label.font = .systemFont(ofSize: 10, weight: .regular)
         label.textColor = .tertiaryLabel
         label.textAlignment = .center
+        label.numberOfLines = 2
+        label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
         label.adjustsFontSizeToFitWidth = true
         label.minimumScaleFactor = 0.7
@@ -479,7 +481,7 @@ class WeChatChatPostCell: UITableViewCell {
             avatarTop,
             avatarTimeLabel.topAnchor.constraint(equalTo: avatarImageView.bottomAnchor, constant: 2),
             avatarTimeLabel.centerXAnchor.constraint(equalTo: avatarImageView.centerXAnchor),
-            avatarTimeLabel.widthAnchor.constraint(lessThanOrEqualTo: avatarImageView.widthAnchor, constant: 8),
+            avatarTimeLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 64),
             avatarTimeLabel.bottomAnchor.constraint(
                 lessThanOrEqualTo: contentView.bottomAnchor,
                 constant: -4
@@ -651,20 +653,20 @@ class WeChatChatPostCell: UITableViewCell {
             nameLabel.textColor = .secondaryLabel
         }
 
-        let clock = formatBubbleTime(post.createdAt)
+        let avatarStamp = ChatAvatarTimestamp.text(forCreatedAt: post.createdAt)
         let showAvatar = !isMine || style.showsOutgoingAvatar
-        avatarTimeLabel.text = clock
-        avatarTimeLabel.isHidden = !showAvatar || clock.isEmpty
+        avatarTimeLabel.text = avatarStamp
+        avatarTimeLabel.isHidden = !showAvatar || avatarStamp.isEmpty
         avatarTimeLabel.font = TopicDetailTypography.chromeFont(.time, weight: .regular)
         avatarTimeLabel.adjustsFontForContentSizeCategory = true
         avatarTimeLabel.textColor = .tertiaryLabel
         avatarTimeLabel.textAlignment = .center
 
-        // Keep a floor stamp on WeChat's under-bubble row; clock lives under the avatar.
+        // Keep a floor stamp on WeChat's under-bubble row; date+time lives under the avatar.
         if showAvatar {
             timeLabel.text = isTelegram ? nil : "#\(floorNumber)"
         } else if isTelegram {
-            timeLabel.text = clock
+            timeLabel.text = ChatAvatarTimestamp.compactText(forCreatedAt: post.createdAt)
         } else {
             timeLabel.text = "#\(floorNumber) · \(TopicCell.formatDate(post.createdAt))"
         }
@@ -1169,22 +1171,6 @@ class WeChatChatPostCell: UITableViewCell {
             preview.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -5),
         ])
         return container
-    }
-
-    /// Telegram / chat clock under the bubble: always `HH:mm`.
-    private func formatBubbleTime(_ isoString: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        var date = formatter.date(from: isoString)
-        if date == nil {
-            formatter.formatOptions = [.withInternetDateTime]
-            date = formatter.date(from: isoString)
-        }
-        guard let date else { return "" }
-        let tf = DateFormatter()
-        tf.locale = .current
-        tf.dateFormat = "HH:mm"
-        return tf.string(from: date)
     }
 
     private func makeFallbackLabel(

@@ -336,6 +336,50 @@ struct DiscourseChatChannelsResponse: Decodable {
     }
 }
 
+struct DiscourseChatUpload: Decodable, Equatable {
+    let id: Int
+    let url: String?
+    let shortUrl: String?
+    let originalFilename: String?
+    let fileExtension: String?
+    let width: Int?
+    let height: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, url, width, height
+        case shortUrl = "short_url"
+        case originalFilename = "original_filename"
+        case fileExtension = "extension"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decodeIfPresent(Int.self, forKey: .id)) ?? 0
+        url = try c.decodeIfPresent(String.self, forKey: .url)
+        shortUrl = try c.decodeIfPresent(String.self, forKey: .shortUrl)
+        originalFilename = try c.decodeIfPresent(String.self, forKey: .originalFilename)
+        fileExtension = try c.decodeIfPresent(String.self, forKey: .fileExtension)
+        width = try c.decodeIfPresent(Int.self, forKey: .width)
+        height = try c.decodeIfPresent(Int.self, forKey: .height)
+    }
+
+    var isImage: Bool {
+        let ext = (fileExtension ?? (originalFilename as NSString?)?.pathExtension ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if ["png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "heif", "avif"].contains(ext) {
+            return true
+        }
+        let path = (url ?? "").lowercased()
+        return [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".heic", ".heif", ".avif"]
+            .contains { path.contains($0) }
+    }
+
+    func resolvedURL(baseURL: String) -> URL? {
+        DiscourseChatMessage.resolveMediaURL(url, baseURL: baseURL)
+    }
+}
+
 struct DiscourseChatMessage: Decodable, Identifiable, Equatable {
     let id: Int
     let message: String?
@@ -344,6 +388,7 @@ struct DiscourseChatMessage: Decodable, Identifiable, Equatable {
     let cooked: String?
     let inReplyToId: Int?
     let userId: Int?
+    let uploads: [DiscourseChatUpload]?
 
     struct User: Decodable, Equatable {
         let id: Int?
@@ -358,12 +403,23 @@ struct DiscourseChatMessage: Decodable, Identifiable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, message, cooked, user
+        case id, message, cooked, user, uploads
         case createdAt = "created_at"
         case inReplyToId = "in_reply_to_id"
         case userId = "user_id"
     }
 
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        message = try c.decodeIfPresent(String.self, forKey: .message)
+        createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
+        user = try c.decodeIfPresent(User.self, forKey: .user)
+        cooked = try c.decodeIfPresent(String.self, forKey: .cooked)
+        inReplyToId = try c.decodeIfPresent(Int.self, forKey: .inReplyToId)
+        userId = try c.decodeIfPresent(Int.self, forKey: .userId)
+        uploads = (try? c.decodeIfPresent([DiscourseChatUpload].self, forKey: .uploads)) ?? []
+    }
     mutating func resolveUser(from usersById: [Int: User]) {
         if user?.avatarTemplate?.isEmpty == false { return }
         let key = user?.id ?? userId
@@ -376,31 +432,115 @@ struct DiscourseChatMessage: Decodable, Identifiable, Equatable {
 
     var displayBody: String {
         let raw = message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let text: String
         if !raw.isEmpty {
             // Prefer raw when it already carries shortcodes (e.g. `:smile:`).
             if TitleEmojiRenderer.containsShortcode(raw) {
-                return raw
-            }
-            // Raw may be plain text while cooked still has emoji <img alt=":code:">.
-            if let cooked, cooked.contains("<img") || cooked.contains("<IMG") {
+                text = raw
+            } else if let cooked, cooked.contains("<img") || cooked.contains("<IMG") {
+                // Raw may be plain text while cooked still has emoji <img alt=":code:">.
                 let recovered = TitleEmojiRenderer.recoverShortcodesFromHTML(cooked)
+                text = TitleEmojiRenderer.containsShortcode(recovered) ? recovered : raw
+            } else {
+                text = raw
+            }
+        } else {
+            // Fall back to cooked HTML → shortcodes, then strip remaining tags.
+            let cookedHTML = cooked ?? ""
+            if cookedHTML.contains("<") {
+                let recovered = TitleEmojiRenderer.recoverShortcodesFromHTML(cookedHTML)
                 if TitleEmojiRenderer.containsShortcode(recovered) {
-                    return recovered
+                    text = recovered
+                } else {
+                    text = cookedHTML
+                        .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            } else {
+                text = cookedHTML
+            }
+        }
+        return Self.stripUploadMarkdown(text)
+    }
+
+    /// Image URLs for the bubble: `uploads[]` first, then cooked lightbox/img.
+    func displayImageURLs(baseURL: String) -> [URL] {
+        var urls: [URL] = []
+        var seen = Set<String>()
+        func append(_ url: URL?) {
+            guard let url else { return }
+            let key = url.absoluteString
+            guard seen.insert(key).inserted else { return }
+            urls.append(url)
+        }
+        for upload in uploads ?? [] where upload.isImage {
+            append(upload.resolvedURL(baseURL: baseURL))
+        }
+        if urls.isEmpty {
+            for raw in Self.cookedImageURLStrings(cooked ?? "") {
+                append(Self.resolveMediaURL(raw, baseURL: baseURL))
+            }
+        }
+        return urls
+    }
+
+    static func resolveMediaURL(_ raw: String?, baseURL: String) -> URL? {
+        guard var value = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        if value.hasPrefix("upload://") { return nil }
+        if value.hasPrefix("//") {
+            value = "https:" + value
+        }
+        if value.hasPrefix("http://") || value.hasPrefix("https://") {
+            return URL(string: value)
+        }
+        let base = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if value.hasPrefix("/") {
+            return URL(string: base + value)
+        }
+        return URL(string: base + "/" + value)
+    }
+
+    private static func stripUploadMarkdown(_ text: String) -> String {
+        text.replacingOccurrences(
+            of: "!\\[[^\\]]*\\]\\((?:upload://|https?://)[^)]+\\)",
+            with: "",
+            options: .regularExpression
+        )
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func cookedImageURLStrings(_ html: String) -> [String] {
+        guard html.contains("<") else { return [] }
+        var urls: [String] = []
+        let lightbox = try? NSRegularExpression(
+            pattern: "<a[^>]*(?:class=\"[^\"]*lightbox[^\"]*\"[^>]*href=\"([^\"]+)\"|href=\"([^\"]+)\"[^>]*class=\"[^\"]*lightbox[^\"]*\")",
+            options: [.caseInsensitive]
+        )
+        let img = try? NSRegularExpression(
+            pattern: "<img(?![^>]*class=\"[^\"]*emoji)[^>]*src=\"([^\"]+)\"",
+            options: [.caseInsensitive]
+        )
+        let ns = html as NSString
+        let range = NSRange(location: 0, length: ns.length)
+        if let lightbox {
+            for match in lightbox.matches(in: html, range: range) {
+                for index in 1..<match.numberOfRanges {
+                    let captured = match.range(at: index)
+                    guard captured.location != NSNotFound else { continue }
+                    let value = ns.substring(with: captured)
+                    if !value.isEmpty { urls.append(value) }
                 }
             }
-            return raw
         }
-        // Fall back to cooked HTML → shortcodes, then strip remaining tags.
-        let cookedHTML = cooked ?? ""
-        if cookedHTML.contains("<") {
-            let recovered = TitleEmojiRenderer.recoverShortcodesFromHTML(cookedHTML)
-            if TitleEmojiRenderer.containsShortcode(recovered) {
-                return recovered
+        if urls.isEmpty, let img {
+            for match in img.matches(in: html, range: range) where match.numberOfRanges > 1 {
+                let value = ns.substring(with: match.range(at: 1))
+                if !value.isEmpty { urls.append(value) }
             }
         }
-        return cookedHTML
-            .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return urls
     }
 
     func formattedSendTime(now: Date = Date()) -> String {
@@ -408,45 +548,7 @@ struct DiscourseChatMessage: Decodable, Identifiable, Equatable {
     }
 
     static func formatSendTime(_ iso: String?, now: Date = Date()) -> String {
-        guard let iso, let date = parseISODate(iso) else { return "" }
-        let calendar = Calendar.current
-        let timeFormatter = DateFormatter()
-        timeFormatter.locale = .current
-        timeFormatter.dateFormat = "HH:mm"
-        let time = timeFormatter.string(from: date)
-        if calendar.isDate(date, inSameDayAs: now) {
-            return time
-        }
-        if calendar.isDateInYesterday(date) {
-            return String(localized: "chat.time.yesterday", defaultValue: "昨天")
-                + "\n" + time
-        }
-        let dateFormatter = DateFormatter()
-        dateFormatter.locale = .current
-        dateFormatter.dateFormat = "M/d"
-        return dateFormatter.string(from: date) + "\n" + time
-    }
-
-    private static func parseISODate(_ iso: String) -> Date? {
-        let trimmed = iso.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let withFraction = ISO8601DateFormatter()
-        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = withFraction.date(from: trimmed) { return date }
-        let plain = ISO8601DateFormatter()
-        plain.formatOptions = [.withInternetDateTime]
-        if let date = plain.date(from: trimmed) { return date }
-        // ISO8601DateFormatter rejects 1/2/6-digit fractional seconds; strip them and retry.
-        if let dot = trimmed.firstIndex(of: ".") {
-            var suffix = trimmed[trimmed.index(after: dot)...]
-            while let first = suffix.first, first.isNumber {
-                suffix = suffix.dropFirst()
-            }
-            let stripped = String(trimmed[..<dot]) + suffix
-            if let date = plain.date(from: stripped) { return date }
-            if let date = withFraction.date(from: stripped) { return date }
-        }
-        return nil
+        ChatAvatarTimestamp.text(forCreatedAt: iso, now: now)
     }
 }
 

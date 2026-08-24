@@ -1,4 +1,4 @@
-
+import CookedHTML
 import XCTest
 @testable import Doer
 
@@ -102,6 +102,45 @@ final class TitleEmojiRendererTests: XCTestCase {
         }
         XCTAssertTrue(foundAttachment)
         XCTAssertFalse(attributed.string.contains(":smile:"))
+    }
+
+    func testReplacingShortcodesLeavesInlineCodeUntouched() {
+        let font = UIFont.systemFont(ofSize: 16)
+        let codeFont = UIFont.monospacedSystemFont(ofSize: 15, weight: .regular)
+        let attributed = NSAttributedString(
+            string: ":rocket:",
+            attributes: [.font: codeFont]
+        )
+        let result = TitleEmojiRenderer.replacingShortcodes(
+            in: attributed,
+            font: font,
+            baseURL: "https://linux.do",
+            skippingFont: codeFont
+        )
+        XCTAssertEqual(result.string, ":rocket:")
+    }
+
+    func testReplacingShortcodesAttachesRocketInBodyText() {
+        let font = UIFont.systemFont(ofSize: 16)
+        let attributed = NSAttributedString(
+            string: "🔥 :rocket:起飞咯~",
+            attributes: [.font: font]
+        )
+        let result = TitleEmojiRenderer.replacingShortcodes(
+            in: attributed,
+            font: font,
+            baseURL: "https://linux.do"
+        )
+        XCTAssertFalse(result.string.contains(":rocket:"))
+        var foundURL: String?
+        result.enumerateAttribute(
+            .cookedHTMLImageURL,
+            in: NSRange(location: 0, length: result.length)
+        ) { value, _, stop in
+            foundURL = value as? String
+            stop.pointee = true
+        }
+        XCTAssertEqual(foundURL, "https://linux.do/images/emoji/twitter/rocket.png?v=12")
     }
 
     func testAttributedTitleAttachesUnknownShortcodeForDeterministicFetch() {

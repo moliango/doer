@@ -148,11 +148,14 @@ final class DiscourseChatEndpointTests: XCTestCase {
 
         let today = DiscourseChatMessage.formatSendTime(formatter.string(from: now), now: now)
         XCTAssertFalse(today.isEmpty)
-        XCTAssertFalse(today.contains("\n"))
+        XCTAssertTrue(today.contains("\n"))
+        XCTAssertTrue(today.contains("/"))
+        XCTAssertTrue(today.contains(":"))
 
         let yesterdayDate = calendar.date(byAdding: .day, value: -1, to: now)!
         let yesterday = DiscourseChatMessage.formatSendTime(formatter.string(from: yesterdayDate), now: now)
         XCTAssertTrue(yesterday.contains("\n"))
+        XCTAssertTrue(yesterday.contains("/"))
         XCTAssertTrue(yesterday.contains(":"))
 
         let olderDate = calendar.date(byAdding: .day, value: -5, to: now)!
@@ -160,8 +163,13 @@ final class DiscourseChatEndpointTests: XCTestCase {
         XCTAssertTrue(older.contains("/"))
         XCTAssertTrue(older.contains("\n"))
 
+        let lastYearDate = calendar.date(byAdding: .year, value: -1, to: now)!
+        let lastYear = DiscourseChatMessage.formatSendTime(formatter.string(from: lastYearDate), now: now)
+        XCTAssertTrue(lastYear.contains(String(calendar.component(.year, from: lastYearDate))))
+
         let sixDigit = DiscourseChatMessage.formatSendTime("2024-01-02T03:04:05.123456Z", now: now)
         XCTAssertFalse(sixDigit.isEmpty)
+        XCTAssertTrue(sixDigit.contains("\n"))
     }
 
     func testUploadResponseDecodesChatUploadId() throws {
@@ -177,6 +185,48 @@ final class DiscourseChatEndpointTests: XCTestCase {
         let upload = try JSONDecoder().decode(DiscourseUploadResponse.self, from: json)
         XCTAssertEqual(upload.id, 88)
         XCTAssertEqual(upload.shortURL, "upload://abc.png")
+    }
+
+    func testChatMessageDecodesUploadsAndResolvesCDNURL() throws {
+        let json = """
+        {
+          "id": 12,
+          "message": "![image](upload://abc.png)",
+          "cooked": "<p></p>",
+          "uploads": [
+            {
+              "id": 88,
+              "url": "//cdn.example.com/original/1X/photo.png",
+              "original_filename": "photo.png",
+              "extension": "png",
+              "width": 800,
+              "height": 600
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+        let message = try JSONDecoder().decode(DiscourseChatMessage.self, from: json)
+        XCTAssertEqual(message.displayBody, "")
+        XCTAssertEqual(
+            message.displayImageURLs(baseURL: "https://linux.do").map(\.absoluteString),
+            ["https://cdn.example.com/original/1X/photo.png"]
+        )
+    }
+
+    func testChatMessageFallsBackToCookedLightboxImage() throws {
+        let json = """
+        {
+          "id": 13,
+          "message": "",
+          "cooked": "<p><a href=\\"https://cdn.example.com/full.jpg\\" class=\\"lightbox\\"><img src=\\"/uploads/thumb.jpg\\"></a></p>"
+        }
+        """.data(using: .utf8)!
+        let message = try JSONDecoder().decode(DiscourseChatMessage.self, from: json)
+        XCTAssertEqual(message.displayBody, "")
+        XCTAssertEqual(
+            message.displayImageURLs(baseURL: "https://linux.do").map(\.absoluteString),
+            ["https://cdn.example.com/full.jpg"]
+        )
     }
 
     func testTemplatesResponseDecodesWrappedAndBareArrays() throws {

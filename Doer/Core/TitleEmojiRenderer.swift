@@ -1,3 +1,4 @@
+import CookedHTML
 import UIKit
 
 /// Shared shortcode → attributed title rendering for topic list/detail surfaces.
@@ -85,20 +86,8 @@ enum TitleEmojiRenderer {
             }
 
             let code = String(working[codeRange])
-            if let urlString = EmojiStore.resolvedURLString(for: code, baseURL: baseURL),
-               let url = URL(string: urlString) {
-                let attachment = EmojiTextAttachment()
-                attachment.emojiURL = url
-                attachment.shortcode = ":\(code):"
-                // Transparent placeholder reserves layout; nil/empty UIImage leaves a blank chip.
-                attachment.image = transparentPlaceholderImage()
-                attachment.bounds = CGRect(
-                    x: 0,
-                    y: (font.capHeight - font.pointSize) / 2,
-                    width: font.pointSize,
-                    height: font.pointSize
-                )
-                result.append(NSAttributedString(attachment: attachment))
+            if let emoji = emojiAttachmentString(code: code, font: font, baseURL: baseURL) {
+                result.append(emoji)
                 replacedAny = true
             } else {
                 result.append(
@@ -116,6 +105,62 @@ enum TitleEmojiRenderer {
         }
 
         return replacedAny ? result : plainString(working, font: font, textColor: textColor)
+    }
+
+    /// Replace leftover `:shortcode:` runs with emoji attachments.
+    ///
+    /// Cooked HTML usually already turned these into `<img class="emoji">`. Callout
+    /// titles, poll option labels, and uncooked body text still keep the English
+    /// shortcode — never leave that visible when a forum `baseURL` is known.
+    static func replacingShortcodes(
+        in attributed: NSAttributedString,
+        font fallbackFont: UIFont,
+        baseURL: String?,
+        skippingFont: UIFont? = nil
+    ) -> NSAttributedString {
+        let text = attributed.string
+        guard containsShortcode(text) else { return attributed }
+
+        let matches = shortcodePattern.matches(
+            in: text,
+            range: NSRange(location: 0, length: attributed.length)
+        )
+        guard !matches.isEmpty else { return attributed }
+
+        let result = NSMutableAttributedString(attributedString: attributed)
+        let skipName = skippingFont?.fontName
+        var replacedAny = false
+
+        for match in matches.reversed() {
+            guard match.range.location != NSNotFound,
+                  match.range.length > 0,
+                  match.range.location < result.length
+            else { continue }
+
+            if result.attribute(.attachment, at: match.range.location, effectiveRange: nil) != nil {
+                continue
+            }
+            if let skipName,
+               let font = result.attribute(.font, at: match.range.location, effectiveRange: nil) as? UIFont,
+               font.fontName == skipName {
+                continue
+            }
+
+            guard match.numberOfRanges > 1,
+                  let codeRange = Range(match.range(at: 1), in: text)
+            else { continue }
+
+            let font = (result.attribute(.font, at: match.range.location, effectiveRange: nil) as? UIFont)
+                ?? fallbackFont
+            let code = String(text[codeRange])
+            guard let emoji = emojiAttachmentString(code: code, font: font, baseURL: baseURL) else {
+                continue
+            }
+            result.replaceCharacters(in: match.range, with: emoji)
+            replacedAny = true
+        }
+
+        return replacedAny ? result : attributed
     }
 
     static func apply(
@@ -179,6 +224,33 @@ enum TitleEmojiRenderer {
                 }
             }
         }
+    }
+
+    private static func emojiAttachmentString(
+        code: String,
+        font: UIFont,
+        baseURL: String?
+    ) -> NSAttributedString? {
+        guard let urlString = EmojiStore.resolvedURLString(for: code, baseURL: baseURL),
+              let url = URL(string: urlString)
+        else { return nil }
+
+        let attachment = EmojiTextAttachment()
+        attachment.emojiURL = url
+        attachment.shortcode = ":\(code):"
+        // Transparent placeholder reserves layout; nil/empty UIImage leaves a blank chip.
+        attachment.image = transparentPlaceholderImage()
+        attachment.bounds = CGRect(
+            x: 0,
+            y: (font.capHeight - font.pointSize) / 2,
+            width: font.pointSize,
+            height: font.pointSize
+        )
+        let result = NSMutableAttributedString(attachment: attachment)
+        let range = NSRange(location: 0, length: result.length)
+        result.addAttribute(.cookedHTMLImageURL, value: urlString, range: range)
+        result.addAttribute(.font, value: font, range: range)
+        return result
     }
 
     private static func transparentPlaceholderImage() -> UIImage {
