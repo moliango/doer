@@ -2329,6 +2329,102 @@
         }
       }
     },
+    "chat.attach.camera" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Take photo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拍照"
+          }
+        }
+      }
+    },
+    "chat.attach.file" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Attach file"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "附加文件"
+          }
+        }
+      }
+    },
+    "chat.attach.gallery" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Photo library"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "相册"
+          }
+        }
+      }
+    },
+    "chat.attach.pending" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%d attached (tap to clear)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已附加 %d 个文件（点按清除）"
+          }
+        }
+      }
+    },
+    "chat.attach.uploading" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uploading…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在上传…"
+          }
+        }
+      }
+    },
+    "chat.camera.unavailable" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Camera unavailable"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法使用相机"
+          }
+        }
+      }
+    },
     "chat.channel_subtitle" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
@@ -2340,6 +2436,38 @@
         }
       }
     },
+    "chat.datetime.done" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Done"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完成"
+          }
+        }
+      }
+    },
+    "chat.datetime.include_time" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Include time"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "包含时间"
+          }
+        }
+      }
+    },
     "chat.empty" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
@@ -2347,6 +2475,65 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "暂无聊天频道（站点可能未开启 Chat）"
+          }
+        }
+      }
+    },
+    "chat.image" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "图片"
+          }
+        }
+      }
+    },
+    "chat.insert.datetime" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Insert date/time"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "插入日期/时间"
+          }
+        }
+      }
+    },
+    "chat.insert.template" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Insert template"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "插入模板"
+          }
+        }
+      }
+    },
+    "chat.no_templates" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No templates"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无模板"
           }
         }
       }
@@ -2368,6 +2555,7 @@
       }
     },
     "chat.time.yesterday" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2413,182 +2601,6 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "%d 条未读"
-          }
-        }
-      }
-    },
-    "chat.attach.camera" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Take photo"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "拍照"
-          }
-        }
-      }
-    },
-    "chat.attach.gallery" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Photo library"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "相册"
-          }
-        }
-      }
-    },
-    "chat.attach.file" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Attach file"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "附加文件"
-          }
-        }
-      }
-    },
-    "chat.attach.uploading" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Uploading…"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在上传…"
-          }
-        }
-      }
-    },
-    "chat.attach.pending" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%d attached (tap to clear)"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已附加 %d 个文件（点按清除）"
-          }
-        }
-      }
-    },
-    "chat.insert.template" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Insert template"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "插入模板"
-          }
-        }
-      }
-    },
-    "chat.insert.datetime" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Insert date/time"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "插入日期/时间"
-          }
-        }
-      }
-    },
-    "chat.no_templates" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No templates"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "暂无模板"
-          }
-        }
-      }
-    },
-    "chat.datetime.done" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Done"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "完成"
-          }
-        }
-      }
-    },
-    "chat.datetime.include_time" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Include time"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "包含时间"
-          }
-        }
-      }
-    },
-    "chat.camera.unavailable" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Camera unavailable"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法使用相机"
           }
         }
       }
@@ -16966,6 +16978,17 @@
         }
       }
     },
+    "reply.tool.placeholder.toc" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "此话题将包含目录"
+          }
+        }
+      }
+    },
     "reply.tool.poll" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
@@ -17123,6 +17146,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "模板"
+          }
+        }
+      }
+    },
+    "reply.tool.toc" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "目录"
           }
         }
       }
@@ -22261,7 +22295,6 @@
       }
     },
     "settings.network.bootstrap" : {
-      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -22277,8 +22310,18 @@
         }
       }
     },
+    "settings.network.bootstrap.edit.message" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "可追加 IP，系统锁定的地址不会被删除。"
+          }
+        }
+      }
+    },
     "settings.network.bootstrap.message" : {
-      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -22538,7 +22581,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "填写名称和 https:// 地址。Bootstrap IP 由系统自动锁定，不能删除。"
+            "value" : "填写名称和 https:// 地址。系统锁定的 Bootstrap IP 不能删除，可追加。"
           }
         }
       }
@@ -23824,6 +23867,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "隱藏帖子詳情頁右側滾動條"
+          }
+        }
+      }
+    },
+    "settings.reading.image_carousel" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "正文图片轮播"
+          }
+        }
+      }
+    },
+    "settings.reading.image_carousel.subtitle" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "新：FluxDo 式轮播；关：沿用原来的单图堆叠"
           }
         }
       }
@@ -28185,6 +28250,17 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "生成分享图片"
+          }
+        }
+      }
+    },
+    "topic.toc" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "目录"
           }
         }
       }
