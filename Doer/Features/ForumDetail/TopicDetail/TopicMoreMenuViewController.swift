@@ -16,6 +16,7 @@ final class TopicMoreMenuViewController: UIViewController {
         var assignedToUsername: String? = nil
         var currentFloor: Int = 1
         var totalFloors: Int = 1
+        var hasTableOfContents: Bool = false
     }
 
     enum Action: Equatable {
@@ -28,6 +29,7 @@ final class TopicMoreMenuViewController: UIViewController {
         case openTimeline
         case jumpToFloor(Int)
         case readingSettings
+        case tableOfContents
         case markUnreadStepBack
         case markUnreadClear
         case assignToMe
@@ -175,6 +177,14 @@ final class TopicMoreMenuViewController: UIViewController {
             title: String(localized: "topic.reading_settings", defaultValue: "阅读设置"),
             action: .readingSettings
         ))
+
+        if model.hasTableOfContents {
+            stack.addArrangedSubview(makeRow(
+                symbol: "list.bullet",
+                title: String(localized: "topic.toc", defaultValue: "目录"),
+                action: .tableOfContents
+            ))
+        }
 
         if model.canAssign {
             stack.addArrangedSubview(makeSectionDivider(title: String(localized: "topic.menu.section.assign", defaultValue: "指定")))

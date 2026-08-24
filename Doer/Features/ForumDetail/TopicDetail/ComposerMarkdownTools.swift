@@ -18,6 +18,7 @@ enum ComposerMarkdownTool: CaseIterable {
     case inlineCode
     case codeBlock
     case insertBlock
+    case toc
     case spoiler
     case imageGrid
     case poll
@@ -42,6 +43,7 @@ enum ComposerMarkdownTool: CaseIterable {
         case .inlineCode: return "行内代码"
         case .codeBlock: return "代码块"
         case .insertBlock: return "插入块"
+        case .toc: return String(localized: "reply.tool.toc", defaultValue: "目录")
         case .spoiler: return "剧透"
         case .imageGrid: return "图片网格"
         case .poll: return String(localized: "reply.tool.poll", defaultValue: "投票")
@@ -68,6 +70,7 @@ enum ComposerMarkdownTool: CaseIterable {
         case .inlineCode: return "chevron.left.forwardslash.chevron.right"
         case .codeBlock: return "curlybraces"
         case .insertBlock: return "square.plus"
+        case .toc: return "list.bullet"
         case .spoiler: return "eye.slash"
         case .imageGrid: return "rectangle.grid.2x2"
         case .poll: return "chart.bar.doc.horizontal"

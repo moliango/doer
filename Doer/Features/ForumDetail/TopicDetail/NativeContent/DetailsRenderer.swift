@@ -65,20 +65,29 @@ private class DetailsCardView: UIView {
         let summaryLabel = UILabel()
         summaryLabel.numberOfLines = 0
         summaryLabel.translatesAutoresizingMaskIntoConstraints = false
-        let summaryConfig = AttributedStringConfig(
+        let summaryConfig = NativeRenderConfig(
             baseFont: config.baseFont.bold(),
             baseColor: config.baseColor,
             linkColor: config.linkColor,
             codeFont: config.codeFont,
-            codeBackgroundColor: config.codeBackgroundColor
+            codeBackgroundColor: config.codeBackgroundColor,
+            contentWidth: innerConfig.contentWidth,
+            baseURL: config.baseURL,
+            postId: config.postId,
+            galleryImageURLs: config.galleryImageURLs,
+            topicTagNames: config.topicTagNames,
+            topicCategoryPresentation: config.topicCategoryPresentation
         )
-        let summaryText = NSMutableAttributedString(attributedString: summary.attributedString(config: summaryConfig))
-        if summaryText.length > 0 {
-            let style = NSMutableParagraphStyle()
-            style.lineSpacing = 2
-            summaryText.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: summaryText.length))
-        }
+        let summaryText = summaryConfig.styledAttributedString(
+            from: summary,
+            lineSpacing: 2,
+            paragraphSpacing: 0
+        )
         summaryLabel.attributedText = summaryText
+        TitleEmojiRenderer.loadImages(in: summaryText, cloudflareBaseURL: config.baseURL) { [weak summaryLabel] updated in
+            summaryLabel?.attributedText = updated
+            summaryLabel?.invalidateIntrinsicContentSize()
+        }
 
         headerView.translatesAutoresizingMaskIntoConstraints = false
         headerView.backgroundColor = .clear

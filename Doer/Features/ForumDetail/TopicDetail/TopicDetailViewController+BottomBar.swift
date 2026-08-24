@@ -177,7 +177,9 @@ extension TopicDetailViewController: TopicDetailBottomBarDelegate {
             self.bottomBar.alpha = self.viewModel.isReady ? 1 : 0
             self.bottomBar.transform = .identity
             self.view.bringSubviewToFront(self.floatingReplyButton)
+            self.view.bringSubviewToFront(self.tocFabButton)
             self.view.bringSubviewToFront(self.bottomBar)
+            self.updateTocChrome()
             self.syncOwningTabBarVisibility()
         }
         timeline.modalPresentationStyle = .pageSheet
@@ -333,6 +335,7 @@ extension TopicDetailViewController: TopicDetailBottomBarDelegate {
         jumpOverlay.isHidden = false
         // Keep progress capsule interactive above the jump dimming layer.
         view.bringSubviewToFront(floatingReplyButton)
+        view.bringSubviewToFront(tocFabButton)
         view.bringSubviewToFront(bottomBar)
     }
 

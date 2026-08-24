@@ -46,22 +46,39 @@ enum HeadingRenderer: BlockRenderer {
                text: headingText,
                categoryName: category.name
            ) {
-            return TopicTaxonomyBadgeView(
+            let badge = TopicTaxonomyBadgeView(
                 category: category,
                 baseURL: config.baseURL ?? "",
-                variant: .regular
+                variant: .regular,
+                isInteractive: true
             )
+            if let url = ForumInternalLinkParser.categoryURL(
+                slug: category.name,
+                id: category.categoryId,
+                baseURL: config.baseURL ?? ""
+            ) {
+                badge.addAction(UIAction { [weak delegate] _ in
+                    delegate?.postCell(didTapLinkURL: url)
+                }, for: .touchUpInside)
+            }
+            return badge
         }
         if HeadingPresentationPolicy.shouldRenderTagBadge(
             level: level,
             text: headingText,
             topicTagNames: config.topicTagNames
         ) {
-            return HeadingTagBadgeView(
+            let badge = HeadingTagBadgeView(
                 text: headingText,
                 color: TopicTagVisualStyle.color(for: headingText),
                 font: config.baseFont.withRelativeSize(1).weighted(.semibold)
             )
+            if let url = ForumInternalLinkParser.tagURL(name: headingText, baseURL: config.baseURL ?? "") {
+                badge.addAction(UIAction { [weak delegate] _ in
+                    delegate?.postCell(didTapLinkURL: url)
+                }, for: .touchUpInside)
+            }
+            return badge
         }
 
         let baseSize = config.baseFont.pointSize
@@ -96,7 +113,14 @@ enum HeadingRenderer: BlockRenderer {
             paragraphSpacing: 8
         )
         let textView = makeTextView(attributedText: attributedText, config: config)
-        return HeadingBlockView(level: level, textView: textView)
+        let view = HeadingBlockView(level: level, textView: textView)
+        if let postId = config.postId {
+            view.tocAnchorId = NativeContentRenderer.currentTocAnchorCounter?.nextId(
+                postId: postId,
+                text: headingText
+            )
+        }
+        return view
     }
 
     private static func makeTextView(attributedText: NSAttributedString, config: NativeRenderConfig) -> LinkTextView {
@@ -145,7 +169,9 @@ enum HeadingRenderer: BlockRenderer {
     }
 }
 
-private final class HeadingBlockView: UIView {
+final class HeadingBlockView: UIView {
+    var tocAnchorId: String?
+
     init(level: Int, textView: UIView) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -170,9 +196,11 @@ private final class HeadingBlockView: UIView {
     }
 }
 
-private final class HeadingTagBadgeView: UIView {
+private final class HeadingTagBadgeView: UIControl {
     init(text: String, color: UIColor, font: UIFont) {
         super.init(frame: .zero)
+        isUserInteractionEnabled = true
+        accessibilityTraits = .button
         translatesAutoresizingMaskIntoConstraints = false
         backgroundColor = color.withAlphaComponent(0.10)
         layer.cornerRadius = 14

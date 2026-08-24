@@ -54,7 +54,7 @@ final class TopicDetailViewController: ObservableViewController {
     var isRecoveringAfterCloudflare = false
     var liveSyncTimer: Timer?
     var appForegroundObserver: NSObjectProtocol?
-
+    let tocController = TopicTocController()
     var pluginScope: PluginScope {
         PluginScope(
             baseURL: api.baseURL,
@@ -63,7 +63,7 @@ final class TopicDetailViewController: ObservableViewController {
     }
 
     lazy var tableView: UITableView = {
-        let tv = UITableView(frame: .zero, style: .plain)
+        let tv = TopicDetailPopAwareTableView(frame: .zero, style: .plain)
         tv.translatesAutoresizingMaskIntoConstraints = false
         tv.register(PostNativeCell.self, forCellReuseIdentifier: PostNativeCell.reuseIdentifier)
         tv.register(NestedSortBarCell.self, forCellReuseIdentifier: NestedSortBarCell.reuseIdentifier)
@@ -277,6 +277,33 @@ final class TopicDetailViewController: ObservableViewController {
         return button
     }()
 
+    lazy var tocFabButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        var config = UIButton.Configuration.filled()
+        config.image = UIImage(systemName: "list.bullet")
+        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        let accentColor = AppSettings.shared.themeStyle.accentColor
+        config.baseForegroundColor = accentColor
+        config.baseBackgroundColor = UIColor.secondarySystemGroupedBackground
+        config.cornerStyle = .capsule
+        button.configuration = config
+        button.layer.cornerRadius = 22
+        button.layer.cornerCurve = .continuous
+        button.layer.shadowColor = UIColor.black.cgColor
+        button.layer.shadowOpacity = 0.16
+        button.layer.shadowOffset = CGSize(width: 0, height: 6)
+        button.layer.shadowRadius = 12
+        button.clipsToBounds = false
+        button.isHidden = true
+        button.alpha = 0
+        button.accessibilityLabel = String(localized: "topic.toc", defaultValue: "目录")
+        button.addAction(UIAction { [weak self] _ in
+            self?.presentTopicToc()
+        }, for: .touchUpInside)
+        return button
+    }()
+
     lazy var newRepliesBanner: UIButton = {
         var config = UIButton.Configuration.filled()
         config.image = UIImage(systemName: "arrow.down")
@@ -393,6 +420,7 @@ final class TopicDetailViewController: ObservableViewController {
         view.addSubview(errorLabel)
         view.addSubview(bottomBar)
         view.addSubview(floatingReplyButton)
+        view.addSubview(tocFabButton)
         view.addSubview(newRepliesBanner)
         view.addSubview(topLoadingBar)
 
@@ -425,6 +453,11 @@ final class TopicDetailViewController: ObservableViewController {
             floatingReplyButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
             floatingReplyButton.widthAnchor.constraint(equalToConstant: 56),
             floatingReplyButton.heightAnchor.constraint(equalToConstant: 56),
+
+            tocFabButton.trailingAnchor.constraint(equalTo: floatingReplyButton.trailingAnchor),
+            tocFabButton.bottomAnchor.constraint(equalTo: floatingReplyButton.topAnchor, constant: -12),
+            tocFabButton.widthAnchor.constraint(equalToConstant: 44),
+            tocFabButton.heightAnchor.constraint(equalToConstant: 44),
 
             newRepliesBanner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             newRepliesBanner.bottomAnchor.constraint(equalTo: bottomBar.topAnchor, constant: -12),
@@ -516,6 +549,7 @@ final class TopicDetailViewController: ObservableViewController {
         // hit-test the bar instead of scrolling the topic list. Reply stays trailing
         // and must not cover the centered capsule — bring bar last.
         view.bringSubviewToFront(floatingReplyButton)
+        view.bringSubviewToFront(tocFabButton)
         view.bringSubviewToFront(bottomBar)
         view.bringSubviewToFront(newRepliesBanner)
         // Reserve bottom space for the centered floor control and the floating reply affordance.
@@ -626,6 +660,7 @@ final class TopicDetailViewController: ObservableViewController {
         // Settings observe → updateUI; keep swipe/long-press enablement in sync.
         bottomBar.refreshGestureRecognizers()
         updateBottomBarProgress()
+        updateTocChrome()
         updateNewRepliesBanner()
 
         // Show posts — all visible posts that have parsed blocks
@@ -707,6 +742,7 @@ final class TopicDetailViewController: ObservableViewController {
             }
             updateVisibleReadingPosts()
             updateBottomBarProgress()
+            updateTocChrome()
 
             // After a jump, defer scroll to next layout pass so cells are sized
             if let targetFloor = viewModel.jumpTargetFloor {
@@ -734,6 +770,10 @@ final class TopicDetailViewController: ObservableViewController {
         replyConfig.baseBackgroundColor = accentColor.withAlphaComponent(0.14)
         floatingReplyButton.configuration = replyConfig
         floatingReplyButton.layer.shadowColor = accentColor.cgColor
+        var tocConfig = tocFabButton.configuration ?? UIButton.Configuration.filled()
+        tocConfig.baseForegroundColor = accentColor
+        tocConfig.baseBackgroundColor = UIColor.secondarySystemGroupedBackground
+        tocFabButton.configuration = tocConfig
     }
 
     func updateSuggestedTopicsFooter() {
@@ -1079,10 +1119,10 @@ final class TopicDetailViewController: ObservableViewController {
                 variant: .regular,
                 isInteractive: true
             )
-            let tagSlug = tag.slug
+            let tagName = tag.routeName
             badge.addAction(UIAction { [weak self] _ in
-                guard let self else { return }
-                let vc = TagTopicsViewController(api: self.api, tagName: tagSlug)
+                guard let self, !tagName.isEmpty else { return }
+                let vc = TagTopicsViewController(api: self.api, tagName: tagName)
                 self.navigationController?.pushViewController(vc, animated: true)
             }, for: .touchUpInside)
             badges.append(badge)

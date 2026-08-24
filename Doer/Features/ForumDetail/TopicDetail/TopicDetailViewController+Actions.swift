@@ -170,7 +170,8 @@ extension TopicDetailViewController {
             canAssign: topic?.canAssign == true || topic?.assignedToUsername != nil,
             assignedToUsername: topic?.assignedToUsername,
             currentFloor: currentVisibleFloor(),
-            totalFloors: max(viewModel.totalFloors, 1)
+            totalFloors: max(viewModel.totalFloors, 1),
+            hasTableOfContents: tocController.hasToc
         )
         let barItem = navigationItem.rightBarButtonItems?.first
         TopicMoreMenuPresenter.present(from: self, barButtonItem: barItem, model: model) { [weak self] action in
@@ -216,6 +217,8 @@ extension TopicDetailViewController {
             jumpToFloor(floor)
         case .readingSettings:
             navigationController?.pushViewController(ReadingSettingsViewController(), animated: true)
+        case .tableOfContents:
+            presentTopicToc()
         case .markUnreadStepBack:
             markTopicUnread(mode: .stepBack)
         case .markUnreadClear:

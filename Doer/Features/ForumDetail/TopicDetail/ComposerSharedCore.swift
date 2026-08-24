@@ -446,6 +446,12 @@ final class ComposerMarkdownCoordinator: NSObject {
             wrapImagesInGrid()
         case .insertBlock:
             presentInsertBlockMenu()
+        case .toc:
+            surface.composerWrapSelection(
+                start: "\n<div data-theme-toc=\"true\">\n\n",
+                end: "\n\n</div>\n",
+                placeholder: String(localized: "reply.tool.placeholder.toc", defaultValue: "此话题将包含目录")
+            )
         case .poll:
             presentPollBuilder()
         case .encrypt:

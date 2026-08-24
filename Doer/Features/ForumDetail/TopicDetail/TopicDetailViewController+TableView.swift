@@ -78,6 +78,7 @@ extension TopicDetailViewController: UITableViewDelegate {
         lastScrollChromeUpdateUptime = now
         updateVisibleReadingPosts()
         updateBottomBarProgress()
+        updateTocChrome()
     }
 
     private func handleLoadEarlierIfNeeded(_ scrollView: UIScrollView) {
