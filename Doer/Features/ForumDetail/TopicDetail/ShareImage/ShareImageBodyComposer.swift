@@ -384,6 +384,10 @@ enum ShareImageBodyComposer {
         case .image(let src, _, _, _, let href):
             appendImage(src: href ?? src, baseURL: baseURL, into: &segments, imageCount: &imageCount, omittedImages: &omittedImages)
 
+        case .imageGrid(let images, _, _):
+            for item in images {
+                appendImage(src: item.lightboxURL, baseURL: baseURL, into: &segments, imageCount: &imageCount, omittedImages: &omittedImages)
+            }
         case .blockquote(let blocks), .spoiler(let blocks):
             for child in blocks {
                 append(

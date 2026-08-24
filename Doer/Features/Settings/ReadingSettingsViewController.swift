@@ -11,6 +11,7 @@ final class ReadingSettingsViewController: ObservableViewController {
         case hideScrollIndicators
         case bottomBarAutoHide
         case openExternalLinksInAppBrowser
+        case contentImageCarousel
         case nestedReplyView
         case showTopicCardCategory
         case showTopicCardTags
@@ -26,6 +27,7 @@ final class ReadingSettingsViewController: ObservableViewController {
             case .hideScrollIndicators: return String(localized: "settings.reading.hide_scroll_indicators")
             case .bottomBarAutoHide: return String(localized: "settings.reading.collapse_navigation")
             case .openExternalLinksInAppBrowser: return String(localized: "settings.reading.in_app_browser")
+            case .contentImageCarousel: return String(localized: "settings.reading.image_carousel", defaultValue: "正文图片轮播")
             case .nestedReplyView: return String(localized: "settings.reading.nested", defaultValue: "树形回复视图")
             case .showTopicCardCategory: return String(localized: "settings.card.category", defaultValue: "卡片显示分类")
             case .showTopicCardTags: return String(localized: "settings.card.tags", defaultValue: "卡片显示标签")
@@ -43,6 +45,7 @@ final class ReadingSettingsViewController: ObservableViewController {
             case .hideScrollIndicators: return String(localized: "settings.reading.hide_scroll_indicators.subtitle")
             case .bottomBarAutoHide: return String(localized: "settings.reading.collapse_navigation.subtitle")
             case .openExternalLinksInAppBrowser: return String(localized: "settings.reading.in_app_browser.subtitle")
+            case .contentImageCarousel: return String(localized: "settings.reading.image_carousel.subtitle", defaultValue: "新：FluxDo 式轮播；关：沿用原来的单图堆叠")
             case .nestedReplyView: return String(localized: "settings.reading.nested.subtitle", defaultValue: "详情页按回复关系缩进展示")
             case .showTopicCardCategory: return String(localized: "settings.card.category.subtitle", defaultValue: "列表卡片是否显示分类")
             case .showTopicCardTags: return String(localized: "settings.card.tags.subtitle", defaultValue: "列表卡片是否显示标签")
@@ -60,6 +63,7 @@ final class ReadingSettingsViewController: ObservableViewController {
             case .hideScrollIndicators: return "scroll"
             case .bottomBarAutoHide: return "arrow.up.and.down"
             case .openExternalLinksInAppBrowser: return "rectangle.portrait.and.arrow.right"
+            case .contentImageCarousel: return "rectangle.stack"
             case .nestedReplyView: return "list.bullet.indent"
             case .showTopicCardCategory: return "folder"
             case .showTopicCardTags: return "tag"
@@ -191,6 +195,7 @@ final class ReadingSettingsViewController: ObservableViewController {
         basicBody.spacing = 12
         basicBody.addArrangedSubview(makeToggleRow(for: .bottomBarAutoHide))
         basicBody.addArrangedSubview(makeToggleRow(for: .openExternalLinksInAppBrowser))
+        basicBody.addArrangedSubview(makeToggleRow(for: .contentImageCarousel))
         contentStack.addArrangedSubview(verticalSection(
             title: String(localized: "settings.reading.section.basic"),
             symbolName: "hand.tap",
@@ -409,6 +414,8 @@ final class ReadingSettingsViewController: ObservableViewController {
             return settings.bottomBarAutoHideEnabled
         case .openExternalLinksInAppBrowser:
             return settings.openExternalLinksInAppBrowser
+        case .contentImageCarousel:
+            return settings.contentImageCarouselEnabled
         case .nestedReplyView:
             return settings.nestedReplyViewEnabled
         case .showTopicCardTags:
@@ -438,6 +445,8 @@ final class ReadingSettingsViewController: ObservableViewController {
             settings.bottomBarAutoHideEnabled = isOn
         case .openExternalLinksInAppBrowser:
             settings.openExternalLinksInAppBrowser = isOn
+        case .contentImageCarousel:
+            settings.contentImageCarouselEnabled = isOn
         case .nestedReplyView:
             settings.nestedReplyViewEnabled = isOn
         case .showTopicCardTags:

@@ -36,4 +36,13 @@ extension AppSettings {
             notifyChanged()
         }
     }
+
+    /// FluxDo-style in-content image carousel / grid. Off keeps stacked images.
+    var contentImageCarouselEnabled: Bool {
+        get { bool(forKey: "contentImageCarouselEnabled", defaultValue: true) }
+        set {
+            defaults.set(newValue, forKey: "contentImageCarouselEnabled")
+            notifyChanged()
+        }
+    }
 }

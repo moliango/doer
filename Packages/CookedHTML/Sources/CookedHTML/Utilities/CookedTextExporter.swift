@@ -49,6 +49,12 @@ public enum CookedTextExporter {
         case .image(_, let alt, _, _, _):
             let label = alt?.trimmingCharacters(in: .whitespacesAndNewlines)
             return (label?.isEmpty == false) ? "[\(label!)]" : "[image]"
+        case .imageGrid(let images, _, _):
+            let labels = images.map { item -> String in
+                let label = item.alt?.trimmingCharacters(in: .whitespacesAndNewlines)
+                return (label?.isEmpty == false) ? "[\(label!)]" : "[image]"
+            }
+            return labels.joined(separator: " ")
         case .onebox(_, let title, let description, _, _, _, _):
             return [title, description]
                 .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -122,6 +128,9 @@ public enum CookedTextExporter {
             return body
         case .image(let src, let alt, _, _, _):
             return "![\(alt ?? "")](\(src))"
+        case .imageGrid(let images, _, let mode):
+            let body = images.map { "![\($0.alt ?? "")](\($0.src))" }.joined(separator: "\n")
+            return mode == .carousel ? "[grid mode=carousel]\n\(body)" : "[grid]\n\(body)"
         case .onebox(let sourceURL, let title, let description, _, _, _, _):
             let label = title ?? description ?? sourceURL ?? "link"
             if let sourceURL, !sourceURL.isEmpty {

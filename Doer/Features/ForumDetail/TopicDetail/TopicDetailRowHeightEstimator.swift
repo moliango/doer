@@ -44,6 +44,8 @@ enum TopicDetailRowHeightEstimator {
             return nested.reduce(0) { $0 + estimateBlock($1, contentWidth: contentWidth) } + 36
         case .image(_, _, let width, let height, _):
             return estimateImageHeight(width: width, height: height, contentWidth: contentWidth)
+        case .imageGrid(_, _, let mode):
+            return mode == .carousel ? 332 : estimateImageHeight(width: nil, height: nil, contentWidth: contentWidth)
         case .onebox:
             return 96
         case .video(_, _, _, let width, let height, _, _):

@@ -217,6 +217,24 @@ final class BlockExtractorTests: XCTestCase {
         }
     }
 
+    func testImageGridCarousel() {
+        let html = """
+        <div class="d-image-grid d-image-grid--carousel" data-mode="carousel">
+        <div class="lightbox-wrapper"><a class="lightbox" href="https://example.com/c1.jpg"><img src="https://example.com/c1_thumb.jpg" alt="片 1" width="800" height="450"></a></div>
+        <div class="lightbox-wrapper"><a class="lightbox" href="https://example.com/c2.jpg"><img src="https://example.com/c2_thumb.jpg" alt="片 2" width="800" height="450"></a></div>
+        </div>
+        """
+        let blocks = CookedHTMLParser.parse(html: html)
+        XCTAssertEqual(blocks.count, 1)
+        guard case let .imageGrid(images, _, mode) = blocks[0] else {
+            return XCTFail("Expected imageGrid, got \(blocks[0])")
+        }
+        XCTAssertEqual(mode, .carousel)
+        XCTAssertEqual(images.count, 2)
+        XCTAssertEqual(images[0].src, "https://example.com/c1_thumb.jpg")
+        XCTAssertEqual(images[0].href, "https://example.com/c1.jpg")
+        XCTAssertEqual(images[0].alt, "片 1")
+    }
 
     func testBareAutoLinkedImageURLPromotesToImageBlock() {
         let url = "https://pan.644222.xyz/raw/C5F1D31007AC3AB3B1134F88C12E1F0.jpg"

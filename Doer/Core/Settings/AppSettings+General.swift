@@ -82,6 +82,7 @@ extension AppSettings {
                 interfaceFontScalePercent: interfaceFontScalePercent,
                 homeIncomingTopicsBannerFloatingEnabled: homeIncomingTopicsBannerFloatingEnabled,
                 openExternalLinksInAppBrowser: openExternalLinksInAppBrowser,
+                contentImageCarouselEnabled: contentImageCarouselEnabled,
                 defaultExpandRelatedLinks: defaultExpandRelatedLinks,
                 showSuggestedTopics: showSuggestedTopics,
                 composerInstantRender: composerInstantRender,
@@ -228,6 +229,9 @@ extension AppSettings {
         }
         if let value = preferences.openExternalLinksInAppBrowser {
             openExternalLinksInAppBrowser = value
+        }
+        if let value = preferences.contentImageCarouselEnabled {
+            contentImageCarouselEnabled = value
         }
         if let value = preferences.defaultExpandRelatedLinks {
             defaultExpandRelatedLinks = value
@@ -439,6 +443,7 @@ extension AppSettings {
         let interfaceFontScalePercent: Int?
         let homeIncomingTopicsBannerFloatingEnabled: Bool?
         let openExternalLinksInAppBrowser: Bool?
+        let contentImageCarouselEnabled: Bool?
         let defaultExpandRelatedLinks: Bool?
         let showSuggestedTopics: Bool?
         let composerInstantRender: Bool?

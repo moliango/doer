@@ -15,7 +15,7 @@ struct NativeRenderConfig {
     let topicCategoryPresentation: TopicCategoryBadgePresentation?
     let defaultLineSpacing: CGFloat
     let defaultParagraphSpacing: CGFloat
-
+    let tocAnchorCounter: TocAnchorCounter
     init(
         baseFont: UIFont,
         baseColor: UIColor,
@@ -29,7 +29,8 @@ struct NativeRenderConfig {
         topicTagNames: Set<String> = [],
         topicCategoryPresentation: TopicCategoryBadgePresentation? = nil,
         defaultLineSpacing: CGFloat = 4,
-        defaultParagraphSpacing: CGFloat = 5
+        defaultParagraphSpacing: CGFloat = 5,
+        tocAnchorCounter: TocAnchorCounter = TocAnchorCounter()
     ) {
         self.baseFont = baseFont
         self.baseColor = baseColor
@@ -44,6 +45,7 @@ struct NativeRenderConfig {
         self.topicCategoryPresentation = topicCategoryPresentation
         self.defaultLineSpacing = defaultLineSpacing
         self.defaultParagraphSpacing = defaultParagraphSpacing
+        self.tocAnchorCounter = tocAnchorCounter
     }
 
     var attributedStringConfig: AttributedStringConfig {
@@ -116,7 +118,12 @@ struct NativeRenderConfig {
             value: paragraphStyle,
             range: NSRange(location: 0, length: result.length)
         )
-        return result
+        return TitleEmojiRenderer.replacingShortcodes(
+            in: result,
+            font: baseFont,
+            baseURL: baseURL,
+            skippingFont: codeFont
+        )
     }
 
     private func attributedString(for inline: InlineNode) -> NSAttributedString {
@@ -237,9 +244,20 @@ struct NativeRenderConfig {
                 .foregroundColor: textColor,
             ]
         ))
+        let linkValue: Any
+        if let url = URL(string: href), url.scheme != nil {
+            linkValue = url
+        } else if let base = baseURL {
+            linkValue = ForumInternalLinkParser.normalizedURL(
+                from: URL(string: href) ?? URL(fileURLWithPath: href),
+                baseURL: base
+            )
+        } else {
+            linkValue = href
+        }
         result.addAttribute(
             .link,
-            value: href,
+            value: linkValue,
             range: NSRange(location: linkedTextStart, length: result.length - linkedTextStart)
         )
         return result
@@ -305,7 +323,19 @@ protocol BlockRenderer {
 
 // MARK: - NativeContentRenderer
 
+final class TocAnchorCounter {
+    private var counts: [String: Int] = [:]
+
+    func nextId(postId: Int, text: String) -> String {
+        TocExtractor.makeAnchorId(postId: postId, text: text, counts: &counts)
+    }
+}
+
 enum NativeContentRenderer {
+    private static var tocAnchorCounter: TocAnchorCounter?
+
+    static var currentTocAnchorCounter: TocAnchorCounter? { tocAnchorCounter }
+
     static let renderers: [BlockRenderer.Type] = [
         ParagraphRenderer.self,
         HeadingRenderer.self,
@@ -314,6 +344,7 @@ enum NativeContentRenderer {
         ListRenderer.self,
         BlockquoteRenderer.self,
         ImageRenderer.self,
+        ImageGridRenderer.self,
         CodeBlockRenderer.self,
         DiscourseQuoteRenderer.self,
         DetailsRenderer.self,
@@ -335,16 +366,19 @@ enum NativeContentRenderer {
         delegate: PostCellDelegate?,
         promoteCallouts: Bool = true
     ) -> [UIView] {
-        // Promote top-level `[!question]` / `[!warning]` paragraphs into callout cards.
-        // Nested renderers pass promoteCallouts=false to avoid bq→promote→bq recursion.
-        let prepared = promoteCallouts
-            ? ObsidianCalloutSupport.promoteCalloutMarkers(in: blocks)
-            : blocks
-        return prepared.compactMap { block in
-            for renderer in renderers where renderer.canRender(block) {
-                return renderer.render(block, config: config, delegate: delegate)
+        withTocAnchorCounter(config) {
+            // Promote top-level `[!question]` / `[!warning]` paragraphs into callout cards.
+            // Nested renderers pass promoteCallouts=false to avoid bq→promote→bq recursion.
+            let source = ImageGridPresentation.preparedBlocks(blocks)
+            let prepared = promoteCallouts
+                ? ObsidianCalloutSupport.promoteCalloutMarkers(in: source)
+                : source
+            return prepared.compactMap { block in
+                for renderer in renderers where renderer.canRender(block) {
+                    return renderer.render(block, config: config, delegate: delegate)
+                }
+                return nil
             }
-            return nil
         }
     }
 
@@ -353,17 +387,33 @@ enum NativeContentRenderer {
         config: NativeRenderConfig,
         delegate: PostCellDelegate?
     ) -> [UIView] {
-        annotatedBlocks.compactMap { annotated in
-            for renderer in renderers where renderer.canRender(annotated.block) {
-                return renderer.render(annotated.block, config: config, delegate: delegate)
+        withTocAnchorCounter(config) {
+            let prepared = annotatedBlocks.flatMap { annotated in
+                ImageGridPresentation.preparedBlocks([annotated.block]).map {
+                    AnnotatedBlock(block: $0, sourceHTML: annotated.sourceHTML)
+                }
             }
-            // No native renderer — fall back to WebView snapshot
-            return FallbackBlockView(
-                html: annotated.sourceHTML,
-                containerWidth: config.contentWidth,
-                baseURL: config.baseURL ?? ""
-            )
+            return prepared.compactMap { annotated in
+                for renderer in renderers where renderer.canRender(annotated.block) {
+                    return renderer.render(annotated.block, config: config, delegate: delegate)
+                }
+                return FallbackBlockView(
+                    html: annotated.sourceHTML,
+                    containerWidth: config.contentWidth,
+                    baseURL: config.baseURL ?? ""
+                )
+            }
         }
+    }
+
+    private static func withTocAnchorCounter<T>(
+        _ config: NativeRenderConfig,
+        _ body: () -> T
+    ) -> T {
+        let isRoot = tocAnchorCounter == nil
+        if isRoot { tocAnchorCounter = config.tocAnchorCounter }
+        defer { if isRoot { tocAnchorCounter = nil } }
+        return body()
     }
 }
 
@@ -752,9 +802,13 @@ private final class PollOptionControl: UIControl {
         indicatorView.contentMode = .scaleAspectFit
         indicatorView.translatesAutoresizingMaskIntoConstraints = false
 
-        titleLabel.text = option.text
-        titleLabel.font = config.baseFont
-        titleLabel.textColor = config.baseColor
+        TitleEmojiRenderer.apply(
+            option.text,
+            to: titleLabel,
+            font: config.baseFont,
+            textColor: config.baseColor,
+            baseURL: config.baseURL
+        )
         titleLabel.numberOfLines = 0
 
         metaLabel.text = nil

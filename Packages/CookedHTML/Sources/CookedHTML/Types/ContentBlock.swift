@@ -81,6 +81,29 @@ public struct AnnotatedBlock: Sendable {
     }
 }
 
+public struct ImageGridItem: Sendable, Equatable {
+    public let src: String
+    public let alt: String?
+    public let width: Int?
+    public let height: Int?
+    public let href: String?
+
+    public init(src: String, alt: String?, width: Int?, height: Int?, href: String? = nil) {
+        self.src = src
+        self.alt = alt
+        self.width = width
+        self.height = height
+        self.href = href
+    }
+
+    public var lightboxURL: String { href?.isEmpty == false ? href! : src }
+}
+
+public enum ImageGridMode: Sendable, Equatable {
+    case grid
+    case carousel
+}
+
 /// A block-level content element extracted from Discourse `cooked` HTML.
 public enum ContentBlock: Sendable, Equatable {
     case paragraph([InlineNode])
@@ -89,6 +112,8 @@ public enum ContentBlock: Sendable, Equatable {
     case blockquote(blocks: [ContentBlock])
     case discourseQuote(username: String?, avatarURL: String?, topicTitle: String?, topicURL: String?, categoryName: String?, categoryURL: String?, quotePostNumber: Int?, content: [ContentBlock])
     case image(src: String, alt: String?, width: Int?, height: Int?, href: String? = nil)
+    /// Discourse `[grid]` / `<div class="d-image-grid">` (grid or carousel).
+    case imageGrid(images: [ImageGridItem], columns: Int, mode: ImageGridMode)
     case onebox(sourceURL: String?, title: String?, description: String?, imageURL: String?, imageWidth: Int?, imageHeight: Int?, faviconURL: String? = nil)
     case video(url: String, thumbnailURL: String?, title: String?, width: Int?, height: Int?, videoId: String?, provider: String?)
     /// - Parameters:
@@ -122,6 +147,8 @@ public extension ContentBlock {
             return [avatarURL].compactMap { $0 } + content.imageSourceURLs
         case .image(let src, _, _, _, _):
             return [src]
+        case .imageGrid(let images, _, _):
+            return images.map(\.src)
         case .onebox(_, _, _, let imageURL, _, _, let faviconURL):
             return [imageURL, faviconURL].compactMap { $0 }
         case .video(_, let thumbnailURL, _, _, _, _, _):

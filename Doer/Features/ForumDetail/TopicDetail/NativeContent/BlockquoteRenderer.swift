@@ -195,7 +195,7 @@ enum ObsidianCalloutSupport {
     private static func isCalloutBodyTerminator(_ block: ContentBlock) -> Bool {
         switch block {
         case .heading, .blockquote, .discourseQuote, .divider, .codeBlock, .table,
-             .list, .details, .spoiler, .onebox, .video, .poll, .rawHTML:
+             .list, .details, .spoiler, .onebox, .video, .poll, .rawHTML, .imageGrid:
             return true
         case .paragraph, .image:
             return false
@@ -421,9 +421,13 @@ private final class ObsidianCalloutView: UIView {
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.numberOfLines = 0
-        titleLabel.text = callout.title
-        titleLabel.textColor = config.baseColor
-        titleLabel.font = config.baseFont.bold()
+        TitleEmojiRenderer.apply(
+            callout.title,
+            to: titleLabel,
+            font: config.baseFont.bold(),
+            textColor: config.baseColor,
+            baseURL: config.baseURL
+        )
         headerView.addSubview(titleLabel)
 
         chevron.translatesAutoresizingMaskIntoConstraints = false

@@ -273,6 +273,64 @@ enum BlockExtractor {
         return [.image(src: src, alt: alt, width: width, height: height, href: href)]
     }
 
+    private static func extractImageGrid(from element: Element, options: ParseOptions) -> [ContentBlock] {
+        let classAttr = (try? element.attr("class")) ?? ""
+        let dataMode = ((try? element.attr("data-mode")) ?? "").lowercased()
+        let mode: ImageGridMode =
+            dataMode == "carousel" || hasClassToken("d-image-grid--carousel", in: classAttr)
+            ? .carousel
+            : .grid
+        let columns = max(Int((try? element.attr("data-columns")) ?? "") ?? 2, 1)
+
+        var images: [ImageGridItem] = []
+        for child in element.children() {
+            let childClass = (try? child.attr("class")) ?? ""
+            if childClass.contains("lightbox-wrapper") {
+                guard let img = try? child.select("img").first(),
+                      let item = imageGridItem(from: img, wrapper: child, options: options)
+                else { continue }
+                images.append(item)
+                continue
+            }
+            if child.tagName().lowercased() == "img" {
+                guard let item = imageGridItem(from: child, wrapper: nil, options: options) else { continue }
+                images.append(item)
+            }
+        }
+
+        guard !images.isEmpty else { return [] }
+        return [.imageGrid(images: images, columns: columns, mode: mode)]
+    }
+
+    private static func imageGridItem(
+        from img: Element,
+        wrapper: Element?,
+        options: ParseOptions
+    ) -> ImageGridItem? {
+        let imgClass = (try? img.attr("class")) ?? ""
+        if hasClassToken("emoji", in: imgClass) || hasClassToken("avatar", in: imgClass) {
+            return nil
+        }
+        let rawSrc = ((try? img.attr("src")) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawSrc.isEmpty else { return nil }
+        let src = URLResolver.resolve(rawSrc, baseURL: options.baseURL)
+        guard !src.isEmpty else { return nil }
+
+        let href: String? = {
+            let anchor = wrapper.flatMap { try? $0.select("a").first() } ?? (try? img.parent()?.select("a").first())
+            guard let anchor else { return nil }
+            let resolved = URLResolver.resolve((try? anchor.attr("href")) ?? "", baseURL: options.baseURL)
+            return resolved.isEmpty ? nil : resolved
+        }()
+        return ImageGridItem(
+            src: src,
+            alt: try? img.attr("alt"),
+            width: Int((try? img.attr("width")) ?? ""),
+            height: Int((try? img.attr("height")) ?? ""),
+            href: href
+        )
+    }
+
     private static func extractDiv(from element: Element, options: ParseOptions) -> [ContentBlock] {
         let classAttr = (try? element.attr("class")) ?? ""
         let idAttr = (try? element.attr("id")) ?? ""
@@ -320,6 +378,10 @@ enum BlockExtractor {
                 }()
                 return extractBlockImage(from: img, options: options, href: href)
             }
+        }
+
+        if hasClassToken("d-image-grid", in: classAttr) {
+            return extractImageGrid(from: element, options: options)
         }
 
         // Video embed (youtube-onebox, lazy-video-container, etc.)
@@ -850,7 +912,7 @@ enum BlockExtractor {
         case .details, .spoiler, .divider:
             return false
         case .paragraph, .heading, .codeBlock, .blockquote, .discourseQuote,
-             .image, .onebox, .video, .poll, .table, .rawHTML:
+             .image, .imageGrid, .onebox, .video, .poll, .table, .rawHTML:
             return true
         }
     }

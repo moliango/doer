@@ -33,6 +33,8 @@ private extension ContentBlock {
                 return [href]
             }
             return [src]
+        case .imageGrid(let images, _, _):
+            return images.map(\.lightboxURL)
         case .onebox(_, _, _, let imageURL, _, _, _):
             return [imageURL].compactMap { $0 }
         case .list(_, _, let items):
