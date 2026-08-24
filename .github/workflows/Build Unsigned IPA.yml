@@ -53,9 +53,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v${{ steps.version.outputs.version }}-build.${{ steps.buildnumber.outputs.build }}"
-          git tag "$TAG"
-          git push origin "$TAG"
+          TAG="v${{ steps.version.outputs.version }}"
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "refs/tags/${TAG}$"; then
+            gh release delete "$TAG" --yes || true
+            git push origin ":refs/tags/${TAG}" || true
+          fi
+          git tag -f "$TAG"
+          git push origin "$TAG" --force
           gh release create "$TAG" build/doer-unsigned.ipa \
             --title "Doer $TAG" \
             --generate-notes
