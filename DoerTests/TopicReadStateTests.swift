@@ -62,16 +62,48 @@ final class TopicReadStateTests: XCTestCase {
         XCTAssertEqual(merged.pinnedIds, [1])
     }
 
-    func testWithPinnedFirstUsesRememberedPinnedIdsWhenFlagMissing() throws {
-        let rememberedPinned = try decodeTopic(id: 9)
-        let fresh = try decodeTopic(id: 10)
+    func testLaterPagePinsStayInServerOrder() throws {
+        let first = try decodeTopic(id: 1)
+        let laterPinned = try decodeTopic(id: 2, extra: #", "pinned": true"#)
+        let topics = [first, laterPinned]
+        let ordered = HomeTopicListOrdering.withPinnedFirst(topics, pinnedIds: [2])
 
-        let ordered = HomeTopicListOrdering.withPinnedFirst(
-            [fresh, rememberedPinned],
-            pinnedIds: [9]
+        XCTAssertEqual(ordered.map(\.id), [1, 2])
+        XCTAssertEqual(HomeTopicListOrdering.leadingPinnedIds(topics), [])
+        XCTAssertFalse(HomeTopicListOrdering.isPinned(laterPinned, pinnedIds: []))
+    }
+
+    func testLeadingPrefixStopsAtFirstUnpinnedTopic() throws {
+        let first = try decodeTopic(id: 1, extra: #", "pinned": true"#)
+        let second = try decodeTopic(id: 2, extra: #", "pinned": true"#)
+        let regular = try decodeTopic(id: 3)
+        let categoryPin = try decodeTopic(id: 4, extra: #", "pinned": true"#)
+
+        XCTAssertEqual(
+            HomeTopicListOrdering.leadingPinnedIds([first, second, regular, categoryPin]),
+            [1, 2]
+        )
+    }
+
+    func testUnpinnedFlagIsExcludedFromCompactPins() throws {
+        let topic = try decodeTopic(id: 5, extra: #", "pinned": true, "unpinned": true"#)
+        XCTAssertFalse(HomeTopicListOrdering.isActivelyPinned(topic))
+        XCTAssertEqual(HomeTopicListOrdering.leadingPinnedIds([topic]), [])
+    }
+
+    func testIncomingMergeDoesNotPromoteIncomingPins() throws {
+        let pinned = try decodeTopic(id: 1, extra: #", "pinned": true"#)
+        let older = try decodeTopic(id: 2)
+        let incomingPin = try decodeTopic(id: 9, extra: #", "pinned": true"#)
+
+        let merged = HomeTopicListOrdering.mergeIncoming(
+            incoming: [incomingPin],
+            existing: [pinned, older],
+            pinnedIds: [1]
         )
 
-        XCTAssertEqual(ordered.map(\.id), [9, 10])
+        XCTAssertEqual(merged.topics.map(\.id), [1, 9, 2])
+        XCTAssertEqual(merged.pinnedIds, [1])
     }
 
     @MainActor

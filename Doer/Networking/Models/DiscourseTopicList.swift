@@ -62,6 +62,8 @@ nonisolated struct DiscourseTopicList: Decodable {
         let createdAt: String
         let lastPostedAt: String?
         let pinned: Bool?
+        /// User chose “unpin” — Discourse still may send `pinned: true`.
+        let unpinned: Bool?
         let excerpt: String?
         let posters: [Poster]?
         let tags: [String]?
@@ -75,7 +77,7 @@ nonisolated struct DiscourseTopicList: Decodable {
         }
 
         enum CodingKeys: String, CodingKey {
-            case id, title, views, pinned, excerpt, posters, tags, unseen
+            case id, title, views, pinned, unpinned, excerpt, posters, tags, unseen
             case fancyTitle = "fancy_title"
             case postsCount = "posts_count"
             case replyCount = "reply_count"
@@ -99,6 +101,7 @@ nonisolated struct DiscourseTopicList: Decodable {
             createdAt = try container.decode(String.self, forKey: .createdAt)
             lastPostedAt = try container.decodeIfPresent(String.self, forKey: .lastPostedAt)
             pinned = try container.decodeIfPresent(Bool.self, forKey: .pinned)
+            unpinned = try container.decodeIfPresent(Bool.self, forKey: .unpinned)
             excerpt = try container.decodeIfPresent(String.self, forKey: .excerpt)
             posters = try container.decodeIfPresent([Poster].self, forKey: .posters)
             tags = Self.decodeTags(from: container)
@@ -120,6 +123,7 @@ nonisolated struct DiscourseTopicList: Decodable {
                 createdAt: createdAt,
                 lastPostedAt: lastPostedAt,
                 pinned: pinned,
+                unpinned: unpinned,
                 excerpt: excerpt,
                 posters: posters,
                 tags: tags,
@@ -145,6 +149,7 @@ nonisolated struct DiscourseTopicList: Decodable {
                 createdAt: createdAt,
                 lastPostedAt: lastPostedAt,
                 pinned: pinned,
+                unpinned: unpinned,
                 excerpt: excerpt,
                 posters: posters,
                 tags: tags,
@@ -166,6 +171,7 @@ nonisolated struct DiscourseTopicList: Decodable {
             createdAt: String,
             lastPostedAt: String?,
             pinned: Bool?,
+            unpinned: Bool?,
             excerpt: String?,
             posters: [Poster]?,
             tags: [String]?,
@@ -184,6 +190,7 @@ nonisolated struct DiscourseTopicList: Decodable {
             self.createdAt = createdAt
             self.lastPostedAt = lastPostedAt
             self.pinned = pinned
+            self.unpinned = unpinned
             self.excerpt = excerpt
             self.posters = posters
             self.tags = tags
@@ -217,6 +224,7 @@ nonisolated struct DiscourseTopicList: Decodable {
                 createdAt: createdAt,
                 lastPostedAt: lastPostedAt,
                 pinned: nil,
+                unpinned: nil,
                 excerpt: nil,
                 posters: nil,
                 tags: tags,
