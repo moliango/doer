@@ -17,6 +17,8 @@ final class AppearanceSettingsViewController: ObservableViewController {
     private let settings = AppSettings.shared
     private var modeCards: [AppSettings.AppearanceMode: AppearanceModeCardView] = [:]
     private var styleCards: [AppSettings.ThemeStyle: ThemeStyleCardView] = [:]
+    private var iconCards: [AppSettings.AppIconStyle: AppIconOptionCardView] = [:]
+    private var iconPickerCard: AppearanceIconPickerCard?
     private var fontRows: [AppearanceFontOption: AppearanceFontOptionRow] = [:]
     private var sectionIconViews: [UIImageView] = []
     private var sectionHeaderViews: [DataManagementSectionHeaderView] = []
@@ -90,6 +92,7 @@ final class AppearanceSettingsViewController: ObservableViewController {
             accentColor: accentColor,
             backgroundColor: cardBackground
         )
+        iconPickerCard?.configure(accentColor: accentColor, backgroundColor: cardBackground)
         modeCards.forEach { mode, card in
             card.setSelected(
                 mode == settings.appearanceMode,
@@ -100,6 +103,13 @@ final class AppearanceSettingsViewController: ObservableViewController {
         styleCards.forEach { style, card in
             card.setSelected(
                 style == themeStyle,
+                accentColor: accentColor,
+                cardBackgroundColor: cardBackground
+            )
+        }
+        iconCards.forEach { icon, card in
+            card.setSelected(
+                icon == settings.appIconStyle,
                 accentColor: accentColor,
                 cardBackgroundColor: cardBackground
             )
@@ -272,16 +282,22 @@ final class AppearanceSettingsViewController: ObservableViewController {
         }
         modeCards.removeAll()
         styleCards.removeAll()
+        iconCards.removeAll()
+        iconPickerCard = nil
         fontRows.removeAll()
         sectionIconViews.removeAll()
         sectionHeaderViews.removeAll()
 
-        // FluxDO order: Language → Theme mode → Theme color → Font → Home chrome
-        // App icon section omitted while only the primary icon ships.
+        // FluxDO order: Language → App icon → Theme mode → Theme color → Font → Home chrome
         contentStack.addArrangedSubview(verticalSection(
             title: String(localized: "settings.language"),
             symbolName: "globe",
             body: languageRow
+        ))
+        contentStack.addArrangedSubview(verticalSection(
+            title: String(localized: "settings.app_icon"),
+            symbolName: "app.badge",
+            body: makeIconGrid()
         ))
         contentStack.addArrangedSubview(verticalSection(
             title: String(localized: "settings.appearance.theme_mode"),
@@ -370,6 +386,49 @@ final class AppearanceSettingsViewController: ObservableViewController {
             modeCards[mode] = card
         }
         return row
+    }
+
+    private func makeIconGrid() -> UIView {
+        let card = AppearanceIconPickerCard()
+        let grid = UIStackView()
+        grid.axis = .vertical
+        grid.spacing = 6
+        grid.translatesAutoresizingMaskIntoConstraints = false
+
+        let icons = AppSettings.AppIconStyle.allCases
+        let columns = 4
+        for start in stride(from: 0, to: icons.count, by: columns) {
+            let row = UIStackView()
+            row.axis = .horizontal
+            row.alignment = .fill
+            row.distribution = .fillEqually
+            row.spacing = 4
+
+            let rowIcons = Array(icons[start..<min(start + columns, icons.count)])
+            for icon in rowIcons {
+                let option = AppIconOptionCardView(style: icon)
+                option.addTarget(self, action: #selector(iconTapped(_:)), for: .touchUpInside)
+                option.heightAnchor.constraint(equalToConstant: 104).isActive = true
+                row.addArrangedSubview(option)
+                iconCards[icon] = option
+            }
+            for _ in rowIcons.count..<columns {
+                let placeholder = UIView()
+                placeholder.isUserInteractionEnabled = false
+                row.addArrangedSubview(placeholder)
+            }
+            grid.addArrangedSubview(row)
+        }
+
+        card.addSubview(grid)
+        NSLayoutConstraint.activate([
+            grid.topAnchor.constraint(equalTo: card.topAnchor, constant: 14),
+            grid.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 8),
+            grid.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
+            grid.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12),
+        ])
+        iconPickerCard = card
+        return card
     }
 
     private func makeStyleGrid() -> UIStackView {
@@ -503,6 +562,26 @@ final class AppearanceSettingsViewController: ObservableViewController {
         rebuildContent()
         renderedThemeStyle = settings.themeStyle
         updateUI()
+    }
+
+    @objc private func iconTapped(_ sender: AppIconOptionCardView) {
+        let style = sender.style
+        guard style != settings.appIconStyle else { return }
+        settings.setAppIconStyle(style) { [weak self] error in
+            guard let self else { return }
+            if let error {
+                let alert = UIAlertController(
+                    title: String(localized: "settings.app_icon"),
+                    message: error.localizedDescription,
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: String(localized: "common.ok"), style: .default))
+                self.present(alert, animated: true)
+                return
+            }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            self.updateUI()
+        }
     }
 
 
@@ -722,6 +801,223 @@ final class AppearanceLanguageRow: UIControl {
         valueLabel.text = languageTitle
         accessibilityLabel = "\(String(localized: "settings.language"))，\(languageTitle)"
         accessibilityTraits = [.button]
+    }
+}
+
+private final class AppearanceIconPickerCard: UIView {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        layer.cornerRadius = 18
+        layer.cornerCurve = .continuous
+        layer.borderWidth = 1
+        layer.shadowOpacity = 0.07
+        layer.shadowRadius = 10
+        layer.shadowOffset = CGSize(width: 0, height: 5)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: layer.cornerRadius).cgPath
+    }
+
+    func configure(accentColor: UIColor, backgroundColor: UIColor) {
+        self.backgroundColor = backgroundColor
+        layer.shadowColor = accentColor.cgColor
+        layer.borderColor = accentColor.withAlphaComponent(0.14).cgColor
+    }
+}
+
+final class AppIconOptionCardView: UIControl {
+    let style: AppSettings.AppIconStyle
+
+    private static let iconSize: CGFloat = 60
+    private static let ringSize: CGFloat = 68
+    private static let squircleRatio: CGFloat = 0.2237
+
+    private let ringView: UIView = {
+        let view = UIView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        view.layer.cornerCurve = .continuous
+        view.layer.cornerRadius = AppIconOptionCardView.ringSize * AppIconOptionCardView.squircleRatio
+        return view
+    }()
+
+    private let iconShadowView: UIView = {
+        let view = UIView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        view.layer.cornerCurve = .continuous
+        view.layer.cornerRadius = AppIconOptionCardView.iconSize * AppIconOptionCardView.squircleRatio
+        view.layer.shadowColor = UIColor.black.cgColor
+        view.layer.shadowOpacity = 0.16
+        view.layer.shadowRadius = 5
+        view.layer.shadowOffset = CGSize(width: 0, height: 3)
+        return view
+    }()
+
+    private let previewView: UIImageView = {
+        let view = UIImageView()
+        view.contentMode = .scaleAspectFill
+        view.clipsToBounds = true
+        view.layer.cornerRadius = AppIconOptionCardView.iconSize * AppIconOptionCardView.squircleRatio
+        view.layer.cornerCurve = .continuous
+        view.layer.borderWidth = 1.0 / UIScreen.main.scale
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.isUserInteractionEnabled = false
+        return view
+    }()
+
+    private let checkBadge: UIImageView = {
+        let view = UIImageView(
+            image: UIImage(
+                systemName: "checkmark.circle.fill",
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .bold)
+            )
+        )
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .white
+        view.layer.cornerRadius = 8
+        view.clipsToBounds = true
+        view.isHidden = true
+        return view
+    }()
+
+    private let titleLabel: UILabel = {
+        let label = UILabel()
+        label.font = .systemFont(ofSize: 11, weight: .medium)
+        label.textAlignment = .center
+        label.textColor = .secondaryLabel
+        label.numberOfLines = 1
+        label.adjustsFontSizeToFitWidth = true
+        label.minimumScaleFactor = 0.75
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.isUserInteractionEnabled = false
+        return label
+    }()
+
+    private var isCurrentlySelected = false
+
+    override var isHighlighted: Bool {
+        didSet {
+            UIView.animate(withDuration: 0.14, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+                self.transform = self.isHighlighted ? CGAffineTransform(scaleX: 0.96, y: 0.96) : .identity
+            }
+        }
+    }
+
+    init(style: AppSettings.AppIconStyle) {
+        self.style = style
+        super.init(frame: .zero)
+        setupUI()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let iconRadius = iconShadowView.bounds.width * Self.squircleRatio
+        iconShadowView.layer.cornerRadius = iconRadius
+        previewView.layer.cornerRadius = iconRadius
+        ringView.layer.cornerRadius = ringView.bounds.width * Self.squircleRatio
+        iconShadowView.layer.shadowPath = UIBezierPath(
+            roundedRect: iconShadowView.bounds,
+            cornerRadius: iconRadius
+        ).cgPath
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        applyIconHairline()
+    }
+
+    private func setupUI() {
+        translatesAutoresizingMaskIntoConstraints = false
+        backgroundColor = .clear
+        clipsToBounds = false
+
+        previewView.image = style.previewImage
+        titleLabel.text = style.title
+        applyIconHairline()
+
+        iconShadowView.addSubview(previewView)
+        addSubview(ringView)
+        addSubview(iconShadowView)
+        addSubview(checkBadge)
+        addSubview(titleLabel)
+
+        let preferredRingWidth = ringView.widthAnchor.constraint(equalToConstant: Self.ringSize)
+        preferredRingWidth.priority = .defaultHigh
+
+        NSLayoutConstraint.activate([
+            ringView.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            ringView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            ringView.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -4),
+            preferredRingWidth,
+            ringView.heightAnchor.constraint(equalTo: ringView.widthAnchor),
+
+            iconShadowView.centerXAnchor.constraint(equalTo: ringView.centerXAnchor),
+            iconShadowView.centerYAnchor.constraint(equalTo: ringView.centerYAnchor),
+            iconShadowView.widthAnchor.constraint(equalTo: ringView.widthAnchor, multiplier: Self.iconSize / Self.ringSize),
+            iconShadowView.heightAnchor.constraint(equalTo: iconShadowView.widthAnchor),
+
+            previewView.topAnchor.constraint(equalTo: iconShadowView.topAnchor),
+            previewView.leadingAnchor.constraint(equalTo: iconShadowView.leadingAnchor),
+            previewView.trailingAnchor.constraint(equalTo: iconShadowView.trailingAnchor),
+            previewView.bottomAnchor.constraint(equalTo: iconShadowView.bottomAnchor),
+
+            checkBadge.trailingAnchor.constraint(equalTo: previewView.trailingAnchor, constant: 3),
+            checkBadge.bottomAnchor.constraint(equalTo: previewView.bottomAnchor, constant: 3),
+            checkBadge.widthAnchor.constraint(equalToConstant: 16),
+            checkBadge.heightAnchor.constraint(equalToConstant: 16),
+
+            titleLabel.topAnchor.constraint(equalTo: ringView.bottomAnchor, constant: 6),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -4),
+        ])
+        accessibilityLabel = style.title
+        accessibilityTraits = [.button]
+    }
+
+    func setSelected(_ selected: Bool, accentColor: UIColor, cardBackgroundColor: UIColor) {
+        _ = cardBackgroundColor
+        let changed = isCurrentlySelected != selected
+        isCurrentlySelected = selected
+
+        ringView.layer.borderColor = accentColor.cgColor
+        ringView.layer.borderWidth = selected ? 2.5 : 0
+        checkBadge.tintColor = accentColor
+        titleLabel.textColor = selected ? accentColor : .secondaryLabel
+        titleLabel.font = .systemFont(ofSize: 11, weight: selected ? .semibold : .medium)
+        accessibilityTraits = selected ? [.button, .selected] : [.button]
+
+        let applyBadge = {
+            self.checkBadge.isHidden = !selected
+            self.checkBadge.transform = selected ? .identity : CGAffineTransform(scaleX: 0.6, y: 0.6)
+            self.checkBadge.alpha = selected ? 1 : 0
+        }
+        if changed {
+            UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .curveEaseOut], animations: applyBadge)
+        } else {
+            applyBadge()
+        }
+    }
+
+    private func applyIconHairline() {
+        previewView.layer.borderColor = UIColor.separator.withAlphaComponent(0.45).cgColor
     }
 }
 

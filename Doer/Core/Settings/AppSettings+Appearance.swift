@@ -437,14 +437,45 @@ extension AppSettings {
         }
     }
 
-    /// Currently only the primary app icon ships. Alternate icons can be reintroduced later.
     enum AppIconStyle: String, CaseIterable {
         case primary
+        case purple = "AppIconPurple"
+        case green = "AppIconGreen"
+        case orange = "AppIconOrange"
+        case dark = "AppIconDark"
+        case red = "AppIconRed"
+        case white = "AppIconWhite"
 
-        var alternateIconName: String? { nil }
+        var alternateIconName: String? {
+            self == .primary ? nil : rawValue
+        }
 
         var title: String {
-            String(localized: "settings.app_icon.default")
+            switch self {
+            case .primary:
+                return String(localized: "settings.app_icon.default")
+            case .purple:
+                return String(localized: "settings.app_icon.purple", defaultValue: "魅影紫")
+            case .green:
+                return String(localized: "settings.app_icon.green", defaultValue: "翡翠绿")
+            case .orange:
+                return String(localized: "settings.app_icon.orange", defaultValue: "暖阳橙")
+            case .dark:
+                return String(localized: "settings.app_icon.dark", defaultValue: "暗夜黑")
+            case .red:
+                return String(localized: "settings.app_icon.red", defaultValue: "绯红色")
+            case .white:
+                return String(localized: "settings.app_icon.white", defaultValue: "珍珠白")
+            }
+        }
+
+        var previewImage: UIImage? {
+            switch self {
+            case .primary:
+                return UIImage(named: "AppIcon") ?? UIImage(named: "AppIconOriginal")
+            default:
+                return UIImage(named: rawValue)
+            }
         }
     }
 
@@ -694,7 +725,6 @@ extension AppSettings {
             }
         }
         refreshVisibleAppFonts()
-        resetUnsupportedAlternateAppIconIfNeeded()
     }
 
     private func applyNavigationChrome(_ navigationBar: UINavigationBar, theme: ThemeStyle) {
@@ -713,21 +743,6 @@ extension AppSettings {
         navigationBar.compactAppearance = appearance
         navigationBar.tintColor = theme.accentColor
         navigationBar.isTranslucent = !theme.prefersOpaqueChrome
-    }
-
-    /// Alternate icons were removed; force primary if an old alternate is still active.
-    private func resetUnsupportedAlternateAppIconIfNeeded() {
-        guard UIApplication.shared.alternateIconName != nil else {
-            if defaults.string(forKey: "appIconStyle") != AppIconStyle.primary.rawValue {
-                defaults.set(AppIconStyle.primary.rawValue, forKey: "appIconStyle")
-            }
-            return
-        }
-        UIApplication.shared.setAlternateIconName(nil) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.defaults.set(AppIconStyle.primary.rawValue, forKey: "appIconStyle")
-            }
-        }
     }
 
     func applyLanguage() {
