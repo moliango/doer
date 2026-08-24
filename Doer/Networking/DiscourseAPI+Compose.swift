@@ -15,6 +15,15 @@ extension DiscourseAPI {
         return try await request(route: .createTopic, parameters: params)
     }
 
+    func fetchDiscourseTemplates() async throws -> [DiscourseTemplate] {
+        let response: DiscourseTemplatesResponse = try await request(route: .discourseTemplates)
+        return response.templates
+    }
+
+    func recordDiscourseTemplateUse(id: Int) async {
+        try? await requestVoid(route: .useDiscourseTemplate(id: id))
+    }
+
     func createTopic(title: String, raw: String, categoryId: Int?, tags: [String] = []) async throws -> DiscourseCreatePostResponse {
         var params: [String: Any] = [
             "title": title,

@@ -531,10 +531,18 @@ extension DiscourseAPI {
         return decoded.messages
     }
 
-    func sendChatMessage(channelId: Int, message: String, inReplyToId: Int? = nil) async throws {
+    func sendChatMessage(
+        channelId: Int,
+        message: String,
+        inReplyToId: Int? = nil,
+        uploadIds: [Int] = []
+    ) async throws {
         var parameters: Parameters = ["message": message]
         if let inReplyToId {
             parameters["in_reply_to_id"] = inReplyToId
+        }
+        if !uploadIds.isEmpty {
+            parameters["upload_ids"] = uploadIds
         }
         do {
             try await postChatMessage(

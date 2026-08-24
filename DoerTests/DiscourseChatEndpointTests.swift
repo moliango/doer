@@ -163,4 +163,66 @@ final class DiscourseChatEndpointTests: XCTestCase {
         let sixDigit = DiscourseChatMessage.formatSendTime("2024-01-02T03:04:05.123456Z", now: now)
         XCTAssertFalse(sixDigit.isEmpty)
     }
+
+    func testUploadResponseDecodesChatUploadId() throws {
+        let json = """
+        {
+          "id": 88,
+          "short_url": "upload://abc.png",
+          "original_filename": "photo.png",
+          "width": 100,
+          "height": 80
+        }
+        """.data(using: .utf8)!
+        let upload = try JSONDecoder().decode(DiscourseUploadResponse.self, from: json)
+        XCTAssertEqual(upload.id, 88)
+        XCTAssertEqual(upload.shortURL, "upload://abc.png")
+    }
+
+    func testTemplatesResponseDecodesWrappedAndBareArrays() throws {
+        let wrapped = """
+        {
+          "templates": [
+            { "id": 1, "title": "问候", "content": "你好" }
+          ]
+        }
+        """.data(using: .utf8)!
+        let wrappedDecoded = try JSONDecoder().decode(DiscourseTemplatesResponse.self, from: wrapped)
+        XCTAssertEqual(wrappedDecoded.templates.count, 1)
+        XCTAssertEqual(wrappedDecoded.templates[0].content, "你好")
+
+        let bare = """
+        [{ "id": 2, "title": "签到", "content": "打卡" }]
+        """.data(using: .utf8)!
+        let bareDecoded = try JSONDecoder().decode(DiscourseTemplatesResponse.self, from: bare)
+        XCTAssertEqual(bareDecoded.templates.map(\.id), [2])
+    }
+
+    func testTemplateRouterPaths() {
+        XCTAssertEqual(DiscourseRouter.discourseTemplates.path, "/discourse_templates")
+        XCTAssertEqual(DiscourseRouter.discourseTemplates.method, .get)
+        XCTAssertEqual(DiscourseRouter.useDiscourseTemplate(id: 9).path, "/discourse_templates/9/use")
+        XCTAssertEqual(DiscourseRouter.useDiscourseTemplate(id: 9).method, .post)
+    }
+
+    func testDateMarkdownMatchesDiscourseLocalDateSyntax() {
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 8
+        components.day = 24
+        components.hour = 9
+        components.minute = 5
+        var calendar = Calendar(identifier: .gregorian)
+        let zone = TimeZone(identifier: "Asia/Shanghai")!
+        calendar.timeZone = zone
+        let date = calendar.date(from: components)!
+        XCTAssertEqual(
+            DiscourseDateMarkdown.make(date: date, includeTime: true, timeZone: zone),
+            "[date=2026-08-24 time=09:05:00 timezone=\"Asia/Shanghai\"]"
+        )
+        XCTAssertEqual(
+            DiscourseDateMarkdown.make(date: date, includeTime: false, timeZone: zone),
+            "[date=2026-08-24 timezone=\"Asia/Shanghai\"]"
+        )
+    }
 }

@@ -192,6 +192,23 @@ final class ChatRoomViewController: ObservableViewController, UITableViewDataSou
     private let chatInputBar: WeChatChatInputBar = WeChatChatInputBar()
     private var chatInputBarBottomConstraint: NSLayoutConstraint?
     private var emojiStoreObserver: NSObjectProtocol?
+    private var composerController: ChatRoomComposerController?
+    private var pendingAttachments: [(id: Int, filename: String)] = []
+    private var isUploadingAttachment = false
+    private let attachmentBanner: UIButton = {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.titleLabel?.font = .preferredFont(forTextStyle: .footnote)
+        button.titleLabel?.adjustsFontForContentSizeCategory = true
+        button.contentHorizontalAlignment = .left
+        var config = UIButton.Configuration.plain()
+        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16)
+        config.titleLineBreakMode = .byTruncatingTail
+        button.configuration = config
+        button.isHidden = true
+        return button
+    }()
+    private var attachmentBannerHeight: NSLayoutConstraint?
 
     init(api: DiscourseAPI, channel: DiscourseChatChannel) {
         self.api = api
@@ -213,11 +230,26 @@ final class ChatRoomViewController: ObservableViewController, UITableViewDataSou
         chatInputBar.onSend = { [weak self] text in
             self?.sendMessage(text)
         }
+        let composer = ChatRoomComposerController(host: self, api: api)
+        composer.onInsertText = { [weak self] text in
+            self?.chatInputBar.insertText(text)
+        }
+        composer.onUploaded = { [weak self] id, filename in
+            self?.appendPendingAttachment(id: id, filename: filename)
+        }
+        composer.onUploadStateChange = { [weak self] uploading in
+            self?.isUploadingAttachment = uploading
+            self?.chatInputBar.isComposerEnabled = !(self?.isSending == true || uploading)
+        }
+        composer.plusAnchor = { [weak self] in
+            self?.chatInputBar.plusMenuAnchorView
+        }
+        composerController = composer
         chatInputBar.onPlus = { [weak self] in
-            self?.showPlusMenu()
+            self?.composerController?.showMenu()
         }
         chatInputBar.onEmoji = { [weak self] in
-            self?.showPlusMenu()
+            self?.presentEmojiPicker()
         }
         chatInputBar.onBeginEditing = { [weak self] in
             guard let self else { return }
@@ -282,23 +314,34 @@ final class ChatRoomViewController: ObservableViewController, UITableViewDataSou
     override func updateUI() {
         applyTheme()
         tableView.reloadData()
-        chatInputBar.setSending(isSending)
-        chatInputBar.isComposerEnabled = !isSending
+        chatInputBar.setSending(isSending || isUploadingAttachment)
+        chatInputBar.isComposerEnabled = !isSending && !isUploadingAttachment
         pinsToLatestMessage = true
         scrollToBottom(animated: false)
     }
 
     private func setupLayout() {
         view.addSubview(tableView)
+        view.addSubview(attachmentBanner)
         view.addSubview(chatInputBar)
+        attachmentBanner.addAction(UIAction { [weak self] _ in
+            self?.clearPendingAttachments()
+        }, for: .touchUpInside)
 
         let bottom = chatInputBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         chatInputBarBottomConstraint = bottom
+        let bannerHeight = attachmentBanner.heightAnchor.constraint(equalToConstant: 0)
+        attachmentBannerHeight = bannerHeight
         NSLayoutConstraint.activate([
             tableView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tableView.bottomAnchor.constraint(equalTo: chatInputBar.topAnchor),
+            tableView.bottomAnchor.constraint(equalTo: attachmentBanner.topAnchor),
+
+            attachmentBanner.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            attachmentBanner.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            attachmentBanner.bottomAnchor.constraint(equalTo: chatInputBar.topAnchor),
+            bannerHeight,
 
             chatInputBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             chatInputBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -370,6 +413,9 @@ final class ChatRoomViewController: ObservableViewController, UITableViewDataSou
         tableView.backgroundColor = canvas
         chatInputBar.applyChatStyle()
         view.tintColor = theme.accentColor
+        attachmentBanner.backgroundColor = theme.topicListBackgroundColor
+        attachmentBanner.tintColor = theme.accentColor
+        attachmentBanner.setTitleColor(theme.accentColor, for: .normal)
     }
 
     private func scrollToBottom(animated: Bool, layout: Bool = true) {
@@ -421,7 +467,8 @@ final class ChatRoomViewController: ObservableViewController, UITableViewDataSou
 
     @objc private func sendMessage(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isSending else { return }
+        let uploadIds = pendingAttachments.map(\.id)
+        guard (!trimmed.isEmpty || !uploadIds.isEmpty), !isSending, !isUploadingAttachment else { return }
         let replyId = chatInputBar.replyToChatMessageId
         isSending = true
         chatInputBar.setSending(true)
@@ -430,9 +477,11 @@ final class ChatRoomViewController: ObservableViewController, UITableViewDataSou
                 try await api.sendChatMessage(
                     channelId: channel.id,
                     message: trimmed,
-                    inReplyToId: replyId
+                    inReplyToId: replyId,
+                    uploadIds: uploadIds
                 )
                 chatInputBar.clearAfterSend()
+                clearPendingAttachments()
                 pinsToLatestMessage = true
                 await loadMessages()
                 scrollToBottom(animated: true)
@@ -444,9 +493,41 @@ final class ChatRoomViewController: ObservableViewController, UITableViewDataSou
         }
     }
 
-    /// Plus opens the emoji panel (WeChat-style parity with topic reply bar).
-    private func showPlusMenu() {
-        presentEmojiPicker()
+    private func appendPendingAttachment(id: Int, filename: String) {
+        pendingAttachments.append((id: id, filename: filename))
+        refreshAttachmentBanner()
+    }
+
+    private func clearPendingAttachments() {
+        pendingAttachments.removeAll()
+        refreshAttachmentBanner()
+    }
+
+    private func refreshAttachmentBanner() {
+        let count = pendingAttachments.count
+        chatInputBar.allowsEmptySend = count > 0
+        var config = attachmentBanner.configuration ?? .plain()
+        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16)
+        config.titleLineBreakMode = .byTruncatingTail
+        if count == 0 {
+            config.title = nil
+            attachmentBanner.configuration = config
+            attachmentBanner.isHidden = true
+            attachmentBannerHeight?.constant = 0
+        } else {
+            let names = pendingAttachments.map(\.filename).joined(separator: "、")
+            config.title = String(
+                format: String(localized: "chat.attach.pending", defaultValue: "已附加 %d 个文件（点按清除）"),
+                count
+            ) + " · " + names
+            attachmentBanner.configuration = config
+            attachmentBanner.isHidden = false
+            attachmentBannerHeight?.constant = 36
+        }
+        view.layoutIfNeeded()
+        if pinsToLatestMessage {
+            scrollToBottom(animated: false)
+        }
     }
 
     private func presentEmojiPicker() {

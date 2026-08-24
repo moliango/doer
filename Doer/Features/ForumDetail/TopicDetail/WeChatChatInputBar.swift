@@ -9,6 +9,10 @@ final class WeChatChatInputBar: UIView, UITextViewDelegate {
     var onEmoji: (() -> Void)?
     var onHeightChange: (() -> Void)?
     var onBeginEditing: (() -> Void)?
+    /// When true, Return / send may fire with empty text (pending chat uploads).
+    var allowsEmptySend = false {
+        didSet { updateTrailingButtons() }
+    }
 
     private let minTextHeight: CGFloat = 36
     private let maxTextHeight: CGFloat = 100
@@ -142,6 +146,12 @@ final class WeChatChatInputBar: UIView, UITextViewDelegate {
         textView.insertText(string)
         textViewDidChange(textView)
         focus()
+    }
+
+    var plusMenuAnchorView: UIView {
+        if !plusButton.isHidden { return plusButton }
+        if !attachButton.isHidden { return attachButton }
+        return self
     }
 
     private func showReplyBanner(name: String, preview: String) {
@@ -498,14 +508,15 @@ final class WeChatChatInputBar: UIView, UITextViewDelegate {
 
     private func updateTrailingButtons() {
         let hasText = !(textView.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let canSend = hasText || allowsEmptySend
         guard chatStyle == .telegram else { return }
-        micButton.isHidden = hasText
-        sendButton.isHidden = !hasText
+        micButton.isHidden = canSend
+        sendButton.isHidden = !canSend
     }
 
     private func sendTapped() {
         let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty, !isSending else { return }
+        guard (!raw.isEmpty || allowsEmptySend), !isSending else { return }
         onSend?(raw)
     }
 

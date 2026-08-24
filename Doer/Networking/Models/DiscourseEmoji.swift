@@ -58,6 +58,8 @@ struct DiscourseCreatePostResponse: Decodable {
 }
 
 struct DiscourseUploadResponse: Decodable {
+    /// Chat send uses `upload_ids`; markdown short URLs are ignored there.
+    let id: Int?
     let shortURL: String
     let url: String?
     let originalFilename: String
@@ -70,6 +72,7 @@ struct DiscourseUploadResponse: Decodable {
     let fileExtension: String?
 
     enum CodingKeys: String, CodingKey {
+        case id
         case shortURL = "short_url"
         case url
         case originalFilename = "original_filename"

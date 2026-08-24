@@ -79,6 +79,9 @@ enum DiscourseRouter {
     case flagBoost(boostId: Int)
     case votePoll
     case upload(clientId: String)
+    /// discourse-templates plugin (FluxDo chat / composer insert).
+    case discourseTemplates
+    case useDiscourseTemplate(id: Int)
     /// discourse-assign: claim / assign topic (FluxDo parity).
     case assignTopic
     case unassignTopic
@@ -86,7 +89,7 @@ enum DiscourseRouter {
     var method: HTTPMethod {
         switch self {
         case .createTopic, .createBookmark, .createInvite, .toggleSharedIssue, .createBoost, .flagBoost, .upload,
-             .topicNotificationLevel, .presenceUpdate, .saveDraft, .assignTopic:
+             .topicNotificationLevel, .presenceUpdate, .saveDraft, .assignTopic, .useDiscourseTemplate:
             return .post
         case .toggleReaction, .votePoll, .follow, .userNotificationLevel, .updateTopic, .updatePost:
             return .put
@@ -272,6 +275,10 @@ enum DiscourseRouter {
             return "/polls/vote"
         case .upload(let clientId):
             return "/uploads.json?client_id=\(clientId)"
+        case .discourseTemplates:
+            return "/discourse_templates"
+        case .useDiscourseTemplate(let id):
+            return "/discourse_templates/\(id)/use"
         case .assignTopic:
             return "/assign/assign"
         case .unassignTopic:
