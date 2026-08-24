@@ -195,7 +195,65 @@ extension AppSettings {
             .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
-    func addCustomDoHServer(name: String, url: String) -> CustomDoHServer? {
+    nonisolated static func parseBootstrapIPs(_ text: String) -> [String] {
+        text
+            .split { $0 == "," || $0 == ";" || $0 == "\n" || $0 == " " }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    func bootstrapIPs(forServerURL url: String) -> [String] {
+        let normalized = DohServerCatalog.normalize(url)
+        if let custom = dohCustomServers.first(where: { $0.url == normalized }) {
+            return Self.lockedBootstrapIPs(for: normalized, extras: custom.bootstrapIPs)
+        }
+        return Self.lockedBootstrapIPs(for: normalized, extras: bootstrapExtras(for: normalized))
+    }
+
+    func setBootstrapIPs(_ ips: [String], forServerURL url: String) {
+        let normalized = DohServerCatalog.normalize(url)
+        let locked = DohServerCatalog.inferredBootstrapIPs(for: normalized)
+        let extras = ips.filter { ip in !locked.contains(ip) }
+        if let index = dohCustomServers.firstIndex(where: { $0.url == normalized }) {
+            updateCustomDoHServer(url: normalized, bootstrapIPs: extras)
+            return
+        }
+        setBootstrapExtras(extras, for: normalized)
+        if dohProvider != .custom, DohServerCatalog.normalize(dohProvider.url) == normalized {
+            notifyChanged()
+        }
+    }
+
+    private func bootstrapExtras(for url: String) -> [String] {
+        Self.bootstrapExtras(from: defaults, url: url)
+    }
+
+    private func setBootstrapExtras(_ extras: [String], for url: String) {
+        var map = Self.bootstrapExtrasMap(from: defaults)
+        let normalized = DohServerCatalog.normalize(url)
+        if extras.isEmpty {
+            map.removeValue(forKey: normalized)
+        } else {
+            map[normalized] = extras
+        }
+        if let data = try? JSONEncoder().encode(map) {
+            defaults.set(data, forKey: "dohBootstrapExtrasByURL")
+        }
+        notifyChanged()
+    }
+
+    nonisolated static func bootstrapExtras(from defaults: UserDefaults, url: String) -> [String] {
+        bootstrapExtrasMap(from: defaults)[DohServerCatalog.normalize(url)] ?? []
+    }
+
+    nonisolated static func bootstrapExtrasMap(from defaults: UserDefaults) -> [String: [String]] {
+        guard let data = defaults.data(forKey: "dohBootstrapExtrasByURL"),
+              let map = try? JSONDecoder().decode([String: [String]].self, from: data)
+        else { return [:] }
+        return map
+    }
+
+    func addCustomDoHServer(name: String, url: String, bootstrapIPs: [String] = []) -> CustomDoHServer? {
         let normalized = DohServerCatalog.normalize(url)
         guard let parsed = URL(string: normalized), parsed.scheme?.lowercased() == "https" else {
             return nil
@@ -207,11 +265,28 @@ extension AppSettings {
                 ? parsed.host ?? String(localized: "doh.provider.custom")
                 : name.trimmingCharacters(in: .whitespacesAndNewlines),
             url: normalized,
-            bootstrapIPs: Self.lockedBootstrapIPs(for: normalized)
+            bootstrapIPs: Self.lockedBootstrapIPs(for: normalized, extras: bootstrapIPs)
         )
         list.append(server)
         dohCustomServers = list
         return server
+    }
+
+    func updateCustomDoHServer(url: String, name: String? = nil, bootstrapIPs: [String]? = nil) {
+        let normalized = DohServerCatalog.normalize(url)
+        var list = dohCustomServers
+        guard let index = list.firstIndex(where: { $0.url == normalized }) else { return }
+        if let name {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { list[index].name = trimmed }
+        }
+        if let bootstrapIPs {
+            list[index].bootstrapIPs = Self.lockedBootstrapIPs(for: normalized, extras: bootstrapIPs)
+        }
+        dohCustomServers = list
+        if dohProvider == .custom, dohCustomURL == normalized {
+            dohCustomBootstrapIPs = list[index].bootstrapIPs
+        }
     }
 
     func removeCustomDoHServer(url: String) {
@@ -313,7 +388,10 @@ extension AppSettings {
                 )
             }
         } else {
-            bootstrap = provider.bootstrapIPs
+            bootstrap = lockedBootstrapIPs(
+                for: provider.url,
+                extras: bootstrapExtras(from: defaults, url: provider.url)
+            )
         }
         let upstreamHost = defaults.string(forKey: "dohUpstreamHost") ?? ""
         let upstreamPort = defaults.object(forKey: "dohUpstreamPort") as? Int ?? 0

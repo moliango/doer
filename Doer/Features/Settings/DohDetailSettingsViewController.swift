@@ -32,6 +32,7 @@ final class DohDetailSettingsViewController: ObservableViewController {
     private let echRow = DataManagementActionRowView()
     private let echServerRow = DataManagementActionRowView()
     private let serverIPRow = DataManagementActionRowView()
+    private let bootstrapRow = DataManagementActionRowView()
     private let upstreamRow = DataManagementActionRowView()
     private let debugLogRow = DataManagementActionRowView()
 
@@ -73,6 +74,7 @@ final class DohDetailSettingsViewController: ObservableViewController {
         cacheRow.addTarget(self, action: #selector(clearDNSCache), for: .touchUpInside)
         echServerRow.addTarget(self, action: #selector(editEchServer), for: .touchUpInside)
         serverIPRow.addTarget(self, action: #selector(editServerIP), for: .touchUpInside)
+        bootstrapRow.addTarget(self, action: #selector(editBootstrapIPs), for: .touchUpInside)
         upstreamRow.addTarget(self, action: #selector(editUpstream), for: .touchUpInside)
         debugLogRow.addTarget(self, action: #selector(openDebugLog), for: .touchUpInside)
         gatewayRow.onValueChanged = { [weak self] isOn in
@@ -132,7 +134,7 @@ final class DohDetailSettingsViewController: ObservableViewController {
         ))
 
         let advancedStack = UIStackView(arrangedSubviews: [
-            cacheRow, gatewayRow, h2Row, ipv6Row, echRow, echServerRow, serverIPRow, upstreamRow,
+            cacheRow, gatewayRow, h2Row, ipv6Row, echRow, echServerRow, bootstrapRow, serverIPRow, upstreamRow,
         ])
         advancedStack.axis = .vertical
         advancedStack.spacing = 12
@@ -276,6 +278,16 @@ final class DohDetailSettingsViewController: ObservableViewController {
             tintColor: accent,
             backgroundColor: card
         )
+        let bootstrapIPs = settings.bootstrapIPs(forServerURL: currentDoHServerURL)
+        bootstrapRow.configure(
+            title: String(localized: "settings.network.bootstrap", defaultValue: "Bootstrap IP"),
+            subtitle: bootstrapIPs.isEmpty
+                ? String(localized: "settings.not_set")
+                : bootstrapIPs.joined(separator: ", "),
+            symbolName: "point.3.connected.trianglepath.dotted",
+            tintColor: accent,
+            backgroundColor: card
+        )
         serverIPRow.configure(
             title: String(localized: "settings.network.server_ip", defaultValue: "固定 server IP"),
             subtitle: settings.dohServerIP.isEmpty
@@ -323,7 +335,12 @@ final class DohDetailSettingsViewController: ObservableViewController {
                 ? "\(result.latencyMs) ms"
                 : (result.errorDescription ?? String(localized: "settings.network.doh_test.failed", defaultValue: "测试失败"))
         } else {
-            subtitle = url
+            let ips = settings.bootstrapIPs(forServerURL: url)
+            if ips.isEmpty {
+                subtitle = url
+            } else {
+                subtitle = url + "\n" + ips.joined(separator: ", ")
+            }
         }
         row.configure(
             title: title,
@@ -419,7 +436,7 @@ final class DohDetailSettingsViewController: ObservableViewController {
             title: String(localized: "settings.network.doh_server.add", defaultValue: "添加服务器"),
             message: String(
                 localized: "settings.network.doh_server.add.message",
-                defaultValue: "填写名称和 https:// 地址。Bootstrap IP 由系统自动锁定，不能删除。"
+                defaultValue: "填写名称和 https:// 地址。系统锁定的 Bootstrap IP 不能删除，可追加。"
             ),
             preferredStyle: .alert
         )
@@ -432,10 +449,23 @@ final class DohDetailSettingsViewController: ObservableViewController {
             field.autocapitalizationType = .none
             field.autocorrectionType = .no
         }
+        alert.addTextField { field in
+            field.placeholder = String(
+                localized: "settings.network.bootstrap.message",
+                defaultValue: "Bootstrap IP，逗号分隔，如 1.1.1.1, 1.0.0.1"
+            )
+            field.autocapitalizationType = .none
+            field.autocorrectionType = .no
+        }
         alert.addAction(UIAlertAction(title: String(localized: "common.ok"), style: .default) { [weak self] _ in
             let name = alert.textFields?.first?.text ?? ""
             let url = alert.textFields?.dropFirst().first?.text ?? ""
-            guard let self, let server = self.settings.addCustomDoHServer(name: name, url: url) else {
+            let bootstrap = AppSettings.parseBootstrapIPs(alert.textFields?.dropFirst(2).first?.text ?? "")
+            guard let self, let server = self.settings.addCustomDoHServer(
+                name: name,
+                url: url,
+                bootstrapIPs: bootstrap
+            ) else {
                 return
             }
             self.settings.selectCustomDoHServer(server)
@@ -496,6 +526,39 @@ final class DohDetailSettingsViewController: ObservableViewController {
         alert.addAction(UIAlertAction(title: String(localized: "common.ok"), style: .default) { [weak self] _ in
             self?.settings.dohEchServerURL = (alert.textFields?.first?.text ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            LightweightDohProxyService.shared.configureFromSettings()
+            self?.refreshDataViews()
+        })
+        alert.addAction(UIAlertAction(title: String(localized: "action.cancel"), style: .cancel))
+        present(alert, animated: true)
+    }
+
+    private var currentDoHServerURL: String {
+        settings.dohProvider == .custom ? settings.dohCustomURL : settings.dohProvider.url
+    }
+
+    @objc private func editBootstrapIPs() {
+        let url = currentDoHServerURL
+        let locked = DohServerCatalog.inferredBootstrapIPs(for: url)
+        let current = settings.bootstrapIPs(forServerURL: url)
+        let intro = String(
+            localized: "settings.network.bootstrap.edit.message",
+            defaultValue: "可追加 IP，系统锁定的地址不会被删除。"
+        )
+        let alert = UIAlertController(
+            title: String(localized: "settings.network.bootstrap", defaultValue: "Bootstrap IP"),
+            message: locked.isEmpty ? intro : intro + "\n锁定：\(locked.joined(separator: ", "))",
+            preferredStyle: .alert
+        )
+        alert.addTextField { field in
+            field.text = current.joined(separator: ", ")
+            field.placeholder = "1.1.1.1, 1.0.0.1"
+            field.autocapitalizationType = .none
+            field.autocorrectionType = .no
+        }
+        alert.addAction(UIAlertAction(title: String(localized: "common.ok"), style: .default) { [weak self] _ in
+            let parsed = AppSettings.parseBootstrapIPs(alert.textFields?.first?.text ?? "")
+            self?.settings.setBootstrapIPs(parsed, forServerURL: url)
             LightweightDohProxyService.shared.configureFromSettings()
             self?.refreshDataViews()
         })
