@@ -341,6 +341,10 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
 
     /// Attach the local proxy. Gateway API sessions skip CONNECT so they can
     /// speak plaintext HTTP to 127.0.0.1 (excepted from the proxy list).
+    ///
+    /// API/Alamofire only uses CONNECT when ECH/MITM is ready. Pass-through
+    /// CONNECT to Cloudflare anycast often gets TLS RST; Encrypted DNS stays
+    /// the URLSession path until MITM can inject ECH.
     func apply(
         to sessionConfiguration: URLSessionConfiguration,
         hostURL: String? = nil,
