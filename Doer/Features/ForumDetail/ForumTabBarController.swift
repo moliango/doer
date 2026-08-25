@@ -186,7 +186,7 @@ final class ForumTabBarController: UITabBarController {
         if themeStyle.prefersOpaqueChrome {
             appearance.backgroundColor = themeStyle.chromeBackgroundColor
             appearance.shadowColor = UIColor.separator.withAlphaComponent(0.45)
-        } else if themeStyle == .systemDefault {
+        } else if themeStyle == .systemDefault || themeStyle == .oled {
             appearance.backgroundColor = .systemBackground
             appearance.shadowColor = UIColor.separator.withAlphaComponent(0.35)
         } else {
@@ -213,19 +213,24 @@ final class ForumTabBarController: UITabBarController {
             itemAppearance.selected.iconColor = themeStyle.accentColor
         }
 
-        // Spring animation for smooth global theme switch
         let newColor = appearance.backgroundColor
-        let animator = DoerMotion.propertyAnimator(
-            duration: DoerMotion.standard,
-            timingParameters: DoerMotion.softSpring
-        )
-        animator.addAnimations {
+        let applyBarColors = {
             self.tabBar.standardAppearance = appearance
             self.tabBar.scrollEdgeAppearance = appearance
             self.tabBar.backgroundColor = newColor
             self.tabBar.barTintColor = newColor
         }
-        animator.startAnimation()
+        // Animating to true-black can blank the window until process restart.
+        if themeStyle == .oled {
+            applyBarColors()
+        } else {
+            let animator = DoerMotion.propertyAnimator(
+                duration: DoerMotion.standard,
+                timingParameters: DoerMotion.softSpring
+            )
+            animator.addAnimations(applyBarColors)
+            animator.startAnimation()
+        }
 
         tabBar.tintColor = themeStyle.accentColor
         tabBar.unselectedItemTintColor = UIColor.secondaryLabel.withAlphaComponent(0.78)

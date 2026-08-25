@@ -79,6 +79,8 @@ extension AppSettings {
         case telegram = 3
         /// WeChat-inspired green system: colors + denser opaque chrome (option B).
         case weChat = 4
+        /// True-black OLED/AMOLED night surfaces. Standard list layout, like eye care.
+        case oled = 5
 
         var title: String {
             switch self {
@@ -87,6 +89,7 @@ extension AppSettings {
             case .xiaohongshu: return String(localized: "settings.theme.xiaohongshu")
             case .telegram: return String(localized: "settings.theme.telegram")
             case .weChat: return String(localized: "settings.theme.wechat", defaultValue: "微信风格")
+            case .oled: return String(localized: "settings.theme.oled", defaultValue: "OLED 纯黑")
             }
         }
 
@@ -96,15 +99,16 @@ extension AppSettings {
             case .weChat: return 10
             case .telegram: return 14
             case .xiaohongshu: return 14
-            case .systemDefault, .eyeCare: return 12
+            case .systemDefault, .eyeCare, .oled: return 12
             }
         }
 
         /// WeChat / Telegram use fully opaque tab/nav bars (less iOS blur glass).
+        /// OLED keeps system chrome: opaque black bars blank the window on live switch.
         var prefersOpaqueChrome: Bool {
             switch self {
             case .weChat, .telegram: return true
-            case .systemDefault, .eyeCare, .xiaohongshu: return false
+            case .systemDefault, .eyeCare, .xiaohongshu, .oled: return false
             }
         }
 
@@ -127,7 +131,7 @@ extension AppSettings {
 
         var accentColor: UIColor {
             switch self {
-            case .systemDefault: return .systemBlue
+            case .systemDefault, .oled: return .systemBlue
             case .eyeCare: return UIColor(red: 0.24, green: 0.55, blue: 0.34, alpha: 1)
             case .xiaohongshu: return UIColor(red: 0.92, green: 0.13, blue: 0.22, alpha: 1)
             // Telegram brand blue ≈ #3390EC
@@ -147,10 +151,7 @@ extension AppSettings {
                         ? UIColor(red: 0.18, green: 0.11, blue: 0.12, alpha: 1)
                         : UIColor.white
                 }
-            case .eyeCare:
-                return contentBackgroundColor
-            case .telegram:
-                // White rows on white list (Telegram), dark navy in night mode.
+            case .eyeCare, .telegram, .oled:
                 return contentBackgroundColor
             case .weChat:
                 return UIColor { trait in
@@ -167,8 +168,7 @@ extension AppSettings {
                 return .systemGroupedBackground
             case .eyeCare, .xiaohongshu:
                 return mutedContentBackgroundColor
-            case .telegram:
-                // Official Telegram chat list is pure white (not WeChat gray).
+            case .telegram, .oled:
                 return contentBackgroundColor
             case .weChat:
                 // WeChat list is slightly gray behind white cells.
@@ -186,7 +186,7 @@ extension AppSettings {
                         ? UIColor(red: 0.14, green: 0.17, blue: 0.20, alpha: 1)
                         : UIColor(red: 0.94, green: 0.95, blue: 0.96, alpha: 1)
                 }
-            case .eyeCare, .xiaohongshu, .weChat:
+            case .eyeCare, .xiaohongshu, .weChat, .oled:
                 return mutedContentBackgroundColor
             }
         }
@@ -194,20 +194,20 @@ extension AppSettings {
         var topicCountForegroundColor: UIColor {
             switch self {
             case .systemDefault: return .secondaryLabel
-            case .eyeCare, .xiaohongshu, .telegram, .weChat: return accentColor
+            case .eyeCare, .xiaohongshu, .telegram, .weChat, .oled: return accentColor
             }
         }
 
         var topicCountBackgroundColor: UIColor {
             switch self {
             case .systemDefault: return .tertiarySystemFill
-            case .eyeCare, .xiaohongshu, .telegram, .weChat: return accentColor.withAlphaComponent(0.12)
+            case .eyeCare, .xiaohongshu, .telegram, .weChat, .oled: return accentColor.withAlphaComponent(0.12)
             }
         }
 
         var hotTopicColor: UIColor {
             switch self {
-            case .systemDefault: return .systemOrange
+            case .systemDefault, .oled: return .systemOrange
             case .eyeCare: return UIColor(red: 0.72, green: 0.47, blue: 0.18, alpha: 1)
             case .xiaohongshu: return UIColor(red: 1.0, green: 0.34, blue: 0.40, alpha: 1)
             case .telegram: return UIColor(red: 0.0, green: 0.56, blue: 0.86, alpha: 1)
@@ -259,6 +259,12 @@ extension AppSettings {
                         ? UIColor(red: 0.07, green: 0.07, blue: 0.07, alpha: 1) // near pure black
                         : UIColor.white
                 }
+            case .oled:
+                return UIColor { trait in
+                    // sRGB #000000, not `UIColor.black` (DeviceGray). Catalog black
+                    // makes UIBarStyle.black and can blank the window until relaunch.
+                    trait.userInterfaceStyle == .dark ? Self.oledCanvasColor : .white
+                }
             }
         }
 
@@ -294,6 +300,12 @@ extension AppSettings {
                         ? UIColor(red: 0.12, green: 0.12, blue: 0.12, alpha: 1)
                         : UIColor(red: 0.93, green: 0.93, blue: 0.93, alpha: 1) // #EDEDED-ish
                 }
+            case .oled:
+                return UIColor { trait in
+                    trait.userInterfaceStyle == .dark
+                        ? UIColor.white.withAlphaComponent(0.08)
+                        : UIColor.systemGroupedBackground
+                }
             }
         }
 
@@ -312,14 +324,14 @@ extension AppSettings {
                         ? UIColor(red: 0.10, green: 0.13, blue: 0.16, alpha: 1)
                         : UIColor(red: 0.96, green: 0.97, blue: 0.98, alpha: 1)
                 }
-            case .systemDefault, .eyeCare, .xiaohongshu:
+            case .systemDefault, .eyeCare, .xiaohongshu, .oled:
                 return contentBackgroundColor
             }
         }
 
         var webAccentHex: String {
             switch self {
-            case .systemDefault: return "#0079d3"
+            case .systemDefault, .oled: return "#0079d3"
             case .eyeCare: return "#3d8c56"
             case .xiaohongshu: return "#eb3349"
             case .telegram: return "#3390EC"
@@ -329,7 +341,7 @@ extension AppSettings {
 
         var webBackgroundHex: String {
             switch self {
-            case .systemDefault: return "transparent"
+            case .systemDefault, .oled: return "transparent"
             case .eyeCare: return "#f0f7e7"
             case .xiaohongshu: return "#fff5f5"
             case .telegram: return "#c8d9e8"
@@ -339,7 +351,7 @@ extension AppSettings {
 
         var webMutedBackgroundHex: String {
             switch self {
-            case .systemDefault: return "#f6f8ff"
+            case .systemDefault, .oled: return "#f6f8ff"
             case .eyeCare: return "#e3efd7"
             case .xiaohongshu: return "#ffe8eb"
             case .telegram: return "#e8f4fc"
@@ -350,13 +362,13 @@ extension AppSettings {
         var webQuoteBorderHex: String {
             switch self {
             case .systemDefault: return "#cccccc"
-            case .eyeCare, .xiaohongshu, .telegram, .weChat: return webAccentHex
+            case .eyeCare, .xiaohongshu, .telegram, .weChat, .oled: return webAccentHex
             }
         }
 
         var webBlockquoteBackgroundHex: String {
             switch self {
-            case .systemDefault: return "transparent"
+            case .systemDefault, .oled: return "transparent"
             case .eyeCare, .xiaohongshu, .telegram, .weChat: return webMutedBackgroundHex
             }
         }
@@ -393,6 +405,13 @@ extension AppSettings {
                     UIColor(red: 0.98, green: 0.62, blue: 0.15, alpha: 1), // amber
                     UIColor(red: 0.45, green: 0.50, blue: 0.55, alpha: 1), // blue-gray
                 ]
+            case .oled:
+                return [
+                    UIColor.systemBlue,
+                    UIColor(white: 0.72, alpha: 1),
+                    UIColor(red: 0.45, green: 0.55, blue: 0.70, alpha: 1),
+                    UIColor(red: 0.55, green: 0.45, blue: 0.65, alpha: 1),
+                ]
             }
         }
 
@@ -427,8 +446,13 @@ extension AppSettings {
                     UIColor(red: 0.15, green: 0.70, blue: 0.55, alpha: 1),
                     UIColor(red: 0.30, green: 0.55, blue: 0.85, alpha: 1),
                 ]
+            case .oled:
+                return topicTagPalette
             }
         }
+
+        /// sRGB #000000. Avoid `UIColor.black` (DeviceGray catalog color).
+        static let oledCanvasColor = UIColor(red: 0, green: 0, blue: 0, alpha: 1)
 
         private func paletteColor(for seed: String, palette: [UIColor]) -> UIColor {
             guard !palette.isEmpty else { return accentColor }
@@ -682,12 +706,21 @@ extension AppSettings {
         UINavigationBar.appearance().tintColor = tintColor
         UITabBar.appearance().tintColor = tintColor
 
+        // Apply window style first so live bars resolve light/dark correctly.
+        for scene in UIApplication.shared.connectedScenes {
+            guard let windowScene = scene as? UIWindowScene else { continue }
+            for window in windowScene.windows {
+                window.overrideUserInterfaceStyle = style
+                window.tintColor = tintColor
+            }
+        }
+
         // Option B: WeChat prefers opaque gray chrome instead of iOS blur glass.
+        // Keep `chromeBackgroundColor` dynamic — resolving it against a stale
+        // trait collection bakes Telegram/WeChat dark navy into light mode.
         let navAppearance = UINavigationBarAppearance()
         if theme.prefersOpaqueChrome {
             navAppearance.configureWithOpaqueBackground()
-            // UINavigationBarAppearance color is not animatable via UIViewPropertyAnimator;
-            // live bars are refreshed below after appearance is reassigned.
             navAppearance.backgroundColor = theme.chromeBackgroundColor
             navAppearance.shadowColor = UIColor.separator.withAlphaComponent(0.28)
         } else {
@@ -703,9 +736,6 @@ extension AppSettings {
         for scene in UIApplication.shared.connectedScenes {
             guard let windowScene = scene as? UIWindowScene else { continue }
             for window in windowScene.windows {
-                window.overrideUserInterfaceStyle = style
-                window.tintColor = tintColor
-                // Re-apply live nav bars already on screen.
                 if let nav = window.rootViewController as? UINavigationController {
                     applyNavigationChrome(nav.navigationBar, theme: theme)
                 }

@@ -158,6 +158,7 @@ final class TopicReadStateTests: XCTestCase {
         XCTAssertEqual(HomeTopicListLayoutFactory.make(style: .xiaohongshu).kind, .xiaohongshu)
         XCTAssertEqual(HomeTopicListLayoutFactory.make(style: .weChat).kind, .weChat)
         XCTAssertEqual(HomeTopicListLayoutFactory.make(style: .telegram).kind, .telegram)
+        XCTAssertEqual(HomeTopicListLayoutFactory.make(style: .oled).kind, .standard)
     }
 
     @MainActor

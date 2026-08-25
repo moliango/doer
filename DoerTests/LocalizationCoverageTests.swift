@@ -5,6 +5,7 @@ final class LocalizationCoverageTests: XCTestCase {
     func testUpdateStringsHaveAllSupportedLocalizations() throws {
         let keys = [
             "settings.about",
+            "settings.theme.oled",
             "settings.about.subtitle",
             "settings.update.auto_check",
             "settings.update.check_now",

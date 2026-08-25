@@ -24468,6 +24468,34 @@
         }
       }
     },
+    "settings.theme.oled" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OLED Black"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OLED 纯黑"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OLED 純黑"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OLED 純黑"
+          }
+        }
+      }
+    },
     "settings.theme.telegram" : {
       "localizations" : {
         "en" : {

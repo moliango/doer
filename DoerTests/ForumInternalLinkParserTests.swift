@@ -48,9 +48,8 @@ final class ForumInternalLinkParserTests: XCTestCase {
             ForumInternalLinkParser.destination(for: url),
             .topic(id: 123, postNumber: 4)
         )
-            .topic(id: 123, postNumber: 4)
-        )
     }
+
     func testTagURLBuilderPercentEncodesName() {
         let url = ForumInternalLinkParser.tagURL(name: "公益推广", baseURL: baseURL)
         XCTAssertEqual(
@@ -62,6 +61,7 @@ final class ForumInternalLinkParserTests: XCTestCase {
             .tag(name: "公益推广")
         )
     }
+
     func testTagPathOpensTagTopics() {
         let url = URL(string: "https://linux.do/tag/公益推广")!
         XCTAssertEqual(
@@ -76,18 +76,6 @@ final class ForumInternalLinkParserTests: XCTestCase {
         XCTAssertEqual(
             ForumInternalLinkParser.destination(for: normalized),
             .tag(name: "swift")
-        )
-    }
-
-    func testTagURLBuilderPercentEncodesName() {
-        let url = ForumInternalLinkParser.tagURL(name: "公益推广", baseURL: baseURL)
-        XCTAssertEqual(
-            url?.absoluteString,
-            "https://linux.do/tag/%E5%85%AC%E7%9B%8A%E6%8E%A8%E5%B9%BF"
-        )
-        XCTAssertEqual(
-            ForumInternalLinkParser.destination(for: url!),
-            .tag(name: "公益推广")
         )
     }
 }

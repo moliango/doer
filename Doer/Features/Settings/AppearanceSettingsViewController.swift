@@ -1445,6 +1445,7 @@ extension AppSettings.ThemeStyle {
         case .xiaohongshu: return UIColor(red: 0.92, green: 0.13, blue: 0.22, alpha: 1)
         case .telegram: return UIColor(red: 0.20, green: 0.56, blue: 0.93, alpha: 1) // #3390EC
         case .weChat: return UIColor(red: 0.027, green: 0.757, blue: 0.376, alpha: 1)
+        case .oled: return .black
         }
     }
 
@@ -1455,6 +1456,7 @@ extension AppSettings.ThemeStyle {
         case .xiaohongshu: return UIColor(red: 1.0, green: 0.94, blue: 0.95, alpha: 1)
         case .telegram: return UIColor(red: 0.73, green: 0.84, blue: 0.93, alpha: 1) // chat canvas
         case .weChat: return UIColor(red: 0.93, green: 0.93, blue: 0.93, alpha: 1)
+        case .oled: return UIColor(white: 0.12, alpha: 1)
         }
     }
 
@@ -1489,6 +1491,12 @@ extension AppSettings.ThemeStyle {
                 UIColor(red: 0.027, green: 0.757, blue: 0.376, alpha: 1),
                 UIColor(red: 0.10, green: 0.64, blue: 0.62, alpha: 1),
                 UIColor(red: 0.98, green: 0.62, blue: 0.15, alpha: 1),
+            ]
+        case .oled:
+            return [
+                UIColor.systemBlue,
+                UIColor(white: 0.72, alpha: 1),
+                UIColor(white: 0.45, alpha: 1),
             ]
         }
     }

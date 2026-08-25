@@ -42,7 +42,7 @@ enum HomeTopicListLayoutFactory {
             return WeChatHomeTopicListLayout()
         case .telegram:
             return TelegramHomeTopicListLayout()
-        case .systemDefault, .eyeCare:
+        case .systemDefault, .eyeCare, .oled:
             return StandardHomeTopicListLayout()
         }
     }

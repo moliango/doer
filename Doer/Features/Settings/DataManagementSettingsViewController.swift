@@ -509,7 +509,11 @@ enum DataManagementPalette {
     static let amber = UIColor(red: 0.96, green: 0.62, blue: 0.04, alpha: 1)
 
     static var screenBackground: UIColor {
-        UIColor { trait in
+        let theme = AppSettings.shared.themeStyle
+        if theme == .oled {
+            return theme.topicListBackgroundColor
+        }
+        return UIColor { trait in
             trait.userInterfaceStyle == .dark
                 ? UIColor(red: 0.04, green: 0.07, blue: 0.12, alpha: 1)
                 : UIColor(red: 0.97, green: 0.98, blue: 0.99, alpha: 1)
