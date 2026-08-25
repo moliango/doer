@@ -65,6 +65,7 @@ final class MeViewController: ObservableViewController {
         super.viewDidLoad()
         observe(viewModel)
         observe(AppSettings.shared)
+        observe(AuthManager.shared)
         title = String(localized: "tab.me")
         applyThemeStyle()
 
@@ -360,10 +361,16 @@ final class MeViewController: ObservableViewController {
 
     private func loginTapped() {
         authGate?.requireAuth { [weak self] in
-            guard let self else { return }
-            Task {
-                await self.viewModel.reload()
-            }
+            self?.reloadAfterLogin()
+        }
+    }
+
+    private func reloadAfterLogin() {
+        viewModel.requiresLogin = false
+        viewModel.isLoading = viewModel.currentUser == nil && viewModel.userProfile == nil
+        updateUI()
+        Task {
+            await viewModel.loadProfile()
         }
     }
 
@@ -417,8 +424,7 @@ final class MeViewController: ObservableViewController {
             self.viewModel.clearSessionState(requiresLogin: true)
             self.updateUI()
             self.authGate?.requireAuth(preferredUsername: username) { [weak self] in
-                guard let self else { return }
-                Task { await self.viewModel.reload() }
+                self?.reloadAfterLogin()
             }
         }
     }
@@ -430,8 +436,7 @@ final class MeViewController: ObservableViewController {
             self.viewModel.clearSessionState(requiresLogin: true)
             self.updateUI()
             self.authGate?.requireAuth(preferredUsername: nil) { [weak self] in
-                guard let self else { return }
-                Task { await self.viewModel.reload() }
+                self?.reloadAfterLogin()
             }
         }
     }

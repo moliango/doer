@@ -84,6 +84,11 @@ final class AuthManager: DoerObservableObject, @unchecked Sendable {
         // The WebView already proved the login by issuing `_t`; do not block the UI
         // on profile/session enrichment, which can take several seconds behind CF.
         if WebCookieStore.shared.hasCookie(named: "_t", for: url) {
+            if usernameCache[baseURL] == nil,
+               let existing = forum.username?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !existing.isEmpty {
+                usernameCache[baseURL] = existing
+            }
             notifyChanged()
             Task { @MainActor [weak self] in
                 _ = await WebSessionRefreshService.shared.ensureSynced(

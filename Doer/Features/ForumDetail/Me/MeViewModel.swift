@@ -10,40 +10,73 @@ final class MeViewModel: DoerObservableObject {
     var errorMessage: String?
 
     private let api: DiscourseAPI
+    private var loadGeneration = 0
 
     init(api: DiscourseAPI) {
         self.api = api
     }
 
     func loadProfile(forceRefresh: Bool = false) async {
-        guard let username = AuthManager.shared.username(for: api.baseURL)?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !username.isEmpty
-        else {
+        loadGeneration += 1
+        let generation = loadGeneration
+        _ = forceRefresh
+        let hadContent = currentUser != nil || userProfile != nil
+        if !hadContent {
+            isLoading = true
+            requiresLogin = false
+            errorMessage = nil
+            notifyChanged()
+        }
+
+        var username = AuthManager.shared.username(for: api.baseURL)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasSession = AuthManager.shared.isAuthenticated(for: api.baseURL)
+
+        if username == nil || username?.isEmpty == true {
+            guard hasSession else {
+                MeProfileCacheStore.clear(baseURL: api.baseURL)
+                clearSessionState(requiresLogin: true)
+                return
+            }
+            do {
+                let current = try await api.fetchCurrentUser()
+                guard generation == loadGeneration else { return }
+                username = current.username
+                currentUser = current
+                isLoading = false
+                requiresLogin = false
+                notifyChanged()
+            } catch {
+                guard generation == loadGeneration else { return }
+                handleLoadError(error, hadVisibleContent: currentUser != nil || userProfile != nil)
+                return
+            }
+        }
+
+        guard let username, !username.isEmpty else {
+            guard generation == loadGeneration else { return }
             MeProfileCacheStore.clear(baseURL: api.baseURL)
             clearSessionState(requiresLogin: true)
             return
         }
 
-        let cachedEntry = forceRefresh ? nil : MeProfileCacheStore.cachedProfile(
+        // Paint cache first, then refresh in the background — including pull-to-refresh.
+        if let cachedEntry = MeProfileCacheStore.cachedProfile(
             baseURL: api.baseURL,
             username: username
-        )
-        let renderedCache = cachedEntry != nil
-
-        if let cachedEntry {
+        ) {
             apply(cachedEntry)
+            isLoading = false
+            requiresLogin = false
+            errorMessage = nil
+            notifyChanged()
         }
-
-        isLoading = !renderedCache
-        requiresLogin = false
-        errorMessage = nil
-        notifyChanged()
 
         do {
             async let profileTask = api.fetchUserProfile(username: username)
             async let summaryTask = api.fetchUserSummary(username: username)
-            let (profile, userSummary) = try await (profileTask, summaryTask)
+            let profile = try await profileTask
+            guard generation == loadGeneration else { return }
             let currentUser = DiscourseCurrentUser(
                 id: profile.id,
                 username: profile.username,
@@ -52,9 +85,14 @@ final class MeViewModel: DoerObservableObject {
             )
             self.currentUser = currentUser
             userProfile = profile
-            summary = userSummary
+            isLoading = false
             requiresLogin = false
             errorMessage = nil
+            notifyChanged()
+
+            let userSummary = try await summaryTask
+            guard generation == loadGeneration else { return }
+            summary = userSummary
             MeProfileCacheStore.save(
                 baseURL: api.baseURL,
                 username: username,
@@ -62,19 +100,14 @@ final class MeViewModel: DoerObservableObject {
                 userProfile: profile,
                 summary: userSummary
             )
+            notifyChanged()
         } catch {
-            if AuthSessionInvalidationPolicy.shouldInvalidateWebSession(error: error, baseURL: api.baseURL) {
-                AuthManager.shared.invalidateWebSession(for: api.baseURL)
-                currentUser = nil
-                userProfile = nil
-                summary = nil
-                requiresLogin = true
-            } else if !renderedCache {
-                errorMessage = error.localizedDescription
-            }
+            guard generation == loadGeneration else { return }
+            handleLoadError(
+                error,
+                hadVisibleContent: currentUser != nil || userProfile != nil
+            )
         }
-        isLoading = false
-        notifyChanged()
     }
 
     func reload() async {
@@ -82,12 +115,27 @@ final class MeViewModel: DoerObservableObject {
     }
 
     func clearSessionState(requiresLogin: Bool = true) {
+        loadGeneration += 1
         currentUser = nil
         userProfile = nil
         summary = nil
         isLoading = false
         self.requiresLogin = requiresLogin
         errorMessage = nil
+        notifyChanged()
+    }
+
+    private func handleLoadError(_ error: Error, hadVisibleContent: Bool) {
+        if AuthSessionInvalidationPolicy.shouldInvalidateWebSession(error: error, baseURL: api.baseURL) {
+            AuthManager.shared.invalidateWebSession(for: api.baseURL)
+            currentUser = nil
+            userProfile = nil
+            summary = nil
+            requiresLogin = true
+        } else if !hadVisibleContent {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
         notifyChanged()
     }
 
