@@ -46,6 +46,9 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         let browserReady = proxy?.isRunning == true
         lock.unlock()
         if !LocalConnectProxy.originECHReady {
+            if #available(iOS 17.0, *), browserReady {
+                return "应用内 DoH · Encrypted DNS · 浏览器直通"
+            }
             return "应用内 DoH · Encrypted DNS"
         }
         let mode = config.isGatewayMode ? "Gateway" : "CONNECT MITM"
@@ -127,7 +130,11 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
                     EncryptedDnsService.disable()
                     DohDebugLog.record("Encrypted DNS skipped: no bootstrap IPs")
                 }
-                DohDebugLog.record("DoH Encrypted DNS only; CONNECT off until ECH inject works")
+                // WKWebView ignores Network.framework Encrypted DNS. Keep CONNECT
+                // pass-through (no MITM) so CF challenge / login / in-app browser
+                // resolve via DoH instead of poisoned system DNS.
+                startWebViewProxyNow()
+                DohDebugLog.record("DoH Encrypted DNS + CONNECT pass-through for WKWebView")
             }
         } else {
             lock.lock()
@@ -145,6 +152,18 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         let port = proxy?.proxyPort
         lock.unlock()
         return port
+    }
+
+    /// WKWebView ignores Encrypted DNS. Wait for CONNECT pass-through so
+    /// Cloudflare challenge / login pages resolve via DoH, not system DNS.
+    func prepareBrowserProxy() async {
+        guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
+        startWebViewProxyNow()
+        for _ in 0..<40 {
+            if ensureRunning() != nil { break }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        applyWebViewProxy()
     }
 
     private func startWebViewProxyNow() {
@@ -365,7 +384,8 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         let apply = {
             if let port, let proxy = Self.connectProxyConfiguration(port: port) {
                 WKWebsiteDataStore.default().proxyConfigurations = [proxy]
-                DohDebugLog.record("WKWebView default store using CONNECT MITM 127.0.0.1:\(port)")
+                let mode = LocalConnectProxy.originECHReady ? "MITM" : "pass-through"
+                DohDebugLog.record("WKWebView default store using CONNECT \(mode) 127.0.0.1:\(port)")
             } else {
                 WKWebsiteDataStore.default().proxyConfigurations = []
             }

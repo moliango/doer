@@ -179,8 +179,8 @@ private final class CloudflareBackgroundVerificationAttempt: NSObject, WKNavigat
         let startedAt = Date()
         log("started reason=\(reason) base=\(baseURL.absoluteString) response=\(responseURL?.absoluteString ?? "none")")
         initialClearanceValue = WebCookieStore.shared.cookieValue(named: "cf_clearance", for: baseURL)
+        await LightweightDohProxyService.shared.prepareBrowserProxy()
         await WebCookieStore.shared.syncToWebView(dataStore, for: baseURL)
-
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false

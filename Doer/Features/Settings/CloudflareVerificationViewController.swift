@@ -425,8 +425,10 @@ final class CloudflareVerificationViewController: UIViewController {
             }
         }
         guard !isClosing else { return }
+        await LightweightDohProxyService.shared.prepareBrowserProxy()
+        guard generation == preparationGeneration, !Task.isCancelled, !isClosing else { return }
         log(
-            "foreground load challenge base=\(baseURL.absoluteString) url=\(challengeURL.absoluteString) autoDismiss=\(autoDismissOnSuccess)"
+            "foreground load challenge base=\(baseURL.absoluteString) url=\(challengeURL.absoluteString) autoDismiss=\(autoDismissOnSuccess) dohBrowser=\(LightweightDohProxyService.shared.ensureRunning() != nil)"
         )
         await WebCookieStore.shared.syncToWebView(
             webView.configuration.websiteDataStore,
