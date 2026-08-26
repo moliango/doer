@@ -48,7 +48,10 @@ final class MeViewModel: DoerObservableObject {
                 notifyChanged()
             } catch {
                 guard generation == loadGeneration else { return }
-                handleLoadError(error, hadVisibleContent: currentUser != nil || userProfile != nil)
+                // Cookies may still be settling after web login. Never wipe `_t` here.
+                isLoading = false
+                errorMessage = error.localizedDescription
+                notifyChanged()
                 return
             }
         }
