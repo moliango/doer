@@ -781,4 +781,52 @@ final class BlockExtractorTests: XCTestCase {
         }
         XCTAssertEqual(starts, [1, 1], "Paragraph should break continued numbering, got \(starts)")
     }
+
+    func testGitHubBlobWrappedImageKeepsCDNSource() {
+        let src = "https://cdn3.ldstatic.com/original/4X/9/4/3/943aa351d5a76ad949f237fb776e0250611ebcb9.jpeg"
+        let href = "https://github.com/czm15053/linuxdo-idea-ui/blob/main/snapshot/detail.png"
+        let html = "<p><a href=\"\(href)\"><img src=\"\(src)\" alt=\"帖子详情\" width=\"690\" height=\"423\"></a></p>"
+        let blocks = CookedHTMLParser.parse(html: html)
+        XCTAssertEqual(blocks.count, 1)
+        guard case .image(let parsedSrc, let alt, let width, let height, let parsedHref) = blocks[0] else {
+            return XCTFail("Expected image block, got \(blocks[0])")
+        }
+        XCTAssertEqual(parsedSrc, src)
+        XCTAssertEqual(alt, "帖子详情")
+        XCTAssertEqual(width, 690)
+        XCTAssertEqual(height, 423)
+        XCTAssertEqual(parsedHref, href)
+    }
+
+    func testMdTableGitHubBlobWrappedImagesKeepCDNSource() {
+        let src = "https://cdn3.ldstatic.com/original/4X/9/4/3/943aa351d5a76ad949f237fb776e0250611ebcb9.jpeg"
+        let href = "https://github.com/czm15053/linuxdo-idea-ui/blob/main/snapshot/%E5%B8%96%E5%AD%90%E8%AF%A6%E6%83%85.png"
+        let html = """
+        <div class="md-table">
+        <table>
+        <thead><tr><th></th><th></th></tr></thead>
+        <tbody>
+        <tr>
+        <td>帖子详情</td>
+        <td><a href="\(href)"><img src="\(src)" alt="帖子详情" width="690" height="423"></a></td>
+        </tr>
+        </tbody>
+        </table>
+        </div>
+        """
+        let blocks = CookedHTMLParser.parse(html: html)
+        XCTAssertEqual(blocks.count, 1)
+        guard case .table(_, let rows) = blocks[0] else {
+            return XCTFail("Expected table, got \(blocks[0])")
+        }
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows[0].count, 2)
+        guard case .image(let parsedSrc, _, let width, let height, let parsedHref) = rows[0][1].first else {
+            return XCTFail("Expected image in table cell, got \(rows[0][1])")
+        }
+        XCTAssertEqual(parsedSrc, src)
+        XCTAssertEqual(width, 690)
+        XCTAssertEqual(height, 423)
+        XCTAssertEqual(parsedHref, href)
+    }
 }

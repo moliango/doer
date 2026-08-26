@@ -22,7 +22,19 @@ public enum ImageURLDetector {
         else {
             return false
         }
+        if isHtmlFilePage(host: url.host, path: url.path.lowercased()) {
+            return false
+        }
         return isImagePath(url.path.lowercased(), query: url.query)
+    }
+
+    /// Fetch / lightbox URL. Discourse lightbox `href` is the original image;
+    /// GitHub `/blob/*.png` pages must not replace the CDN `src`.
+    public static func preferredResourceURL(src: String, href: String?) -> String {
+        if let href, !href.isEmpty, isImageURL(href) {
+            return href
+        }
+        return src
     }
 
     /// Whether a link whose children render as `label` should be promoted to an image block.
@@ -82,7 +94,19 @@ public enum ImageURLDetector {
         else {
             return false
         }
+        if isHtmlFilePage(host: components.host, path: components.path.lowercased()) {
+            return false
+        }
         return isImagePath(components.path.lowercased(), query: components.percentEncodedQuery)
+    }
+
+    /// GitHub/GitLab blob and tree pages are HTML even when the path ends in `.png`.
+    private static func isHtmlFilePage(host: String?, path: String) -> Bool {
+        guard let host = host?.lowercased() else { return false }
+        let isGitHost = host == "github.com" || host.hasSuffix(".github.com")
+            || host == "gitlab.com" || host.hasSuffix(".gitlab.com")
+        guard isGitHost else { return false }
+        return path.contains("/blob/") || path.contains("/tree/")
     }
 
     private static func isImagePath(_ path: String, query: String?) -> Bool {

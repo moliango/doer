@@ -96,7 +96,9 @@ public struct ImageGridItem: Sendable, Equatable {
         self.href = href
     }
 
-    public var lightboxURL: String { href?.isEmpty == false ? href! : src }
+    public var lightboxURL: String {
+        ImageURLDetector.preferredResourceURL(src: src, href: href)
+    }
 }
 
 public enum ImageGridMode: Sendable, Equatable {

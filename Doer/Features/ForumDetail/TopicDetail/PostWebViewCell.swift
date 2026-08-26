@@ -29,10 +29,7 @@ private extension ContentBlock {
         case .discourseQuote(_, _, _, _, _, _, _, let content):
             return content.flatMap(\.galleryImageURLStrings)
         case .image(let src, _, _, _, let href):
-            if let href, !href.isEmpty {
-                return [href]
-            }
-            return [src]
+            return [ImageURLDetector.preferredResourceURL(src: src, href: href)]
         case .imageGrid(let images, _, _):
             return images.map(\.lightboxURL)
         case .onebox(_, _, _, let imageURL, _, _, _):

@@ -145,6 +145,16 @@ enum BlockExtractor {
         case "img":
             return extractBlockImage(from: element, options: options)
 
+        case "a":
+            // Table cells and unwrapped markdown often emit `<a href="..."><img></a>`
+            // at block level. Keep the CDN `src`; the href may be a GitHub blob page.
+            if let img = soleChildImage(in: element) {
+                let href = URLResolver.resolve((try? element.attr("href")) ?? "", baseURL: options.baseURL)
+                return extractBlockImage(from: img, options: options, href: href.isEmpty ? nil : href)
+            }
+            let inlines = InlineExtractor.extractNode(element, options: options)
+            if inlines.isEmpty { return [] }
+            return [.paragraph(inlines)]
         case "div", "figure", "section", "article":
             // Check for specific div patterns first, otherwise recurse
             return extractDiv(from: element, options: options)
@@ -271,6 +281,19 @@ enum BlockExtractor {
         let width = Int((try? element.attr("width")) ?? "")
         let height = Int((try? element.attr("height")) ?? "")
         return [.image(src: src, alt: alt, width: width, height: height, href: href)]
+    }
+
+    /// Single `<img>` child, ignoring whitespace-only text nodes.
+    private static func soleChildImage(in element: Element) -> Element? {
+        let children = element.children()
+        guard children.size() == 1,
+              let img = children.first(),
+              img.tagName().lowercased() == "img"
+        else { return nil }
+        let hasExtraText = element.textNodes().contains {
+            !$0.getWholeText().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return hasExtraText ? nil : img
     }
 
     private static func extractImageGrid(from element: Element, options: ParseOptions) -> [ContentBlock] {
@@ -1032,11 +1055,11 @@ enum BlockExtractor {
             return [.image(src: src, alt: alt, width: width, height: height, href: nil)]
         }
 
-        // Whole-paragraph sole link whose href is image-like (ignore <br>/whitespace).
-        if substantial.count == 1, case .link(let href, _) = substantial[0] {
-            let cleaned = ImageURLDetector.normalizeURLString(href.replacingOccurrences(of: "&amp;", with: "&"))
-            if ImageURLDetector.isImageURL(cleaned) {
-                return [.image(src: cleaned, alt: nil, width: nil, height: nil, href: cleaned)]
+        // Whole-paragraph sole link: wrapped <img> wins over an image-like href
+        // (GitHub `/blob/*.png` pages look like images but are HTML).
+        if substantial.count == 1, case .link = substantial[0] {
+            if let imageBlock = imageBlock(from: substantial[0], soleInParagraph: true) {
+                return [imageBlock]
             }
         }
 
@@ -1087,8 +1110,18 @@ enum BlockExtractor {
 
         case .link(let href, let children):
             // <a href="..."><img></a> with a non-emoji image becomes a tappable block image.
-            if children.count == 1,
-               case .image(let src, let alt, let width, let height, let isEmoji) = children[0],
+            let substantialChildren = children.filter { child in
+                switch child {
+                case .lineBreak:
+                    return false
+                case .text(let text), .styledText(let text, _):
+                    return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                default:
+                    return true
+                }
+            }
+            if substantialChildren.count == 1,
+               case .image(let src, let alt, let width, let height, let isEmoji) = substantialChildren[0],
                !isEmoji {
                 return .image(src: src, alt: alt, width: width, height: height, href: href)
             }
