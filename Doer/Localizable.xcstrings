@@ -10709,6 +10709,303 @@
         }
       }
     },
+    "native_login.brand" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "LinuxDO x Doer"
+          }
+        }
+      }
+    },
+    "native_login.captcha_failed" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "人机验证失败，请重试"
+          }
+        }
+      }
+    },
+    "native_login.captcha.title" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "完成人机验证"
+          }
+        }
+      }
+    },
+    "native_login.csrf_failed" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "登录校验失败，请先完成 Cloudflare 验证后重试"
+          }
+        }
+      }
+    },
+    "native_login.fill_both" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "请输入用户名和密码"
+          }
+        }
+      }
+    },
+    "native_login.forgot" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "忘记密码？"
+          }
+        }
+      }
+    },
+    "native_login.invalid_credentials" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "用户名或密码错误"
+          }
+        }
+      }
+    },
+    "native_login.network" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "网络异常"
+          }
+        }
+      }
+    },
+    "native_login.not_activated" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "账号未激活，请到邮箱完成激活"
+          }
+        }
+      }
+    },
+    "native_login.not_approved" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "账号尚未通过审核"
+          }
+        }
+      }
+    },
+    "native_login.or" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "其他方式"
+          }
+        }
+      }
+    },
+    "native_login.other" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "OAuth / Passkey / 注册"
+          }
+        }
+      }
+    },
+    "native_login.other_hint" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "注册、Passkey、OAuth 与备用码请走网页登录"
+          }
+        }
+      }
+    },
+    "native_login.password" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "密码"
+          }
+        }
+      }
+    },
+    "native_login.password_expired" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "密码已过期，请用浏览器登录重设密码"
+          }
+        }
+      }
+    },
+    "native_login.remember" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "记住密码"
+          }
+        }
+      }
+    },
+    "native_login.submit" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "登录"
+          }
+        }
+      }
+    },
+    "native_login.submitting" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "登录中…"
+          }
+        }
+      }
+    },
+    "native_login.totp.backup" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "改用备用码 / 网页登录"
+          }
+        }
+      }
+    },
+    "native_login.totp.confirm" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "验证"
+          }
+        }
+      }
+    },
+    "native_login.totp.message" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "请输入身份验证器 App 显示的 6 位验证码"
+          }
+        }
+      }
+    },
+    "native_login.totp.retry" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "验证码错误，请重试"
+          }
+        }
+      }
+    },
+    "native_login.totp.title" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "二步验证"
+          }
+        }
+      }
+    },
+    "native_login.unknown" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "登录失败"
+          }
+        }
+      }
+    },
+    "native_login.username" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "用户名 / 邮箱"
+          }
+        }
+      }
+    },
+    "native_login.welcome" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "欢迎来到 Doer"
+          }
+        }
+      }
+    },
+    "native_login.welcome_page" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "了解 Doer"
+          }
+        }
+      }
+    },
     "new_topic.body.placeholder" : {
       "localizations" : {
         "en" : {

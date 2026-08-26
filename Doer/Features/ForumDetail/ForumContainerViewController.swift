@@ -670,6 +670,7 @@ final class ForumContainerViewController: UIViewController, AuthGating {
             alert.addAction(UIAlertAction(title: String(localized: "me.logout"), style: .destructive) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     await self?.performLogout()
+                    self?.performLogin()
                 }
             })
         } else {
@@ -1106,34 +1107,50 @@ final class ForumContainerViewController: UIViewController, AuthGating {
     }
 
     private func presentWebLogin(preferredUsername: String?, then action: @escaping () -> Void) {
-        let baseURL = forum.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URL(string: "\(baseURL)/login") ?? URL(string: forum.baseURL) else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
-            await WebCookieStore.shared.clearWebViewAuthCookies(for: baseURL)
-            let vc = WebLoginViewController(
-                targetURL: url,
-                preferredUsername: preferredUsername
-            ) { [weak self] cookies, userAgent in
-                guard let self else { return }
-                self.showAuthSyncOverlay(
-                    title: String(localized: "weblogin.success.title"),
-                    message: String(localized: "weblogin.success.message")
-                )
-                Task { @MainActor in
-                    let didLogin = await self.authManager.loginViaWeb(forum: self.forum, cookies: cookies, userAgent: userAgent)
-                    self.refreshForumFromDatabase()
-                    guard didLogin else {
-                        self.hideAuthSyncOverlay()
-                        return
-                    }
-                    self.hideAuthSyncOverlay {
-                        action()
+            let native = NativeLoginViewController(
+                forum: self.forum,
+                preferredUsername: preferredUsername,
+                onBrowseWelcome: { [weak self] in
+                    self?.showHomeWelcomePage()
+                },
+                onSuccess: { [weak self] cookies, userAgent in
+                    guard let self else { return }
+                    self.showAuthSyncOverlay(
+                        title: String(localized: "weblogin.success.title"),
+                        message: String(localized: "weblogin.success.message")
+                    )
+                    Task { @MainActor in
+                        let didLogin = await self.authManager.loginViaWeb(
+                            forum: self.forum,
+                            cookies: cookies,
+                            userAgent: userAgent
+                        )
+                        self.refreshForumFromDatabase()
+                        guard didLogin else {
+                            self.hideAuthSyncOverlay()
+                            return
+                        }
+                        self.hideAuthSyncOverlay {
+                            action()
+                        }
                     }
                 }
-            }
-            let nav = UINavigationController(rootViewController: vc)
+            )
+            let nav = UINavigationController(rootViewController: native)
+            nav.modalPresentationStyle = .fullScreen
             self.present(nav, animated: true)
+        }
+    }
+
+    private func showHomeWelcomePage() {
+        guard let tabBar = tabBarViewController else { return }
+        if let index = tabBar.navigationControllers.firstIndex(where: {
+            $0.viewControllers.contains(where: { $0 is HomeViewController })
+        }) {
+            tabBar.selectedIndex = index
+            tabBar.navigationControllers[index].popToRootViewController(animated: false)
         }
     }
 

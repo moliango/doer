@@ -16,6 +16,8 @@ final class WebLoginViewController: UIViewController {
         // so a successful login is immediately visible to those WebViews.
         config.websiteDataStore = .default()
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
+        // iOS 16+ WKWebView can present the system passkey sheet for Discourse
+        // WebAuthn (`navigator.credentials`). Do not isolate cookies/process.
 
         let wv = WKWebView(frame: .zero, configuration: config)
         config.userContentController.add(coordinator, name: "doerLoginCredentials")
@@ -24,6 +26,25 @@ final class WebLoginViewController: UIViewController {
         wv.allowsBackForwardNavigationGestures = true
         wv.translatesAutoresizingMaskIntoConstraints = false
         return wv
+    }()
+
+    private var popupWebView: WKWebView?
+    private lazy var popupContainer: UIView = {
+        let view = UIView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.backgroundColor = .systemBackground
+        view.isHidden = true
+        return view
+    }()
+    private lazy var popupCloseButton: UIButton = {
+        var config = UIButton.Configuration.plain()
+        config.image = UIImage(systemName: "xmark.circle.fill")
+        config.baseForegroundColor = .secondaryLabel
+        let button = UIButton(configuration: config)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.addTarget(self, action: #selector(closePopupTapped), for: .touchUpInside)
+        button.accessibilityLabel = String(localized: "common.close")
+        return button
     }()
 
     private lazy var coordinator = Coordinator(
@@ -79,6 +100,8 @@ final class WebLoginViewController: UIViewController {
 
         view.addSubview(webView)
         view.addSubview(progressView)
+        view.addSubview(popupContainer)
+        popupContainer.addSubview(popupCloseButton)
         NSLayoutConstraint.activate([
             progressView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             progressView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -87,6 +110,12 @@ final class WebLoginViewController: UIViewController {
             webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            popupContainer.topAnchor.constraint(equalTo: view.topAnchor),
+            popupContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            popupContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            popupContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            popupCloseButton.topAnchor.constraint(equalTo: popupContainer.safeAreaLayoutGuide.topAnchor, constant: 8),
+            popupCloseButton.trailingAnchor.constraint(equalTo: popupContainer.trailingAnchor, constant: -12),
         ])
 
         progressObservation = webView.observe(\.estimatedProgress, options: .new) { [weak self] wv, _ in
@@ -99,8 +128,38 @@ final class WebLoginViewController: UIViewController {
         webView.load(URLRequest(url: targetURL))
     }
 
+    func presentLoginPopup(_ popup: WKWebView) {
+        popupWebView?.removeFromSuperview()
+        popup.translatesAutoresizingMaskIntoConstraints = false
+        popupContainer.insertSubview(popup, at: 0)
+        NSLayoutConstraint.activate([
+            popup.topAnchor.constraint(equalTo: popupCloseButton.bottomAnchor, constant: 4),
+            popup.leadingAnchor.constraint(equalTo: popupContainer.leadingAnchor),
+            popup.trailingAnchor.constraint(equalTo: popupContainer.trailingAnchor),
+            popup.bottomAnchor.constraint(equalTo: popupContainer.bottomAnchor),
+        ])
+        popupWebView = popup
+        popupContainer.isHidden = false
+        view.bringSubviewToFront(popupContainer)
+    }
+
+    func dismissLoginPopup(_ webView: WKWebView? = nil) {
+        if let webView, popupWebView !== webView { return }
+        popupWebView?.removeFromSuperview()
+        popupWebView = nil
+        popupContainer.isHidden = true
+    }
+
+    @objc private func closePopupTapped() {
+        dismissLoginPopup()
+    }
+
     @objc private func cancelTapped() {
-        dismiss(animated: true)
+        if let nav = navigationController, nav.viewControllers.count > 1 {
+            nav.popViewController(animated: true)
+        } else {
+            dismiss(animated: true)
+        }
     }
 
     @objc private func doneTapped() {
@@ -303,10 +362,19 @@ final class WebLoginViewController: UIViewController {
             for navigationAction: WKNavigationAction,
             windowFeatures: WKWindowFeatures
         ) -> WKWebView? {
-            if navigationAction.targetFrame == nil {
-                webView.load(navigationAction.request)
-            }
-            return nil
+            // Passkey / OAuth often open a new document. Loading it in the login
+            // webview aborts WebAuthn. Keep a real popup that shares the store.
+            configuration.websiteDataStore = webView.configuration.websiteDataStore
+            let popup = WKWebView(frame: .zero, configuration: configuration)
+            popup.navigationDelegate = self
+            popup.uiDelegate = self
+            popup.allowsBackForwardNavigationGestures = true
+            owner?.presentLoginPopup(popup)
+            return popup
+        }
+
+        func webViewDidClose(_ webView: WKWebView) {
+            owner?.dismissLoginPopup(webView)
         }
     }
 }

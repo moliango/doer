@@ -453,6 +453,9 @@ final class MeViewController: ObservableViewController {
                 await self.authGate?.performLogout()
                 self.viewModel.clearSessionState(requiresLogin: true)
                 self.updateUI()
+                self.authGate?.requireAuth { [weak self] in
+                    self?.reloadAfterLogin()
+                }
             }
         })
         alert.addAction(UIAlertAction(title: String(localized: "cancel"), style: .cancel))
