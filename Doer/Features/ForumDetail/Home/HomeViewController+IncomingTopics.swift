@@ -175,6 +175,25 @@ extension HomeViewController {
     func updateFilterButton() {
         filterButton.menu = UIMenu(title: "", children: buildFilterMenuElements())
         applyDropdownStyle(to: filterButton, title: title(for: viewModel.listMode), selected: true)
+
+        let showsNewSubset = viewModel.listMode == .newTopics
+        if showsNewSubset {
+            if newSubsetButton.superview == nil {
+                let categoryIndex = filterStackView.arrangedSubviews.firstIndex(of: categoryButton) ?? filterStackView.arrangedSubviews.count
+                filterStackView.insertArrangedSubview(newSubsetButton, at: categoryIndex)
+            }
+            newSubsetButton.isHidden = false
+            newSubsetButton.menu = UIMenu(title: "", children: buildNewSubsetMenuElements())
+            applyDropdownStyle(
+                to: newSubsetButton,
+                title: viewModel.newSubset.title,
+                selected: viewModel.newSubset != .all
+            )
+        } else {
+            newSubsetButton.isHidden = true
+            filterStackView.removeArrangedSubview(newSubsetButton)
+            newSubsetButton.removeFromSuperview()
+        }
     }
 
     func prefetchAvatarImages(for topics: [DiscourseTopicList.Topic]) {

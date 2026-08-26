@@ -153,6 +153,13 @@ extension HomeViewController {
         reloadTopics()
     }
 
+    func selectNewSubset(_ subset: HomeNewSubset) {
+        guard viewModel.listMode == .newTopics, viewModel.newSubset != subset else { return }
+        viewModel.newSubset = subset
+        updateFilterButton()
+        reloadTopics()
+    }
+
     @objc func searchTapped() {
         let searchVC = SearchViewController(api: api)
         navigationController?.pushViewController(searchVC, animated: true)

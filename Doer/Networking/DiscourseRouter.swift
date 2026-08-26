@@ -4,7 +4,7 @@ import Foundation
 enum DiscourseRouter {
     case latestTopics(page: Int)
     case topicsByIds([Int])
-    case newTopics(page: Int)
+    case newTopics(page: Int, subset: String?)
     case unreadTopics(page: Int)
     case readTopics(page: Int)
     case hotTopics(page: Int)
@@ -31,7 +31,7 @@ enum DiscourseRouter {
     case createTopic
     case postReplies(postId: Int)
     case categoryTopics(slug: String, id: Int, page: Int)
-    case categoryFilteredTopics(slug: String, id: Int, filter: String, page: Int)
+    case categoryFilteredTopics(slug: String, id: Int, filter: String, page: Int, subset: String?)
     case tagTopics(name: String, page: Int)
     case siteInfo
     case basicInfo
@@ -107,8 +107,8 @@ enum DiscourseRouter {
         case .topicsByIds(let ids):
             let joinedIds = ids.map(String.init).joined(separator: ",")
             return "/latest.json?topic_ids=\(joinedIds)"
-        case .newTopics(let page):
-            return "/new.json?page=\(page)"
+        case .newTopics(let page, let subset):
+            return Self.pagedJSONPath("/new.json", page: page, subset: subset)
         case .unreadTopics(let page):
             return "/unread.json?page=\(page)"
         case .readTopics(let page):
@@ -158,8 +158,8 @@ enum DiscourseRouter {
             return "/posts/\(postId)/replies.json"
         case .categoryTopics(let slug, let id, let page):
             return "/c/\(slug)/\(id).json?page=\(page)"
-        case .categoryFilteredTopics(let slug, let id, let filter, let page):
-            return "/c/\(slug)/\(id)/l/\(filter).json?page=\(page)"
+        case .categoryFilteredTopics(let slug, let id, let filter, let page, let subset):
+            return Self.pagedJSONPath("/c/\(slug)/\(id)/l/\(filter).json", page: page, subset: subset)
         case .tagTopics(let name, let page):
             return "/tag/\(Self.pathComponent(name)).json?page=\(page)"
         case .siteInfo:
@@ -284,6 +284,14 @@ enum DiscourseRouter {
         case .unassignTopic:
             return "/assign/unassign"
         }
+    }
+
+    private static func pagedJSONPath(_ path: String, page: Int, subset: String? = nil) -> String {
+        var result = "\(path)?page=\(page)"
+        if let subset, !subset.isEmpty {
+            result += "&subset=\(queryValue(subset))"
+        }
+        return result
     }
 
     private static func pathComponent(_ value: String) -> String {

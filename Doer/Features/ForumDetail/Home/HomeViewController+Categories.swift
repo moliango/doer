@@ -29,6 +29,17 @@ extension HomeViewController {
         }
     }
 
+    func buildNewSubsetMenuElements() -> [UIMenuElement] {
+        HomeNewSubset.allCases.map { subset in
+            UIAction(
+                title: subset.title,
+                state: viewModel.newSubset == subset ? .on : .off
+            ) { [weak self] _ in
+                self?.selectNewSubset(subset)
+            }
+        }
+    }
+
     func title(for mode: HomeListMode) -> String {
         switch mode {
         case .latest:

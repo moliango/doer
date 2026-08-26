@@ -293,6 +293,14 @@ final class HomeViewController: ObservableViewController {
         return button
     }()
 
+    let newSubsetButton: UIButton = {
+        let button = UIButton(configuration: .plain())
+        button.showsMenuAsPrimaryAction = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.isHidden = true
+        return button
+    }()
+
     let categoryButton: UIButton = {
         var config = UIButton.Configuration.plain()
         config.title = String(localized: "home.filter.categories")

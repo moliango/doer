@@ -32,8 +32,8 @@ extension DiscourseAPI {
         try await request(route: .topicsByIds(ids))
     }
 
-    func fetchNewTopics(page: Int = 0) async throws -> DiscourseTopicList {
-        try await request(route: .newTopics(page: page))
+    func fetchNewTopics(page: Int = 0, subset: String? = nil) async throws -> DiscourseTopicList {
+        try await request(route: .newTopics(page: page, subset: subset))
     }
 
     func fetchUnreadTopics(page: Int = 0) async throws -> DiscourseTopicList {
@@ -60,8 +60,8 @@ extension DiscourseAPI {
         try await request(route: .categoryTopics(slug: slug, id: id, page: page))
     }
 
-    func fetchCategoryTopics(slug: String, id: Int, filter: String, page: Int = 0) async throws -> DiscourseTopicList {
-        try await request(route: .categoryFilteredTopics(slug: slug, id: id, filter: filter, page: page))
+    func fetchCategoryTopics(slug: String, id: Int, filter: String, page: Int = 0, subset: String? = nil) async throws -> DiscourseTopicList {
+        try await request(route: .categoryFilteredTopics(slug: slug, id: id, filter: filter, page: page, subset: subset))
     }
 
     func fetchTagTopics(name: String, page: Int = 0) async throws -> DiscourseTopicList {

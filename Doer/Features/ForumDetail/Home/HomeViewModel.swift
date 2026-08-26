@@ -122,6 +122,32 @@ enum HomeListMode: CaseIterable, Hashable {
     }
 }
 
+/// Discourse `/new.json?subset=` — only used while `HomeListMode.newTopics` is selected.
+enum HomeNewSubset: String, CaseIterable, Hashable {
+    case all
+    case topics
+    case replies
+
+    var apiValue: String? {
+        switch self {
+        case .all: return nil
+        case .topics: return "topics"
+        case .replies: return "replies"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .all:
+            return String(localized: "home.new_subset.all", defaultValue: "所有")
+        case .topics:
+            return String(localized: "home.new_subset.topics", defaultValue: "话题")
+        case .replies:
+            return String(localized: "home.new_subset.replies", defaultValue: "回复")
+        }
+    }
+}
+
 private enum TopicAccessState {
     case allowed
     case loginRequired
@@ -132,6 +158,7 @@ private enum TopicAccessState {
 final class HomeViewModel: DoerObservableObject {
     var pinnedTopicIds: Set<Int> = []
     var listMode: HomeListMode = .latest
+    var newSubset: HomeNewSubset = .all
     var topics: [DiscourseTopicList.Topic] = [] {
         didSet { rebuildTopicIndex() }
     }
@@ -755,9 +782,16 @@ final class HomeViewModel: DoerObservableObject {
     }
 
     private func fetchTopics(page: Int) async throws -> DiscourseTopicList {
+        let newSubset = listMode == .newTopics ? self.newSubset.apiValue : nil
         if let cat = selectedCategory() {
             if let filter = listMode.categoryFilterName {
-                return try await api.fetchCategoryTopics(slug: cat.slug, id: cat.id, filter: filter, page: page)
+                return try await api.fetchCategoryTopics(
+                    slug: cat.slug,
+                    id: cat.id,
+                    filter: filter,
+                    page: page,
+                    subset: newSubset
+                )
             }
             return try await api.fetchCategoryTopics(slug: cat.slug, id: cat.id, page: page)
         }
@@ -771,7 +805,7 @@ final class HomeViewModel: DoerObservableObject {
             }
             return try await api.fetchLatestTopics(page: page)
         case .newTopics:
-            return try await api.fetchNewTopics(page: page)
+            return try await api.fetchNewTopics(page: page, subset: newSubset)
         case .unread:
             return try await api.fetchUnreadTopics(page: page)
         case .hot:

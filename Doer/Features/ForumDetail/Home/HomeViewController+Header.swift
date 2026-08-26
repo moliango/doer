@@ -205,6 +205,7 @@ extension HomeViewController {
         filterStackView.addArrangedSubview(filterButton)
         filterStackView.addArrangedSubview(categoryButton)
         filterButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        newSubsetButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
         categoryButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
         updateFilterButton()
     }
