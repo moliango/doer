@@ -40,6 +40,7 @@ final class TopicDetailViewController: ObservableViewController {
     var lastContentFontFamily = AppSettings.shared.contentFontFamily
     var lastContentFontScope = AppSettings.shared.contentFontScope
     var lastInterfaceFontScalePercent = AppSettings.shared.interfaceFontScalePercent
+    var lastContentImageCarouselEnabled = AppSettings.shared.contentImageCarouselEnabled
     var lastThemeStyle = AppSettings.shared.themeStyle
     var hasPresentedInitialContent = false
     lazy var readingTracker = TopicReadingTracker(api: api)
@@ -595,6 +596,7 @@ final class TopicDetailViewController: ObservableViewController {
             || lastContentFontFamily != settings.contentFontFamily
             || lastContentFontScope != settings.contentFontScope
             || lastInterfaceFontScalePercent != settings.interfaceFontScalePercent
+            || lastContentImageCarouselEnabled != settings.contentImageCarouselEnabled
             || didChangeThemeStyle
             || didChangeCategoryPresentation
         lastReadingComfortMode = settings.readingComfortMode
@@ -603,6 +605,7 @@ final class TopicDetailViewController: ObservableViewController {
         lastContentFontFamily = settings.contentFontFamily
         lastContentFontScope = settings.contentFontScope
         lastInterfaceFontScalePercent = settings.interfaceFontScalePercent
+        lastContentImageCarouselEnabled = settings.contentImageCarouselEnabled
         lastThemeStyle = settings.themeStyle
         lastCategoryPresentation = viewModel.categoryPresentation
         configureTopicActions()

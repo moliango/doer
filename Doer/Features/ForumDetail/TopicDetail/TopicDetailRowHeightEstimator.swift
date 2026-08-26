@@ -14,14 +14,15 @@ enum TopicDetailRowHeightEstimator {
         isFirstPost: Bool,
         contentWidth: CGFloat
     ) -> CGFloat {
+        let prepared = ImageGridPresentation.preparedBlocks(blocks.map(\.block))
         let width = max(contentWidth, 200)
         var body: CGFloat = 0
-        let limit = min(blocks.count, 48)
+        let limit = min(prepared.count, 48)
         for index in 0..<limit {
-            body += estimateBlock(blocks[index].block, contentWidth: width)
+            body += estimateBlock(prepared[index], contentWidth: width)
         }
-        if blocks.count > limit {
-            body += CGFloat(blocks.count - limit) * 18
+        if prepared.count > limit {
+            body += CGFloat(prepared.count - limit) * 18
         }
         let chrome = isFirstPost ? firstPostChrome : replyChrome
         let total = chrome + body

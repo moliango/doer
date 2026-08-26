@@ -388,11 +388,7 @@ enum NativeContentRenderer {
         delegate: PostCellDelegate?
     ) -> [UIView] {
         withTocAnchorCounter(config) {
-            let prepared = annotatedBlocks.flatMap { annotated in
-                ImageGridPresentation.preparedBlocks([annotated.block]).map {
-                    AnnotatedBlock(block: $0, sourceHTML: annotated.sourceHTML)
-                }
-            }
+            let prepared = ImageGridPresentation.preparedAnnotatedBlocks(annotatedBlocks)
             return prepared.compactMap { annotated in
                 for renderer in renderers where renderer.canRender(annotated.block) {
                     return renderer.render(annotated.block, config: config, delegate: delegate)

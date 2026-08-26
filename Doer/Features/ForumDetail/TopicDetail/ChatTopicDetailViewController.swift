@@ -404,6 +404,7 @@ class ChatTopicDetailViewController: ObservableViewController {
     private var lastContentFontScope = AppSettings.shared.contentFontScope
     private var lastInterfaceFontScalePercent = AppSettings.shared.interfaceFontScalePercent
     private var lastReadingComfortMode = AppSettings.shared.readingComfortMode
+    private var lastContentImageCarouselEnabled = AppSettings.shared.contentImageCarouselEnabled
 
     override func updateUI() {
         tableView.showsVerticalScrollIndicator = !AppSettings.shared.hideScrollIndicators
@@ -425,12 +426,14 @@ class ChatTopicDetailViewController: ObservableViewController {
             || lastContentFontFamily != settings.contentFontFamily
             || lastContentFontScope != settings.contentFontScope
             || lastInterfaceFontScalePercent != settings.interfaceFontScalePercent
+            || lastContentImageCarouselEnabled != settings.contentImageCarouselEnabled
         lastReadingComfortMode = settings.readingComfortMode
         lastContentFontSize = settings.contentFontSize
         lastContentFontScalePercent = settings.contentFontScalePercent
         lastContentFontFamily = settings.contentFontFamily
         lastContentFontScope = settings.contentFontScope
         lastInterfaceFontScalePercent = settings.interfaceFontScalePercent
+        lastContentImageCarouselEnabled = settings.contentImageCarouselEnabled
 
         let showsInitialLoading = viewModel.isLoading && !viewModel.isReady && viewModel.errorMessage == nil
         loadingSkeletonView.setSkeletonActive(showsInitialLoading, animated: view.window != nil)

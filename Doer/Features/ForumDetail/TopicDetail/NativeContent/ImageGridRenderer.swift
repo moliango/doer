@@ -8,20 +8,41 @@ enum ImageGridPresentation {
     }
 
     static func preparedBlocks(_ blocks: [ContentBlock]) -> [ContentBlock] {
-        blocks.flatMap(prepare(block:))
+        preparedBlocks(blocks, usesCarousel: usesCarousel)
     }
 
-    private static func prepare(block: ContentBlock) -> [ContentBlock] {
-        if !usesCarousel, case let .imageGrid(images, _, _) = block {
+    static func preparedBlocks(_ blocks: [ContentBlock], usesCarousel: Bool) -> [ContentBlock] {
+        let expanded = blocks.flatMap { prepare(block: $0, usesCarousel: usesCarousel) }
+        return usesCarousel ? groupConsecutiveImages(expanded) : expanded
+    }
+
+    static func preparedAnnotatedBlocks(_ items: [AnnotatedBlock]) -> [AnnotatedBlock] {
+        preparedAnnotatedBlocks(items, usesCarousel: usesCarousel)
+    }
+
+    static func preparedAnnotatedBlocks(_ items: [AnnotatedBlock], usesCarousel: Bool) -> [AnnotatedBlock] {
+        let expanded = items.flatMap { item in
+            prepare(block: item.block, usesCarousel: usesCarousel).map {
+                AnnotatedBlock(block: $0, sourceHTML: item.sourceHTML)
+            }
+        }
+        return usesCarousel ? groupConsecutiveImageAnnotated(expanded) : expanded
+    }
+
+    private static func prepare(block: ContentBlock, usesCarousel: Bool) -> [ContentBlock] {
+        if case let .imageGrid(images, columns, _) = block {
+            if usesCarousel {
+                return [.imageGrid(images: images, columns: columns, mode: .carousel)]
+            }
             return images.map {
                 .image(src: $0.src, alt: $0.alt, width: $0.width, height: $0.height, href: $0.href)
             }
         }
         switch block {
         case let .blockquote(nested):
-            return [.blockquote(blocks: preparedBlocks(nested))]
+            return [.blockquote(blocks: preparedBlocks(nested, usesCarousel: usesCarousel))]
         case let .spoiler(nested):
-            return [.spoiler(blocks: preparedBlocks(nested))]
+            return [.spoiler(blocks: preparedBlocks(nested, usesCarousel: usesCarousel))]
         case let .discourseQuote(username, avatarURL, topicTitle, topicURL, categoryName, categoryURL, quotePostNumber, content):
             return [
                 .discourseQuote(
@@ -32,26 +53,118 @@ enum ImageGridPresentation {
                     categoryName: categoryName,
                     categoryURL: categoryURL,
                     quotePostNumber: quotePostNumber,
-                    content: preparedBlocks(content)
+                    content: preparedBlocks(content, usesCarousel: usesCarousel)
                 ),
             ]
         case let .details(summary, content):
-            return [.details(summary: summary, content: preparedBlocks(content))]
+            return [.details(summary: summary, content: preparedBlocks(content, usesCarousel: usesCarousel))]
         case let .list(ordered, start, items):
             let mapped = items.map {
-                ListItem(content: $0.content, children: preparedBlocks($0.children))
+                ListItem(content: $0.content, children: preparedBlocks($0.children, usesCarousel: usesCarousel))
             }
             return [.list(ordered: ordered, start: start, items: mapped)]
         case let .table(headers, rows):
             return [
                 .table(
-                    headers: headers.map { preparedBlocks($0) },
-                    rows: rows.map { row in row.map { preparedBlocks($0) } }
+                    headers: headers.map { preparedBlocks($0, usesCarousel: usesCarousel) },
+                    rows: rows.map { row in row.map { preparedBlocks($0, usesCarousel: usesCarousel) } }
                 ),
             ]
         default:
             return [block]
         }
+    }
+
+    private static func groupConsecutiveImages(_ blocks: [ContentBlock]) -> [ContentBlock] {
+        var result: [ContentBlock] = []
+        var pending: [ImageGridItem] = []
+
+        func flush() {
+            guard !pending.isEmpty else { return }
+            if pending.count == 1 {
+                let item = pending[0]
+                result.append(.image(src: item.src, alt: item.alt, width: item.width, height: item.height, href: item.href))
+            } else {
+                result.append(.imageGrid(images: pending, columns: 1, mode: .carousel))
+            }
+            pending.removeAll(keepingCapacity: true)
+        }
+
+        for block in blocks {
+            if let item = imageItem(from: block), !isBadgeCard(item) {
+                pending.append(item)
+                continue
+            }
+            if !pending.isEmpty, isSkippableGlue(block) {
+                continue
+            }
+            flush()
+            result.append(block)
+        }
+        flush()
+        return result
+    }
+
+    private static func groupConsecutiveImageAnnotated(_ items: [AnnotatedBlock]) -> [AnnotatedBlock] {
+        var result: [AnnotatedBlock] = []
+        var pending: [AnnotatedBlock] = []
+
+        func flush() {
+            guard !pending.isEmpty else { return }
+            if pending.count == 1 {
+                result.append(pending[0])
+            } else {
+                let images = pending.compactMap { imageItem(from: $0.block) }
+                result.append(AnnotatedBlock(
+                    block: .imageGrid(images: images, columns: 1, mode: .carousel),
+                    sourceHTML: pending.map(\.sourceHTML).joined()
+                ))
+            }
+            pending.removeAll(keepingCapacity: true)
+        }
+
+        for item in items {
+            if let image = imageItem(from: item.block), !isBadgeCard(image) {
+                pending.append(item)
+                continue
+            }
+            if !pending.isEmpty, isSkippableGlue(item.block) {
+                continue
+            }
+            flush()
+            result.append(item)
+        }
+        flush()
+        return result
+    }
+
+    private static func imageItem(from block: ContentBlock) -> ImageGridItem? {
+        guard case let .image(src, alt, width, height, href) = block else { return nil }
+        return ImageGridItem(src: src, alt: alt, width: width, height: height, href: href)
+    }
+
+    private static func isSkippableGlue(_ block: ContentBlock) -> Bool {
+        guard case .paragraph(let inlines) = block else { return false }
+        return inlines.allSatisfy { inline in
+            switch inline {
+            case .lineBreak:
+                return true
+            case .text(let text), .styledText(let text, _):
+                return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            default:
+                return false
+            }
+        }
+    }
+
+    private static func isBadgeCard(_ item: ImageGridItem) -> Bool {
+        for raw in [item.href, item.src].compactMap({ $0 }) where !raw.isEmpty {
+            let cleaned = raw.replacingOccurrences(of: "&amp;", with: "&")
+            if let url = URL(string: cleaned), BadgeCardModel.parse(url: url) != nil {
+                return true
+            }
+        }
+        return false
     }
 }
 
