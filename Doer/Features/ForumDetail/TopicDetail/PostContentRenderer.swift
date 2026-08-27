@@ -508,6 +508,9 @@ private final class RenderDelegate: NSObject, WKNavigationDelegate {
         });
         document.querySelectorAll('a').forEach(function(a) {
             if (a.classList.contains('lightbox')) return;
+            // Image-only wraps (GitHub raw/blob around a CDN <img>) are opened
+            // via the image region so preview does not fetch the remote href.
+            if (a.querySelector('img:not(.emoji):not(.avatar)')) return;
             var rect = a.getBoundingClientRect();
             if (rect.width === 0 || rect.height === 0) return;
             regions.push({

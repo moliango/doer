@@ -28,13 +28,43 @@ public enum ImageURLDetector {
         return isImagePath(url.path.lowercased(), query: url.query)
     }
 
-    /// Fetch / lightbox URL. Discourse lightbox `href` is the original image;
-    /// GitHub `/blob/*.png` pages must not replace the CDN `src`.
+    /// Fetch / lightbox URL. Discourse lightbox `href` is the original image
+    /// on the same CDN. GitHub/GitLab file links (`/blob`, `/raw`,
+    /// `raw.githubusercontent.com`) must not replace a CDN `src` that already
+    /// loaded in the post — those remotes often 404 or return HTML in-app.
     public static func preferredResourceURL(src: String, href: String?) -> String {
-        if let href, !href.isEmpty, isImageURL(href) {
-            return href
+        guard let href, !href.isEmpty, isImageURL(href) else { return src }
+        if shouldKeepDisplayedSource(src: src, href: href) {
+            return src
         }
-        return src
+        return href
+    }
+
+    /// GitHub/GitLab hosts whose "file" URLs are source links, not Discourse originals.
+    private static func isGitHostingHost(_ host: String) -> Bool {
+        let host = host.lowercased()
+        return host == "github.com"
+            || host.hasSuffix(".github.com")
+            || host == "raw.githubusercontent.com"
+            || host == "gitlab.com"
+            || host.hasSuffix(".gitlab.com")
+            || host == "bitbucket.org"
+            || host.hasSuffix(".bitbucket.org")
+            || host == "gitee.com"
+    }
+
+    /// When Discourse already mirrored the file onto a CDN, keep that copy.
+    private static func shouldKeepDisplayedSource(src: String, href: String) -> Bool {
+        guard isImageURL(src) else { return false }
+        let srcURL = URL(string: normalizeURLString(src))
+        let hrefURL = URL(string: normalizeURLString(href))
+        guard let srcHost = srcURL?.host?.lowercased(),
+              let hrefHost = hrefURL?.host?.lowercased(),
+              srcHost != hrefHost
+        else {
+            return false
+        }
+        return isGitHostingHost(hrefHost)
     }
 
     /// Whether a link whose children render as `label` should be promoted to an image block.

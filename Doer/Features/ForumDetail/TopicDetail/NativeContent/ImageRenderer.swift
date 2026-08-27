@@ -363,8 +363,8 @@ enum ImageRenderer: BlockRenderer {
         }
 
         let primaryURL = Self.makeURL(src)
-        let hrefIsImage = href.map(ImageURLDetector.isImageURL) ?? false
-        let hrefURL = hrefIsImage ? href.flatMap(Self.makeURL) : nil
+        let preferredTap = ImageURLDetector.preferredResourceURL(src: src, href: href)
+        let hrefURL = Self.makeURL(preferredTap)
 
         // FluxDo-style badge/music cards: parse query params and draw a native card.
         // Prefer href (original link) when present.

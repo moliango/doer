@@ -564,7 +564,7 @@ private final class ImageGridWrapView: UIView {
                     width: item.width,
                     height: item.height,
                     containerWidth: max((config.contentWidth - spacing * CGFloat(cols - 1)) / CGFloat(cols), 1),
-                    href: item.href.flatMap(URL.init(string:)),
+                    href: URL(string: item.lightboxURL),
                     galleryImageURLs: galleryURLs,
                     refererBaseURL: config.baseURL
                 )

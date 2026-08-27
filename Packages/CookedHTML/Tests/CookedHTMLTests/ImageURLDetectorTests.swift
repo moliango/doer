@@ -23,6 +23,12 @@ final class ImageURLDetectorTests: XCTestCase {
         XCTAssertEqual(ImageURLDetector.preferredResourceURL(src: src, href: href), src)
     }
 
+    func testPreferredResourceURLKeepsCDNSrcForGitHubRawHref() {
+        let src = "https://cdn3.ldstatic.com/original/4X/f/7/3/f734b16751ca773d7016e253bb98c4c3fa443245.png"
+        let href = "https://github.com/czm15053/linuxdo-idea-ui/raw/main/snapshot/image-hover.png"
+        XCTAssertEqual(ImageURLDetector.preferredResourceURL(src: src, href: href), src)
+    }
+
     func testPreferredResourceURLUsesLightboxOriginal() {
         let src = "https://cdn.example.com/optimized/thumb.jpg"
         let href = "https://cdn.example.com/original/full.jpg"
@@ -37,6 +43,18 @@ final class ImageURLDetectorTests: XCTestCase {
             width: 690,
             height: 423,
             href: "https://github.com/czm15053/linuxdo-idea-ui/blob/main/snapshot/detail.png"
+        )
+        XCTAssertEqual(item.lightboxURL, src)
+    }
+
+    func testImageGridLightboxURLIgnoresGitHubRawHref() {
+        let src = "https://cdn3.ldstatic.com/original/4X/f/7/3/f734b16751ca773d7016e253bb98c4c3fa443245.png"
+        let item = ImageGridItem(
+            src: src,
+            alt: "Image hover",
+            width: 690,
+            height: 376,
+            href: "https://github.com/czm15053/linuxdo-idea-ui/raw/main/snapshot/image-hover.png"
         )
         XCTAssertEqual(item.lightboxURL, src)
     }
