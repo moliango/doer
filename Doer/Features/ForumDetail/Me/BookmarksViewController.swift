@@ -275,7 +275,11 @@ final class BookmarksViewController: ObservableViewController {
     }
 
     private func loadBookmarks() async {
-        if authGate != nil {
+        if let authGate {
+            let username = authGate.currentUsername()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if username.isEmpty, authGate.isAuthenticated() {
+                _ = await authGate.refreshSessionUser()
+            }
             refreshUsernameFromAuthGate()
         }
         await viewModel.loadBookmarks()
@@ -283,10 +287,7 @@ final class BookmarksViewController: ObservableViewController {
 
     @objc private func pullToRefresh() {
         Task {
-            if authGate != nil {
-                refreshUsernameFromAuthGate()
-            }
-            await viewModel.reload()
+            await loadBookmarks()
         }
     }
 

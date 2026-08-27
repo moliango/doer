@@ -1171,4 +1171,11 @@ final class ForumContainerViewController: UIViewController, AuthGating {
         let baseURL = forum.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         return authManager.username(for: baseURL)
     }
+
+    func refreshSessionUser() async -> Bool {
+        refreshForumFromDatabase()
+        let didRefresh = await authManager.refreshWebSessionUserIfPossible(forum: forum)
+        refreshForumFromDatabase()
+        return didRefresh
+    }
 }

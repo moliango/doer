@@ -6,6 +6,9 @@ protocol AuthGating: AnyObject {
     func requireAuth(preferredUsername: String?, then action: @escaping () -> Void)
     func isAuthenticated() -> Bool
     func currentUsername() -> String?
+    /// Fetch `/session/current` so pages that need a username (bookmarks) can
+    /// reload immediately after cookie login, before the background enrich finishes.
+    func refreshSessionUser() async -> Bool
     func performLogout() async
 }
 

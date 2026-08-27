@@ -790,10 +790,37 @@ final class MeViewController: ObservableViewController {
     }
 
     private func openBookmarks() {
-        guard let username = viewModel.currentUser?.username else {
-            loginTapped()
+        if let username = bookmarksUsername() {
+            pushBookmarks(username: username)
             return
         }
+        authGate?.requireAuth { [weak self] in
+            guard let self else { return }
+            Task {
+                let username = self.authGate?.currentUsername()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if username.isEmpty {
+                    _ = await self.authGate?.refreshSessionUser()
+                }
+                await self.viewModel.loadProfile()
+                await MainActor.run {
+                    guard let username = self.bookmarksUsername() else { return }
+                    self.pushBookmarks(username: username)
+                }
+            }
+        }
+    }
+
+    private func bookmarksUsername() -> String? {
+        let candidates = [
+            viewModel.currentUser?.username,
+            authGate?.currentUsername(),
+        ]
+        return candidates
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+    }
+
+    private func pushBookmarks(username: String) {
         let vc = BookmarksViewController(api: api, username: username, authGate: authGate)
         navigationController?.pushViewController(vc, animated: true)
     }
