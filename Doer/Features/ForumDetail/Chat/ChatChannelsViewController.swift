@@ -763,7 +763,12 @@ private final class ChatBubbleCell: UITableViewCell {
     private var replyPreviewHeightConstraint: NSLayoutConstraint?
     private var bodyTopToReplyConstraint: NSLayoutConstraint?
     private var bodyTopToBubbleConstraint: NSLayoutConstraint?
-    private var uploadsTopConstraint: NSLayoutConstraint?
+    private var bodyBottomToBubbleConstraint: NSLayoutConstraint?
+    private var uploadsTopToBodyConstraint: NSLayoutConstraint?
+    private var uploadsTopToBubbleConstraint: NSLayoutConstraint?
+    private var uploadsBottomToBubbleConstraint: NSLayoutConstraint?
+    private var nameHeightConstraint: NSLayoutConstraint?
+    private var bubbleTopToNameConstraint: NSLayoutConstraint?
     var onOpenImages: ((URL, [URL]) -> Void)?
     private var forumBaseURL = ""
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
@@ -798,6 +803,19 @@ private final class ChatBubbleCell: UITableViewCell {
         nameAlignLeading = nameL
         nameAlignTrailing = nameT
 
+        bubbleView.setContentHuggingPriority(.required, for: .vertical)
+        bubbleView.setContentCompressionResistancePriority(.required, for: .vertical)
+        bodyLabel.setContentHuggingPriority(.required, for: .vertical)
+        bodyLabel.setContentCompressionResistancePriority(.required, for: .vertical)
+        uploadsStack.setContentHuggingPriority(.required, for: .vertical)
+        uploadsStack.setContentCompressionResistancePriority(.required, for: .vertical)
+        replyPreviewLabel.setContentHuggingPriority(.required, for: .vertical)
+
+        let bubbleTopToName = bubbleView.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4)
+        bubbleTopToNameConstraint = bubbleTopToName
+        let nameHeight = nameLabel.heightAnchor.constraint(equalToConstant: 0)
+        nameHeightConstraint = nameHeight
+
         NSLayoutConstraint.activate([
             avatarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
             avatarView.widthAnchor.constraint(equalToConstant: 36),
@@ -808,8 +826,8 @@ private final class ChatBubbleCell: UITableViewCell {
             timeLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 64),
 
             nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+            bubbleTopToName,
 
-            bubbleView.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
             bubbleView.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.78),
             contentView.bottomAnchor.constraint(greaterThanOrEqualTo: bubbleView.bottomAnchor, constant: 8),
             contentView.bottomAnchor.constraint(greaterThanOrEqualTo: timeLabel.bottomAnchor, constant: 8),
@@ -823,15 +841,13 @@ private final class ChatBubbleCell: UITableViewCell {
 
             uploadsStack.leadingAnchor.constraint(equalTo: bubbleView.leadingAnchor, constant: 8),
             uploadsStack.trailingAnchor.constraint(lessThanOrEqualTo: bubbleView.trailingAnchor, constant: -8),
-            uploadsStack.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: -8),
 
             bubbleLead,
             bubbleTrail,
         ])
 
-        let bubbleBottomPin = bubbleView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8)
-        bubbleBottomPin.priority = UILayoutPriority(250)
-        bubbleBottomPin.isActive = true
+        // Cell height is max(bubble, avatar+time). Do not pin the bubble to the
+        // cell bottom — that stretches short messages to the two-line timestamp.
         let timeBottomPin = timeLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8)
         timeBottomPin.priority = UILayoutPriority(250)
         timeBottomPin.isActive = true
@@ -841,13 +857,19 @@ private final class ChatBubbleCell: UITableViewCell {
         replyHeight.isActive = true
 
         let bodyToReply = bodyLabel.topAnchor.constraint(equalTo: replyPreviewLabel.bottomAnchor, constant: 4)
-        let bodyToBubble = bodyLabel.topAnchor.constraint(equalTo: bubbleView.topAnchor, constant: 10)
+        let bodyToBubble = bodyLabel.topAnchor.constraint(equalTo: bubbleView.topAnchor, constant: 8)
+        let bodyBottom = bodyLabel.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: -8)
         bodyTopToReplyConstraint = bodyToReply
         bodyTopToBubbleConstraint = bodyToBubble
-        let uploadsTop = uploadsStack.topAnchor.constraint(equalTo: bodyLabel.bottomAnchor, constant: 6)
-        uploadsTopConstraint = uploadsTop
-        uploadsTop.isActive = true
+        bodyBottomToBubbleConstraint = bodyBottom
+        let uploadsTopToBody = uploadsStack.topAnchor.constraint(equalTo: bodyLabel.bottomAnchor, constant: 6)
+        let uploadsTopToBubble = uploadsStack.topAnchor.constraint(equalTo: bubbleView.topAnchor, constant: 8)
+        let uploadsBottom = uploadsStack.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: -8)
+        uploadsTopToBodyConstraint = uploadsTopToBody
+        uploadsTopToBubbleConstraint = uploadsTopToBubble
+        uploadsBottomToBubbleConstraint = uploadsBottom
         bodyToBubble.isActive = true
+        bodyBottom.isActive = true
     }
 
     @available(*, unavailable)
@@ -876,6 +898,8 @@ private final class ChatBubbleCell: UITableViewCell {
         nameLabel.text = displayName
         nameLabel.textAlignment = isOutgoing ? .right : .left
         nameLabel.isHidden = isOutgoing && chatStyle == .telegram
+        nameHeightConstraint?.isActive = nameLabel.isHidden
+        bubbleTopToNameConstraint?.constant = nameLabel.isHidden ? 0 : 4
 
         let sendTime = message.formattedSendTime()
         timeLabel.text = sendTime
@@ -911,8 +935,8 @@ private final class ChatBubbleCell: UITableViewCell {
                 baseURL: baseURL
             )
         }
-        uploadsTopConstraint?.constant = body.isEmpty ? 0 : 6
         installUploadImages(imageURLs)
+        updateBubbleContentConstraints(hasBody: !body.isEmpty, hasUploads: !imageURLs.isEmpty)
         bodyLabel.textColor = isOutgoing
             ? (chatStyle == .telegram && isDark ? .white : .label)
             : .label
@@ -969,6 +993,24 @@ private final class ChatBubbleCell: UITableViewCell {
         }
     }
 
+    private func updateBubbleContentConstraints(hasBody: Bool, hasUploads: Bool) {
+        uploadsTopToBodyConstraint?.isActive = false
+        uploadsTopToBubbleConstraint?.isActive = false
+        uploadsBottomToBubbleConstraint?.isActive = false
+        bodyBottomToBubbleConstraint?.isActive = false
+        if hasUploads {
+            uploadsBottomToBubbleConstraint?.isActive = true
+            if hasBody {
+                uploadsTopToBodyConstraint?.constant = 6
+                uploadsTopToBodyConstraint?.isActive = true
+            } else {
+                uploadsTopToBubbleConstraint?.isActive = true
+            }
+        } else {
+            bodyBottomToBubbleConstraint?.isActive = true
+        }
+    }
+
     private func installUploadImages(_ urls: [URL]) {
         clearUploadImages()
         guard !urls.isEmpty else {
@@ -1007,10 +1049,13 @@ private final class ChatBubbleCell: UITableViewCell {
         bodyLabel.attributedText = nil
         bodyLabel.isHidden = false
         clearUploadImages()
+        updateBubbleContentConstraints(hasBody: true, hasUploads: false)
         onOpenImages = nil
         replyPreviewLabel.text = nil
         replyPreviewLabel.isHidden = true
         nameLabel.text = nil
+        nameHeightConstraint?.isActive = false
+        bubbleTopToNameConstraint?.constant = 4
         timeLabel.text = nil
         timeLabel.isHidden = false
         accessibilityLabel = nil
