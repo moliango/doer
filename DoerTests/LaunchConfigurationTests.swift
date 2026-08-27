@@ -1,5 +1,6 @@
 import XCTest
 import UIKit
+import ImageIO
 @testable import Doer
 
 @MainActor
@@ -36,6 +37,22 @@ final class LaunchConfigurationTests: XCTestCase {
             PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
         )
         let icons = try XCTUnwrap(root["CFBundleIcons"] as? [String: Any])
+        let primary = try XCTUnwrap(icons["CFBundlePrimaryIcon"] as? [String: Any])
+        let primaryFiles = try XCTUnwrap(primary["CFBundleIconFiles"] as? [String])
+        XCTAssertEqual(primaryFiles, ["AppIconOriginal"])
+        for suffix in ["", "@2x", "@3x"] {
+            let png = projectRoot.appendingPathComponent("Doer/AppIcons/AppIconOriginal\(suffix).png")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: png.path), png.lastPathComponent)
+            assertOpaqueRGBPNG(png)
+        }
+        for name in [
+            "Doer/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
+            "Doer/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark.png",
+            "Doer/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted.png",
+        ] {
+            assertOpaqueRGBPNG(projectRoot.appendingPathComponent(name))
+        }
+
         let alternates = try XCTUnwrap(icons["CFBundleAlternateIcons"] as? [String: Any])
         for style in AppSettings.AppIconStyle.allCases where style != .primary {
             let name = try XCTUnwrap(style.alternateIconName)
@@ -43,6 +60,7 @@ final class LaunchConfigurationTests: XCTestCase {
             for suffix in ["", "@2x", "@3x"] {
                 let png = projectRoot.appendingPathComponent("Doer/AppIcons/\(name)\(suffix).png")
                 XCTAssertTrue(FileManager.default.fileExists(atPath: png.path), png.lastPathComponent)
+                assertOpaqueRGBPNG(png)
             }
             let fullBleed = projectRoot.appendingPathComponent("Doer/AppIcons/\(name).png")
             let image = try XCTUnwrap(UIImage(contentsOfFile: fullBleed.path), name)
@@ -56,6 +74,18 @@ final class LaunchConfigurationTests: XCTestCase {
             }
             XCTAssertGreaterThanOrEqual(corner.alpha, 0.99, name)
         }
+    }
+
+    private func assertOpaqueRGBPNG(_ url: URL, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), url.lastPathComponent, file: file, line: line)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        else {
+            XCTFail("Unable to read \(url.lastPathComponent)", file: file, line: line)
+            return
+        }
+        let hasAlpha = properties[kCGImagePropertyHasAlpha] as? Bool ?? false
+        XCTAssertFalse(hasAlpha, "\(url.lastPathComponent) must be opaque RGB", file: file, line: line)
     }
 
     private func rgbaPixel(in image: UIImage, x: Int, y: Int) -> (white: CGFloat, alpha: CGFloat)? {
