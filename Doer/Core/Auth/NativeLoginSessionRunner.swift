@@ -36,6 +36,9 @@ final class NativeLoginSessionRunner: NSObject, WKScriptMessageHandler, WKNaviga
         self.identifier = identifier
         self.password = password
         finished = false
+        // WKWebView ignores Encrypted DNS; attach CONNECT so login/hCaptcha
+        // resolve through DoH like the Cloudflare challenge sheet.
+        await LightweightDohProxyService.shared.prepareBrowserProxy()
         let webView = makeWebView()
         self.webView = webView
         if siteKey == nil {

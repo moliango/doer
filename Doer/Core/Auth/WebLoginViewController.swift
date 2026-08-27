@@ -124,10 +124,13 @@ final class WebLoginViewController: UIViewController {
         }
 
         coordinator.owner = self
-        coordinator.attach(to: webView.configuration.websiteDataStore)
-        webView.load(URLRequest(url: targetURL))
+        Task { @MainActor [weak self] in
+            await LightweightDohProxyService.shared.prepareBrowserProxy()
+            guard let self else { return }
+            self.coordinator.attach(to: self.webView.configuration.websiteDataStore)
+            self.webView.load(URLRequest(url: self.targetURL))
+        }
     }
-
     func presentLoginPopup(_ popup: WKWebView) {
         popupWebView?.removeFromSuperview()
         popup.translatesAutoresizingMaskIntoConstraints = false
