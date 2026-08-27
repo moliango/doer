@@ -1,4 +1,5 @@
 import CookedHTML
+import UIKit
 import XCTest
 @testable import Doer
 
@@ -103,5 +104,62 @@ final class ImageGridPresentationTests: XCTestCase {
         }
         XCTAssertEqual(mode, .carousel)
         XCTAssertEqual(images.count, 2)
+    }
+
+    @MainActor
+    func testCarouselFirstPageHasSizeAfterZeroWidthLayout() {
+        let images = [
+            ImageGridItem(src: "https://example.com/a.jpg", alt: nil, width: 800, height: 450, href: nil),
+            ImageGridItem(src: "https://example.com/b.jpg", alt: nil, width: 800, height: 450, href: nil),
+        ]
+        let view = ImageGridRenderer.render(
+            .imageGrid(images: images, columns: 1, mode: .carousel),
+            config: .default(contentWidth: 390, baseURL: "https://example.com"),
+            delegate: nil
+        )
+
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 400))
+        view.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(view)
+        let width = view.widthAnchor.constraint(equalToConstant: 0)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: host.topAnchor),
+            view.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            width,
+        ])
+        host.layoutIfNeeded()
+
+        width.constant = 390
+        host.layoutIfNeeded()
+
+        guard let scrollView = firstScrollView(in: view) else {
+            return XCTFail("expected paging scroll view")
+        }
+        XCTAssertEqual(scrollView.bounds.width, 390, accuracy: 0.5)
+        XCTAssertEqual(scrollView.contentSize.width, 780, accuracy: 1)
+        XCTAssertEqual(scrollView.contentOffset.x, 0, accuracy: 0.5)
+
+        guard let stack = firstStack(in: scrollView),
+              let firstPage = stack.arrangedSubviews.first else {
+            return XCTFail("expected page stack")
+        }
+        XCTAssertEqual(firstPage.bounds.width, 390, accuracy: 0.5)
+        XCTAssertGreaterThan(firstPage.bounds.height, 1)
+    }
+
+    private func firstScrollView(in view: UIView) -> UIScrollView? {
+        if let scroll = view as? UIScrollView { return scroll }
+        for child in view.subviews {
+            if let found = firstScrollView(in: child) { return found }
+        }
+        return nil
+    }
+
+    private func firstStack(in view: UIView) -> UIStackView? {
+        if let stack = view as? UIStackView { return stack }
+        for child in view.subviews {
+            if let found = firstStack(in: child) { return found }
+        }
+        return nil
     }
 }

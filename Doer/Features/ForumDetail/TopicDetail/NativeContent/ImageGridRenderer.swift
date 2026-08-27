@@ -222,6 +222,16 @@ private final class ImageCarouselView: UIView, UIScrollViewDelegate {
         return view
     }()
 
+    private let pageStack: UIStackView = {
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .horizontal
+        stack.alignment = .fill
+        stack.distribution = .fillEqually
+        stack.spacing = 0
+        return stack
+    }()
+
     private let previousButton = ImageCarouselView.makeNavButton(systemName: "chevron.left")
     private let nextButton = ImageCarouselView.makeNavButton(systemName: "chevron.right")
     private let dotsStack: UIStackView = {
@@ -260,6 +270,7 @@ private final class ImageCarouselView: UIView, UIScrollViewDelegate {
     private func setup() {
         addSubview(trackView)
         trackView.addSubview(scrollView)
+        scrollView.addSubview(pageStack)
         addSubview(dotsStack)
         addSubview(counterLabel)
         scrollView.delegate = self
@@ -274,7 +285,7 @@ private final class ImageCarouselView: UIView, UIScrollViewDelegate {
             slide.configure(item: item, refererBaseURL: config.baseURL) { [weak self] in
                 self?.openViewer(at: index)
             }
-            scrollView.addSubview(slide)
+            pageStack.addArrangedSubview(slide)
             return slide
         }
 
@@ -312,6 +323,16 @@ private final class ImageCarouselView: UIView, UIScrollViewDelegate {
             scrollView.trailingAnchor.constraint(equalTo: trackView.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: trackView.bottomAnchor),
 
+            pageStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            pageStack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            pageStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            pageStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            pageStack.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor),
+            pageStack.widthAnchor.constraint(
+                equalTo: scrollView.frameLayoutGuide.widthAnchor,
+                multiplier: CGFloat(max(images.count, 1))
+            ),
+
             previousButton.leadingAnchor.constraint(equalTo: trackView.leadingAnchor, constant: 8),
             previousButton.centerYAnchor.constraint(equalTo: trackView.centerYAnchor),
             nextButton.trailingAnchor.constraint(equalTo: trackView.trailingAnchor, constant: -8),
@@ -338,18 +359,16 @@ private final class ImageCarouselView: UIView, UIScrollViewDelegate {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let width = scrollView.bounds.width
-        let height = scrollView.bounds.height
-        guard width > 1, height > 1 else { return }
-        let pageChanged = abs(width - lastPageWidth) > 0.5
-        lastPageWidth = width
-        scrollView.contentSize = CGSize(width: width * CGFloat(slides.count), height: height)
-        for (index, slide) in slides.enumerated() {
-            slide.frame = CGRect(x: width * CGFloat(index), y: 0, width: width, height: height)
-        }
-        if pageChanged {
-            scrollView.contentOffset = CGPoint(x: width * CGFloat(currentIndex), y: 0)
-        }
+        restorePageOffsetIfNeeded()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else { return }
+        setNeedsLayout()
+        layoutIfNeeded()
+        restorePageOffsetIfNeeded(force: true)
+        slides.forEach { $0.paintIfNeeded() }
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -385,6 +404,15 @@ private final class ImageCarouselView: UIView, UIScrollViewDelegate {
         }
         scrollView.setContentOffset(CGPoint(x: width * CGFloat(index), y: 0), animated: true)
         currentIndex = index
+    }
+
+    private func restorePageOffsetIfNeeded(force: Bool = false) {
+        let width = scrollView.bounds.width
+        guard width > 1 else { return }
+        let pageChanged = abs(width - lastPageWidth) > 0.5
+        lastPageWidth = width
+        guard force || pageChanged else { return }
+        scrollView.contentOffset = CGPoint(x: width * CGFloat(currentIndex), y: 0)
     }
 
     private func openViewer(at index: Int) {
@@ -428,6 +456,7 @@ private final class ImageCarouselView: UIView, UIScrollViewDelegate {
 private final class ImageCarouselSlideView: UIView {
     private let imageView: SDAnimatedImageView = {
         let view = SDAnimatedImageView()
+        view.translatesAutoresizingMaskIntoConstraints = false
         view.contentMode = .scaleAspectFit
         view.clipsToBounds = true
         view.backgroundColor = .clear
@@ -436,11 +465,18 @@ private final class ImageCarouselSlideView: UIView {
 
     private var tapHandler: (() -> Void)?
     private var loadGeneration = 0
+    private var pendingImage: UIImage?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         clipsToBounds = true
         addSubview(imageView)
+        NSLayoutConstraint.activate([
+            imageView.topAnchor.constraint(equalTo: topAnchor),
+            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
         let tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
         addGestureRecognizer(tap)
     }
@@ -452,13 +488,21 @@ private final class ImageCarouselSlideView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        imageView.frame = bounds
+        paintIfNeeded()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil {
+            paintIfNeeded()
+        }
     }
 
     func configure(item: ImageGridItem, refererBaseURL: String?, tapHandler: @escaping () -> Void) {
         self.tapHandler = tapHandler
         loadGeneration += 1
         let generation = loadGeneration
+        pendingImage = nil
         imageView.image = nil
         imageView.contentMode = .scaleAspectFit
         let raw = item.lightboxURL.isEmpty ? item.src : item.lightboxURL
@@ -466,8 +510,19 @@ private final class ImageCarouselSlideView: UIView {
         ExternalImageFetcher.fetch(url: url, refererBaseURL: refererBaseURL, forceRetry: false) { [weak self] image in
             guard let self, generation == self.loadGeneration else { return }
             self.imageView.contentMode = .scaleAspectFit
-            self.imageView.image = image
+            self.pendingImage = image
+            self.paintIfNeeded()
         }
+    }
+
+    func paintIfNeeded() {
+        guard bounds.width > 1, bounds.height > 1, let image = pendingImage else { return }
+        pendingImage = nil
+        // Re-assign so SDAnimatedImageView / iOS 14+ UIImageView actually
+        // displayLayer: after growing from a zero frame (cache hits during init).
+        imageView.image = nil
+        imageView.image = image
+        imageView.layer.setNeedsDisplay()
     }
 
     @objc private func tapped() {
