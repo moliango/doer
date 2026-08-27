@@ -419,7 +419,7 @@ final class NewAPICheckInDetailViewController: UITableViewController {
         guard !isSigningIn else { return }
         if platform.requiresReloginBeforeSignIn,
            !skippingConfiguredRelogin,
-           !(await service.refreshAuthentication(platform)).isRefreshed {
+           await service.needsInteractiveRelogin(for: platform) {
             openWebLogin(signInAfterSave: true)
             return
         }

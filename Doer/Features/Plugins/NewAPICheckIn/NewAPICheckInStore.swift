@@ -197,6 +197,26 @@ actor NewAPICheckInStore {
         }
     }
 
+    /// Patch credentials or quota on the persisted platform so a stale in-memory
+    /// copy cannot resurrect `reloginBeforeSignIn` after the user turned it off.
+    func updateExisting(
+        platformID: UUID,
+        credential: NewAPICheckInCredential? = nil,
+        mutate: (inout NewAPICheckInPlatform) -> Void
+    ) throws {
+        var file = load()
+        var state = accountState(in: file)
+        guard let index = state.platforms.firstIndex(where: { $0.id == platformID }) else { return }
+        mutate(&state.platforms[index])
+        state.platforms[index].updatedAt = Date()
+        replace(state, in: &file)
+        try persist(file)
+        if let credential {
+            let data = try encodeCredential(credential)
+            try credentialVault.setData(data, for: credentialKey(platformID: platformID))
+        }
+    }
+
     func delete(platformID: UUID) throws {
         var file = load()
         var state = accountState(in: file)

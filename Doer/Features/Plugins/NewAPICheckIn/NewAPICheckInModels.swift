@@ -36,6 +36,12 @@ struct NewAPICheckInCredential: Equatable, Codable, Sendable {
         self.cookieHeader = cookieHeader
         self.additionalHeaders = additionalHeaders
     }
+
+    nonisolated var hasUsableSession: Bool {
+        let token = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let cookie = cookieHeader?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return !token.isEmpty || !cookie.isEmpty
+    }
 }
 
 enum NewAPICheckInAuthRefreshResult: Sendable {
@@ -47,6 +53,20 @@ enum NewAPICheckInAuthRefreshResult: Sendable {
     nonisolated var isRefreshed: Bool {
         if case .refreshed = self { return true }
         return false
+    }
+
+    /// Open the login page only when the server rejected the session, or when
+    /// there is nothing stored to sign in with. Missing `/auth/refresh` must
+    /// not send the user through web login again after they just signed in.
+    nonisolated func requiresInteractiveLogin(hasUsableCredential: Bool) -> Bool {
+        switch self {
+        case .refreshed:
+            return false
+        case .rejected:
+            return true
+        case .unavailable, .failed:
+            return !hasUsableCredential
+        }
     }
 }
 

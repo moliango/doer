@@ -565,6 +565,10 @@ final class NewAPICheckInLoginViewController: UIViewController, WKNavigationDele
             platformType: mode == .newAPI ? .newAPI : .custom,
             source: .webView
         )
+        if let existingPlatform,
+           let latest = await store.platforms().first(where: { $0.id == existingPlatform.id }) {
+            platform = latest
+        }
         platform.baseURL = probeBase.absoluteString
         platform.lastQuotaValue = result.quotaValue
         platform.lastQuotaUnit = result.quotaUnit

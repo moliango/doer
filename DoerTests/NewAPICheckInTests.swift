@@ -298,6 +298,114 @@ final class NewAPICheckInTests: XCTestCase {
         XCTAssertEqual(attempts.first?.status, .authenticationExpired)
     }
 
+    func testTokenWithoutRefreshCookieStillSignsInWhenReloginBeforeSignInIsOn() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = NewAPICheckInStore(
+            scope: PluginScope(baseURL: "https://linux.do", username: "sam"),
+            directoryURL: directory,
+            credentialVault: MemoryNewAPICredentialVault()
+        )
+        let platform = NewAPICheckInPlatform(
+            name: "Example",
+            baseURL: "https://api.example.com",
+            reloginBeforeSignIn: true
+        )
+        try await store.save(
+            platform,
+            credential: NewAPICheckInCredential(accessToken: "session-token", userID: "7")
+        )
+
+        MockNewAPIURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/user/checkin")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer session-token")
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (response, Data(#"{"success":true,"message":"签到成功"}"#.utf8))
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockNewAPIURLProtocol.self]
+        let service = NewAPICheckInService(
+            store: store,
+            session: URLSession(configuration: configuration)
+        )
+
+        let needsRelogin = await service.needsInteractiveRelogin(for: platform)
+        XCTAssertFalse(needsRelogin)
+        let summary = await service.signInAll()
+        XCTAssertEqual(summary.success, 1)
+        XCTAssertEqual(summary.authenticationExpired, 0)
+    }
+
+    func testQuotaRefreshDoesNotRestoreDisabledReloginBeforeSignIn() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = NewAPICheckInStore(
+            scope: PluginScope(baseURL: "https://linux.do", username: "sam"),
+            directoryURL: directory,
+            credentialVault: MemoryNewAPICredentialVault()
+        )
+        var platform = NewAPICheckInPlatform(
+            name: "Example",
+            baseURL: "https://api.example.com",
+            reloginBeforeSignIn: true
+        )
+        try await store.save(
+            platform,
+            credential: NewAPICheckInCredential(accessToken: "token", userID: "7")
+        )
+        platform.reloginBeforeSignIn = false
+        try await store.save(platform)
+
+        let stale = NewAPICheckInPlatform(
+            id: platform.id,
+            name: platform.name,
+            baseURL: platform.baseURL,
+            reloginBeforeSignIn: true
+        )
+        MockNewAPIURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/user/self")
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (response, Data(#"{"success":true,"data":{"quota":1000,"used_quota":10,"request_count":3}}"#.utf8))
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockNewAPIURLProtocol.self]
+        let service = NewAPICheckInService(
+            store: store,
+            session: URLSession(configuration: configuration)
+        )
+
+        _ = await service.refreshAccount(stale)
+        let platforms = await store.platforms()
+        let stored = try XCTUnwrap(platforms.first)
+        XCTAssertFalse(stored.requiresReloginBeforeSignIn)
+        XCTAssertEqual(stored.lastQuotaValue, 1000)
+    }
+
+    func testRefreshResultDoesNotForceLoginWhenSessionAlreadyExists() {
+        XCTAssertFalse(
+            NewAPICheckInAuthRefreshResult.unavailable.requiresInteractiveLogin(hasUsableCredential: true)
+        )
+        XCTAssertTrue(
+            NewAPICheckInAuthRefreshResult.unavailable.requiresInteractiveLogin(hasUsableCredential: false)
+        )
+        XCTAssertTrue(
+            NewAPICheckInAuthRefreshResult.rejected("expired").requiresInteractiveLogin(hasUsableCredential: true)
+        )
+        XCTAssertFalse(
+            NewAPICheckInAuthRefreshResult.refreshed.requiresInteractiveLogin(hasUsableCredential: false)
+        )
+    }
+
     func testResponseClassificationRecognizesAlreadySignedAndExpiredAuthentication() {
         let already = NewAPICheckInService.classify(
             data: Data(#"{"success":false,"message":"今日已签到"}"#.utf8),

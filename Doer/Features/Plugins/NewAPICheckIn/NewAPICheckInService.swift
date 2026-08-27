@@ -101,36 +101,40 @@ actor NewAPICheckInService {
                 cookieHeader: Self.mergingCookieHeader(cookieHeader, with: responseCookies),
                 additionalHeaders: credential.additionalHeaders
             )
-            try await store.save(platform, credential: refreshedCredential)
+            try await store.updateExisting(platformID: platform.id, credential: refreshedCredential) { _ in }
             return .refreshed
         } catch {
             return .failed(error.localizedDescription)
         }
     }
 
+    func needsInteractiveRelogin(for platform: NewAPICheckInPlatform) async -> Bool {
+        guard platform.requiresReloginBeforeSignIn else { return false }
+        let refresh = await refreshAuthentication(platform)
+        let credential = try? await store.credential(for: platform.id)
+        return refresh.requiresInteractiveLogin(hasUsableCredential: credential?.hasUsableSession == true)
+    }
+
     private func signInWithoutInteractiveRelogin(
         _ platform: NewAPICheckInPlatform
     ) async -> NewAPICheckInResult {
-        guard platform.requiresReloginBeforeSignIn else {
-            return await signIn(platform)
+        if await needsInteractiveRelogin(for: platform) {
+            let result = NewAPICheckInResult(
+                status: .authenticationExpired,
+                statusCode: nil,
+                message: String(
+                    localized: "plugins.newapi.relogin_required_in_app",
+                    defaultValue: "需要先在 Doer 内重新登录后签到"
+                ),
+                rawResponse: nil,
+                durationMilliseconds: 0,
+                quotaValue: nil,
+                quotaUnit: nil
+            )
+            try? await store.record(result, for: platform.id)
+            return result
         }
-        if (await refreshAuthentication(platform)).isRefreshed {
-            return await signIn(platform)
-        }
-        let result = NewAPICheckInResult(
-            status: .authenticationExpired,
-            statusCode: nil,
-            message: String(
-                localized: "plugins.newapi.relogin_required_in_app",
-                defaultValue: "需要先在 Doer 内重新登录后签到"
-            ),
-            rawResponse: nil,
-            durationMilliseconds: 0,
-            quotaValue: nil,
-            quotaUnit: nil
-        )
-        try? await store.record(result, for: platform.id)
-        return result
+        return await signIn(platform)
     }
 
     func signInAll(maxConcurrent: Int = 3) async -> NewAPICheckInBatchSummary {
@@ -179,10 +183,10 @@ actor NewAPICheckInService {
             )
         )
         if result.isLoggedIn, let quotaValue = result.quotaValue {
-            var updated = platform
-            updated.lastQuotaValue = quotaValue
-            updated.lastQuotaUnit = result.quotaUnit
-            try? await store.save(updated)
+            try? await store.updateExisting(platformID: platform.id) { updated in
+                updated.lastQuotaValue = quotaValue
+                updated.lastQuotaUnit = result.quotaUnit
+            }
         }
         return result
     }

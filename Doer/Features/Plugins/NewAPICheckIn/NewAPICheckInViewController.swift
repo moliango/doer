@@ -76,6 +76,7 @@ final class NewAPICheckInViewController: UITableViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        guard navigationController?.topViewController === self else { return }
         guard let continuation = pendingLoginContinuation else { return }
         pendingLoginContinuation = nil
         let didSave = didSavePendingLogin
@@ -491,7 +492,7 @@ final class NewAPICheckInViewController: UITableViewController {
         var didInteractiveLogin = false
 
         if currentPlatform.requiresReloginBeforeSignIn,
-           !(await service.refreshAuthentication(currentPlatform)).isRefreshed {
+           await service.needsInteractiveRelogin(for: currentPlatform) {
             guard await requestRelogin(for: currentPlatform) else { return nil }
             didInteractiveLogin = true
             currentPlatform = await freshPlatform(id: currentPlatform.id) ?? currentPlatform

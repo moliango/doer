@@ -149,7 +149,7 @@ final class NewAPICheckInSilentLoginCoordinator: NSObject, WKNavigationDelegate,
             additionalHeaders: previous?.additionalHeaders ?? [:]
         )
         do {
-            try await store.save(platform, credential: credential)
+            try await store.updateExisting(platformID: platform.id, credential: credential) { _ in }
             finish(true)
         } catch {
             finish(false)
