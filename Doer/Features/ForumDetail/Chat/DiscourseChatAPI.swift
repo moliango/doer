@@ -180,7 +180,7 @@ struct DiscourseChatChannel: Decodable, Identifiable, Equatable {
     /// Best-effort channel avatar: custom icon → emoji PNG → category logo → first DM peer → nil.
     func avatarURL(baseURL: String) -> URL? {
         if let raw = resolvedIconURLString {
-            return Self.absoluteURL(raw, baseURL: baseURL)
+            return DiscourseChatMediaURL.resolve(raw, baseURL: baseURL)
         }
         if let emojiURL = namedEmojiImageURL(baseURL: baseURL) {
             return emojiURL
@@ -259,7 +259,7 @@ struct DiscourseChatChannel: Decodable, Identifiable, Equatable {
         guard let raw = EmojiStore.resolvedURLString(for: code, baseURL: baseURL),
               !raw.isEmpty
         else { return nil }
-        return URL(string: raw) ?? Self.absoluteURL(raw, baseURL: baseURL)
+        return URL(string: raw) ?? DiscourseChatMediaURL.resolve(raw, baseURL: baseURL)
     }
 
     private static func color(fromHex hex: String) -> UIColor? {
@@ -296,15 +296,27 @@ struct DiscourseChatChannel: Decodable, Identifiable, Equatable {
         return palette[Int(hash % UInt64(palette.count))]
     }
 
-    private static func absoluteURL(_ raw: String, baseURL: String) -> URL? {
-        if raw.hasPrefix("http://") || raw.hasPrefix("https://") {
-            return URL(string: raw)
+}
+
+enum DiscourseChatMediaURL {
+    /// Protocol-relative `//cdn...` must not be joined onto the forum origin
+    /// (`https://linux.do//cdn...` hits Cloudflare on the main host).
+    static func resolve(_ raw: String?, baseURL: String) -> URL? {
+        guard var value = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        if value.hasPrefix("upload://") { return nil }
+        if value.hasPrefix("//") {
+            value = "https:" + value
+        }
+        if value.hasPrefix("http://") || value.hasPrefix("https://") {
+            return URL(string: value)
         }
         let base = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        if raw.hasPrefix("/") {
-            return URL(string: base + raw)
+        if value.hasPrefix("/") {
+            return URL(string: base + value)
         }
-        return URL(string: base + "/" + raw)
+        return URL(string: base + "/" + value)
     }
 }
 
@@ -485,21 +497,7 @@ struct DiscourseChatMessage: Decodable, Identifiable, Equatable {
     }
 
     static func resolveMediaURL(_ raw: String?, baseURL: String) -> URL? {
-        guard var value = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
-            return nil
-        }
-        if value.hasPrefix("upload://") { return nil }
-        if value.hasPrefix("//") {
-            value = "https:" + value
-        }
-        if value.hasPrefix("http://") || value.hasPrefix("https://") {
-            return URL(string: value)
-        }
-        let base = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        if value.hasPrefix("/") {
-            return URL(string: base + value)
-        }
-        return URL(string: base + "/" + value)
+        DiscourseChatMediaURL.resolve(raw, baseURL: baseURL)
     }
 
     private static func stripUploadMarkdown(_ text: String) -> String {

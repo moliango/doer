@@ -746,6 +746,7 @@ private final class ChatBubbleCell: UITableViewCell {
     private var bodyTopToBubbleConstraint: NSLayoutConstraint?
     private var uploadsTopConstraint: NSLayoutConstraint?
     var onOpenImages: ((URL, [URL]) -> Void)?
+    private var forumBaseURL = ""
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         selectionStyle = .none
@@ -845,6 +846,7 @@ private final class ChatBubbleCell: UITableViewCell {
         let chatStyle = ChatTopicStyle.current
         let isDark = traitCollection.userInterfaceStyle == .dark
         let radius = chatStyle?.bubbleCornerRadius ?? theme.chromeCornerRadius
+        forumBaseURL = baseURL
 
         contentView.backgroundColor = .clear
         backgroundColor = .clear
@@ -958,7 +960,11 @@ private final class ChatBubbleCell: UITableViewCell {
         let many = urls.count > 1
         let maxWidth: CGFloat = many ? 132 : 220
         for url in urls {
-            let imageView = ChatBubbleImageView(url: url, maxWidth: maxWidth)
+            let imageView = ChatBubbleImageView(
+                url: url,
+                maxWidth: maxWidth,
+                cloudflareBaseURL: forumBaseURL
+            )
             imageView.onTap = { [weak self] tapped in
                 self?.onOpenImages?(tapped, urls)
             }
@@ -997,7 +1003,7 @@ private final class ChatBubbleImageView: UIView {
     private let url: URL
     private let imageView = SDAnimatedImageView()
 
-    init(url: URL, maxWidth: CGFloat) {
+    init(url: URL, maxWidth: CGFloat, cloudflareBaseURL: String) {
         self.url = url
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -1022,7 +1028,7 @@ private final class ChatBubbleImageView: UIView {
             imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        imageView.sd_setImage(with: url)
+        ForumImageLoader.setImage(on: imageView, url: url, cloudflareBaseURL: cloudflareBaseURL)
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
         addGestureRecognizer(tap)
         isUserInteractionEnabled = true

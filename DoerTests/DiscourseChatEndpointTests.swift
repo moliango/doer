@@ -130,6 +130,33 @@ final class DiscourseChatEndpointTests: XCTestCase {
         XCTAssertEqual(channel.monogramLetter, "G")
     }
 
+    func testProtocolRelativeS3LogoDoesNotProxyThroughForumOrigin() throws {
+        let json = """
+        {
+          "id": 4,
+          "title": "开发调优",
+          "chatable_type": "Category",
+          "chatable": {
+            "uploaded_logo": {
+              "url": "//linuxdo-uploads.s3.ldstatic.com/original/3X/c/5/c59e612cafa47255927d8c73f90e8dac05f78b5c.png"
+            }
+          }
+        }
+        """.data(using: .utf8)!
+        let channel = try JSONDecoder().decode(DiscourseChatChannel.self, from: json)
+        XCTAssertEqual(
+            channel.avatarURL(baseURL: "https://linux.do")?.absoluteString,
+            "https://linuxdo-uploads.s3.ldstatic.com/original/3X/c/5/c59e612cafa47255927d8c73f90e8dac05f78b5c.png"
+        )
+        XCTAssertEqual(
+            DiscourseChatMediaURL.resolve(
+                "//linuxdo-uploads.s3.ldstatic.com/original/3X/c/5/c59e612cafa47255927d8c73f90e8dac05f78b5c.png",
+                baseURL: "https://linux.do/"
+            )?.absoluteString,
+            "https://linuxdo-uploads.s3.ldstatic.com/original/3X/c/5/c59e612cafa47255927d8c73f90e8dac05f78b5c.png"
+        )
+    }
+
     func testChatableIntegerDoesNotDropTheChannel() throws {
         let json = """
         { "id": 11, "title": "Lounge", "chatable_type": "Category", "chatable": 4 }
