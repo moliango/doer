@@ -25,6 +25,15 @@ final class BookmarksViewModel: DoerObservableObject {
         self.username = username
     }
 
+    /// Keep the spinner up while `/session/current` catches up after cookie login.
+    func markLoadingIfEmpty() {
+        guard bookmarks.isEmpty else { return }
+        isLoading = true
+        errorMessage = nil
+        requiresLogin = false
+        notifyChanged()
+    }
+
     func loadBookmarks() async {
         guard let username, !username.isEmpty else {
             bookmarks = []

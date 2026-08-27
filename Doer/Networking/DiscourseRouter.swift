@@ -197,7 +197,7 @@ enum DiscourseRouter {
             }
             return path
         case .bookmarks(let username, let page):
-            var path = "/u/\(username)/bookmarks.json"
+            var path = "/u/\(Self.pathComponent(username))/bookmarks.json"
             if page > 0 {
                 path += "?page=\(page)"
             }

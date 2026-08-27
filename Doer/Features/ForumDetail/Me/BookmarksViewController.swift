@@ -17,6 +17,8 @@ final class BookmarksViewController: ObservableViewController {
         tv.rowHeight = UITableView.automaticDimension
         tv.estimatedRowHeight = TopicListCellFactory.estimatedRowHeight
         tv.showsVerticalScrollIndicator = false
+        // Empty / login states still need bounce so UIRefreshControl can fire.
+        tv.alwaysBounceVertical = true
         return tv
     }()
 
@@ -124,6 +126,7 @@ final class BookmarksViewController: ObservableViewController {
     }()
 
     private let emptyFooter = UIView(frame: CGRect(x: 0, y: 0, width: 0, height: CGFloat.leastNormalMagnitude))
+    private var loadGeneration = 0
 
     init(api: DiscourseAPI, username: String, authGate: AuthGating? = nil) {
         self.api = api
@@ -178,25 +181,34 @@ final class BookmarksViewController: ObservableViewController {
 
         loginButton.addTarget(self, action: #selector(loginTapped), for: .touchUpInside)
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+    }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
         Task {
             await loadBookmarks()
         }
     }
 
     override func updateUI() {
-        refreshControl.endRefreshing()
+        if !viewModel.isLoading, refreshControl.isRefreshing {
+            refreshControl.endRefreshing()
+        }
         applyThemeStyle()
 
         let hasBookmarks = !viewModel.bookmarks.isEmpty
-        if viewModel.isLoading && !hasBookmarks {
+        let showSpinner = viewModel.isLoading && !hasBookmarks
+        if showSpinner {
             activityIndicator.startAnimating()
         } else {
             activityIndicator.stopAnimating()
         }
 
+        // Keep the table visible so pull-to-refresh still works after login
+        // when the first fetch races session/current and comes back empty.
+        tableView.isHidden = false
+        tableView.alpha = hasBookmarks ? 1 : 0.01
         let animated = view.window != nil
-        AnimationOptimizer.setVisible(tableView, hasBookmarks, animated: animated)
         AnimationOptimizer.setVisible(stateStackView, !hasBookmarks && !viewModel.isLoading, animated: animated)
 
         if viewModel.requiresLogin {
@@ -270,19 +282,44 @@ final class BookmarksViewController: ObservableViewController {
         retryButton.isHidden = !showRetry
     }
 
-    private func refreshUsernameFromAuthGate() {
-        viewModel.updateUsername(authGate?.currentUsername())
+    private func loadBookmarks() async {
+        loadGeneration += 1
+        let generation = loadGeneration
+
+        if let authGate, authGate.isAuthenticated() {
+            viewModel.markLoadingIfEmpty()
+            let username = await waitForSessionUsername(authGate)
+            guard generation == loadGeneration else { return }
+            viewModel.updateUsername(username)
+        } else if authGate != nil {
+            viewModel.updateUsername(nil)
+        }
+
+        guard generation == loadGeneration else { return }
+        await viewModel.loadBookmarks()
     }
 
-    private func loadBookmarks() async {
-        if let authGate {
-            let username = authGate.currentUsername()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if username.isEmpty, authGate.isAuthenticated() {
-                _ = await authGate.refreshSessionUser()
-            }
-            refreshUsernameFromAuthGate()
+    /// Cookie login returns as soon as `_t` exists; username lands later via
+    /// `/session/current`. Fetching bookmarks before that hits an empty list.
+    private func waitForSessionUsername(_ authGate: AuthGating) async -> String? {
+        func currentUsername() -> String {
+            authGate.currentUsername()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         }
-        await viewModel.loadBookmarks()
+        for attempt in 0..<5 {
+            let didRefresh = await authGate.refreshSessionUser()
+            let username = currentUsername()
+            if !username.isEmpty {
+                return username
+            }
+            if !didRefresh, !authGate.isAuthenticated() {
+                return nil
+            }
+            if attempt < 4 {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+            }
+        }
+        let username = currentUsername()
+        return username.isEmpty ? nil : username
     }
 
     @objc private func pullToRefresh() {

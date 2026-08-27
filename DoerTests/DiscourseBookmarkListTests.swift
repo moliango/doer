@@ -30,4 +30,15 @@ final class DiscourseBookmarkListTests: XCTestCase {
         XCTAssertEqual(list.bookmarks.count, 1)
         XCTAssertNil(list.moreBookmarksUrl)
     }
+
+    func testBookmarkRouteEncodesUsernameAndOmitsFirstPage() {
+        XCTAssertEqual(
+            DiscourseRouter.bookmarks(username: "sam", page: 0).path,
+            "/u/sam/bookmarks.json"
+        )
+        XCTAssertEqual(
+            DiscourseRouter.bookmarks(username: "sam", page: 2).path,
+            "/u/sam/bookmarks.json?page=2"
+        )
+    }
 }
