@@ -18,6 +18,15 @@ enum HomeTopicListOrdering {
         topic.pinned == true && topic.unpinned != true
     }
 
+    static func showsCompactPins(for mode: HomeListMode) -> Bool {
+        switch mode {
+        case .latest, .hot, .top:
+            return true
+        case .newTopics, .unread:
+            return false
+        }
+    }
+
     static func leadingPinnedIds(_ topics: [DiscourseTopicList.Topic]) -> Set<Int> {
         var ids = Set<Int>()
         for topic in topics {
@@ -27,8 +36,36 @@ enum HomeTopicListOrdering {
         return ids
     }
 
+    static func compactPinIds(
+        in topics: [DiscourseTopicList.Topic],
+        mode: HomeListMode
+    ) -> Set<Int> {
+        guard showsCompactPins(for: mode) else { return [] }
+        return leadingPinnedIds(topics)
+    }
+
     static func isPinned(_ topic: DiscourseTopicList.Topic, pinnedIds: Set<Int>) -> Bool {
         pinnedIds.contains(topic.id)
+    }
+
+    /// Discourse prepends globally pinned topics onto `/new` and `/unread`.
+    /// Those rows are often the user's own old posts with no new activity.
+    static func prepared(
+        _ topics: [DiscourseTopicList.Topic],
+        mode: HomeListMode
+    ) -> [DiscourseTopicList.Topic] {
+        switch mode {
+        case .newTopics, .unread:
+            return droppingStaleLeadingPins(topics)
+        case .latest, .hot, .top:
+            return topics
+        }
+    }
+
+    static func droppingStaleLeadingPins(
+        _ topics: [DiscourseTopicList.Topic]
+    ) -> [DiscourseTopicList.Topic] {
+        Array(topics.drop { isActivelyPinned($0) && !$0.isUnreadForDisplay })
     }
 
     /// Dedupes by id while preserving server order. Does not reorder pins.
@@ -420,12 +457,16 @@ final class HomeViewModel: DoerObservableObject {
             try Task.checkCancellation()
             // Page 0 server order is the source of truth. Compact pins are only
             // the leading consecutive actively-pinned prefix (FluxDo parity).
+            // `/new` and `/unread` still prepend global pins; drop inactive ones.
             let loaded = HomeTopicListOrdering.withPinnedFirst(
-                applyLocalReadProgress(to: result.topicList.topics),
+                HomeTopicListOrdering.prepared(
+                    applyLocalReadProgress(to: result.topicList.topics),
+                    mode: listMode
+                ),
                 pinnedIds: []
             )
             topics = loaded
-            pinnedTopicIds = HomeTopicListOrdering.leadingPinnedIds(loaded)
+            pinnedTopicIds = HomeTopicListOrdering.compactPinIds(in: loaded, mode: listMode)
             if isGlobalLatestList {
                 // Full page-0 refresh is the source of truth — clear leftover
                 // background pending so cold start / foreground reload don't
@@ -506,7 +547,7 @@ final class HomeViewModel: DoerObservableObject {
                 topics + applyLocalReadProgress(to: newTopics),
                 pinnedIds: pinnedTopicIds
             )
-            pinnedTopicIds = HomeTopicListOrdering.leadingPinnedIds(topics)
+            pinnedTopicIds = HomeTopicListOrdering.compactPinIds(in: topics, mode: listMode)
             canLoadMore = result.topicList.moreTopicsUrl != nil
             loadMoreErrorMessage = nil
             shouldRetryLoadMoreAfterCloudflare = false

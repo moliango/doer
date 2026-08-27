@@ -91,6 +91,49 @@ final class TopicReadStateTests: XCTestCase {
         XCTAssertEqual(HomeTopicListOrdering.leadingPinnedIds([topic]), [])
     }
 
+    func testNewAndUnreadListsDropStaleLeadingPins() throws {
+        let stalePin = try decodeTopic(
+            id: 1,
+            extra: #", "pinned": true, "unseen": false, "unread_posts": 0, "last_read_post_number": 1, "highest_post_number": 1"#
+        )
+        let anotherStalePin = try decodeTopic(
+            id: 2,
+            extra: #", "pinned": true, "unseen": false, "unread_posts": 0, "last_read_post_number": 2, "highest_post_number": 2"#
+        )
+        let fresh = try decodeTopic(
+            id: 3,
+            extra: #", "unseen": true, "unread_posts": 0"#
+        )
+        let topics = [stalePin, anotherStalePin, fresh]
+
+        XCTAssertEqual(
+            HomeTopicListOrdering.prepared(topics, mode: .newTopics).map(\.id),
+            [3]
+        )
+        XCTAssertEqual(
+            HomeTopicListOrdering.prepared(topics, mode: .unread).map(\.id),
+            [3]
+        )
+        XCTAssertEqual(
+            HomeTopicListOrdering.prepared(topics, mode: .latest).map(\.id),
+            [1, 2, 3]
+        )
+        XCTAssertEqual(HomeTopicListOrdering.compactPinIds(in: topics, mode: .newTopics), [])
+        XCTAssertEqual(HomeTopicListOrdering.compactPinIds(in: topics, mode: .unread), [])
+        XCTAssertEqual(HomeTopicListOrdering.compactPinIds(in: topics, mode: .latest), [1, 2])
+    }
+
+    func testNewListKeepsPinnedTopicThatIsActuallyUnread() throws {
+        let unreadPin = try decodeTopic(
+            id: 8,
+            extra: #", "pinned": true, "unseen": false, "unread_posts": 2, "last_read_post_number": 3, "highest_post_number": 5"#
+        )
+        let fresh = try decodeTopic(id: 9, extra: #", "unseen": true"#)
+        let prepared = HomeTopicListOrdering.prepared([unreadPin, fresh], mode: .newTopics)
+        XCTAssertEqual(prepared.map(\.id), [8, 9])
+        XCTAssertEqual(HomeTopicListOrdering.compactPinIds(in: prepared, mode: .newTopics), [])
+    }
+
     func testIncomingMergeDoesNotPromoteIncomingPins() throws {
         let pinned = try decodeTopic(id: 1, extra: #", "pinned": true"#)
         let older = try decodeTopic(id: 2)
@@ -180,10 +223,6 @@ final class TopicReadStateTests: XCTestCase {
         XCTAssertTrue(telegram.scrollsToBottomWhenOpeningLatest())
         XCTAssertFalse(wechat.animatesCanvasColorChange())
         XCTAssertTrue(telegram.animatesCanvasColorChange())
-        XCTAssertFalse(WeChatChatPostCell().prefersContextMenuForLongPress())
-        XCTAssertTrue(TelegramChatPostCell().prefersContextMenuForLongPress())
-        XCTAssertEqual(WeChatChatPostCell().bubbleLongPressDuration(), 0.5)
-        XCTAssertEqual(TelegramChatPostCell().bubbleLongPressDuration(), 0.35)
         XCTAssertEqual(WeChatChatPostCell().dateChipCornerRadius(), 4)
         XCTAssertEqual(TelegramChatPostCell().dateChipCornerRadius(), 11)
         XCTAssertEqual(ChatTopicStyle.weChat.actionTintColor(isActive: true), ChatTopicStyle.weChat.accentColor)

@@ -149,6 +149,9 @@ extension HomeViewController {
     func selectListMode(_ mode: HomeListMode) {
         guard viewModel.listMode != mode else { return }
         viewModel.listMode = mode
+        if !HomeTopicListOrdering.showsCompactPins(for: mode) {
+            viewModel.pinnedTopicIds = []
+        }
         updateFilterButton()
         reloadTopics()
     }
