@@ -8,6 +8,10 @@ final class MeViewModel: DoerObservableObject {
     var isLoading = false
     var requiresLogin = false
     var errorMessage: String?
+    var chatUnreadCount = 0
+    /// False until a chat unread fetch (or logout) resolves, so Me does not
+    /// wipe a tab badge that ForumTabBarController already applied.
+    var hasResolvedChatUnread = false
 
     private let api: DiscourseAPI
     private var loadGeneration = 0
@@ -111,10 +115,37 @@ final class MeViewModel: DoerObservableObject {
                 hadVisibleContent: currentUser != nil || userProfile != nil
             )
         }
+        await refreshChatUnread()
     }
 
     func reload() async {
         await loadProfile(forceRefresh: true)
+    }
+
+    func refreshChatUnread() async {
+        let hasSession = AuthManager.shared.isAuthenticated(for: api.baseURL)
+        guard hasSession, !requiresLogin else {
+            let changed = chatUnreadCount != 0 || !hasResolvedChatUnread
+            chatUnreadCount = 0
+            hasResolvedChatUnread = true
+            if changed {
+                notifyChanged()
+            }
+            return
+        }
+        do {
+            let response = try await api.fetchChatChannels()
+            let count = response.entryBadgeCount
+            let changed = chatUnreadCount != count || !hasResolvedChatUnread
+            chatUnreadCount = count
+            hasResolvedChatUnread = true
+            if changed {
+                notifyChanged()
+            }
+        } catch {
+            // Keep the last known badge; a transient chat API miss shouldn't
+            // look like "no new messages".
+        }
     }
 
     func clearSessionState(requiresLogin: Bool = true) {
@@ -122,6 +153,8 @@ final class MeViewModel: DoerObservableObject {
         currentUser = nil
         userProfile = nil
         summary = nil
+        chatUnreadCount = 0
+        hasResolvedChatUnread = true
         isLoading = false
         self.requiresLogin = requiresLogin
         errorMessage = nil

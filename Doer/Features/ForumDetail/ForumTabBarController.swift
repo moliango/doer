@@ -17,6 +17,8 @@ final class ForumTabBarController: UITabBarController {
     private var appLifecycleObservationToken: NSObjectProtocol?
     private var notificationObservationToken: AnyCancellable?
     private var meAvatarLoadTask: Task<Void, Never>?
+    private var chatBadgeTask: Task<Void, Never>?
+    private var lastChatBadgeCount = 0
     private var renderedMeAvatarKey: String?
     private var pendingMeAvatarKey: String?
     private var tabIdentifiers: [String] = []
@@ -74,6 +76,7 @@ final class ForumTabBarController: UITabBarController {
         }
         notificationObservationToken?.cancel()
         meAvatarLoadTask?.cancel()
+        chatBadgeTask?.cancel()
     }
 
     override func viewDidLayoutSubviews() {
@@ -603,6 +606,7 @@ private extension ForumTabBarController {
             queue: .main
         ) { [weak self] _ in
             self?.reassertTabBarLayoutAfterApplicationActivation()
+            self?.refreshChatTabBadge()
         }
     }
 
@@ -699,6 +703,8 @@ private extension ForumTabBarController {
         configureTabBarSurface()
         refreshMeTabAvatarIcon()
         applyNotificationBadge()
+        applyChatTabBadge(lastChatBadgeCount)
+        refreshChatTabBadge()
         onNavigationControllersChanged?()
     }
 
@@ -957,6 +963,35 @@ private extension ForumTabBarController {
         let badgeValue = unreadCount > 0 ? (unreadCount > 99 ? "99+" : String(unreadCount)) : nil
         navigationControllers[index].tabBarItem.badgeValue = badgeValue
         navigationControllers[index].tabBarItem.badgeColor = .systemRed
+    }
+
+    func refreshChatTabBadge() {
+        chatBadgeTask?.cancel()
+        chatBadgeTask = Task { [weak self, api] in
+            guard let self else { return }
+            let authenticated = AuthManager.shared.isAuthenticated(for: api.baseURL)
+            guard authenticated else {
+                await MainActor.run { self.applyChatTabBadge(0) }
+                return
+            }
+            do {
+                let count = try await api.fetchChatChannels().entryBadgeCount
+                guard !Task.isCancelled else { return }
+                await MainActor.run { self.applyChatTabBadge(count) }
+            } catch {
+                // Keep the last known chat badge on a transient miss.
+            }
+        }
+    }
+
+    func applyChatTabBadge(_ count: Int) {
+        lastChatBadgeCount = count
+        guard let index = tabIdentifiers.firstIndex(of: "me"),
+              index < navigationControllers.count
+        else { return }
+        let item = navigationControllers[index].tabBarItem
+        item?.badgeValue = DiscourseChatChannelsResponse.badgeText(for: count)
+        item?.badgeColor = .systemRed
     }
 }
 

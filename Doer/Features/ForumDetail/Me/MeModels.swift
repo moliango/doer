@@ -7,6 +7,7 @@ struct MeActionRow {
     let symbolName: String
     let tintColor: UIColor
     let isEnabled: Bool
+    var badgeCount: Int = 0
     let action: () -> Void
 }
 

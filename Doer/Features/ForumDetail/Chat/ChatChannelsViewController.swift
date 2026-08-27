@@ -4,8 +4,10 @@ import SDWebImage
 final class ChatChannelsViewController: ObservableViewController {
     private let api: DiscourseAPI
     private var channels: [DiscourseChatChannel] = []
+    private var channelList: DiscourseChatChannelsResponse?
     private var isLoading = false
     private var errorMessage: String?
+    private var loadGeneration = 0
 
     private lazy var tableView: UITableView = {
         let table = UITableView(frame: .zero, style: .plain)
@@ -61,6 +63,10 @@ final class ChatChannelsViewController: ObservableViewController {
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
             emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
         ])
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
         Task { await loadChannels() }
     }
 
@@ -96,20 +102,34 @@ final class ChatChannelsViewController: ObservableViewController {
     }
 
     private func loadChannels() async {
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
         errorMessage = nil
         updateUI()
         do {
             let response = try await api.fetchChatChannels()
+            guard generation == loadGeneration else { return }
+            channelList = response
             channels = response.all.sorted {
-                ($0.unreadCount, $0.displayTitle) > ($1.unreadCount, $1.displayTitle)
+                (response.unreadCount(for: $0), $0.displayTitle)
+                    > (response.unreadCount(for: $1), $1.displayTitle)
             }
+            applyEntryTabBadge(response.entryBadgeCount)
         } catch {
+            guard generation == loadGeneration else { return }
             errorMessage = error.localizedDescription
+            channelList = nil
             channels = []
         }
         isLoading = false
         updateUI()
+    }
+
+    private func applyEntryTabBadge(_ count: Int) {
+        let item = navigationController?.tabBarItem
+        item?.badgeValue = DiscourseChatChannelsResponse.badgeText(for: count)
+        item?.badgeColor = .systemRed
     }
 }
 
@@ -122,19 +142,18 @@ extension ChatChannelsViewController: UITableViewDataSource, UITableViewDelegate
         let channel = channels[indexPath.row]
         let layout = TopicListLayoutKind.current
         let time = channel.lastMessageSentAt.map { TopicCell.formatDate($0) }
-        let badge: String? = channel.unreadCount > 0
-            ? (channel.unreadCount > 99 ? "99+" : "\(channel.unreadCount)")
-            : nil
+        let unread = channelList?.unreadCount(for: channel) ?? channel.unreadCount
+        let badge = DiscourseChatChannelsResponse.badgeText(for: unread)
         let avatarURL = channel.avatarURL(baseURL: api.baseURL)
         let item = TopicListSessionItem(
             title: channel.displayTitle,
             subtitle: badge != nil
-                ? String(format: String(localized: "chat.unread_count", defaultValue: "%d 条未读"), channel.unreadCount)
+                ? String(format: String(localized: "chat.unread_count", defaultValue: "%d 条未读"), unread)
                 : (time ?? String(localized: "chat.channel_subtitle", defaultValue: "频道")),
             timeText: time,
             avatarURL: avatarURL,
             avatarTemplate: channel.avatarTemplate,
-            isEmphasized: channel.unreadCount > 0,
+            isEmphasized: unread > 0,
             badgeText: badge,
             baseURL: api.baseURL,
             monogramText: channel.monogramLetter,

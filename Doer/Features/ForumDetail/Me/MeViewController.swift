@@ -94,6 +94,9 @@ final class MeViewController: ObservableViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         updateUI()
+        if authGate?.isAuthenticated() == true, !viewModel.requiresLogin {
+            Task { await viewModel.refreshChatUnread() }
+        }
     }
 
     override func updateUI() {
@@ -137,6 +140,7 @@ final class MeViewController: ObservableViewController {
         configureActionRows(isLoggedIn: isLoggedIn)
         configureQuickActions(isLoggedIn: isLoggedIn)
         configureBalanceCard(isLoggedIn: isLoggedIn)
+        applyChatTabBadge(isLoggedIn: isLoggedIn)
     }
 
     private func setupLayout() {
@@ -239,6 +243,7 @@ final class MeViewController: ObservableViewController {
                 symbolName: "bubble.left.and.bubble.right.fill",
                 tintColor: .systemPurple,
                 isEnabled: isLoggedIn,
+                badgeCount: isLoggedIn ? viewModel.chatUnreadCount : 0,
                 action: { [weak self] in self?.openChat() }
             ),
             .browser: MeActionRow(
@@ -515,6 +520,17 @@ final class MeViewController: ObservableViewController {
         guard let username = viewModel.currentUser?.username else { return }
         let vc = UserProfileViewController(api: api, username: username)
         navigationController?.pushViewController(vc, animated: true)
+    }
+
+    private func applyChatTabBadge(isLoggedIn: Bool) {
+        let item = navigationController?.tabBarItem ?? tabBarItem
+        if !isLoggedIn {
+            item?.badgeValue = nil
+            return
+        }
+        guard viewModel.hasResolvedChatUnread else { return }
+        item?.badgeValue = DiscourseChatChannelsResponse.badgeText(for: viewModel.chatUnreadCount)
+        item?.badgeColor = .systemRed
     }
 
     private func openChat() {

@@ -302,4 +302,74 @@ final class DiscourseChatEndpointTests: XCTestCase {
             "[date=2026-08-24 timezone=\"Asia/Shanghai\"]"
         )
     }
+
+    func testEntryBadgeCountsDMUnreadAndPublicMentionsOnly() throws {
+        let json = """
+        {
+          "public_channels": [
+            {
+              "id": 1,
+              "title": "大厅",
+              "chatable_type": "Category",
+              "current_user_membership": { "following": true, "muted": false }
+            },
+            {
+              "id": 2,
+              "title": "静音",
+              "chatable_type": "Category",
+              "current_user_membership": { "following": true, "muted": true }
+            }
+          ],
+          "direct_message_channels": [
+            {
+              "id": 9,
+              "title": "alice",
+              "chatable_type": "DirectMessage",
+              "current_user_membership": { "following": true, "muted": false }
+            }
+          ],
+          "tracking": {
+            "channel_tracking": {
+              "1": { "unread_count": 12, "mention_count": 2 },
+              "2": { "unread_count": 8, "mention_count": 3 },
+              "9": { "unread_count": 4, "mention_count": 1 }
+            }
+          }
+        }
+        """
+        let response = try JSONDecoder().decode(DiscourseChatChannelsResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(response.entryBadgeCount, 7)
+        XCTAssertEqual(response.unreadCount(for: response.publicChannels[0]), 12)
+        XCTAssertEqual(response.unreadCount(for: response.directMessageChannels[0]), 4)
+    }
+
+    func testEntryBadgeFallsBackToMembershipWhenTrackingMissing() throws {
+        let json = """
+        {
+          "public_channels": [
+            {
+              "id": 1,
+              "chatable_type": "Category",
+              "current_user_membership": { "unread_count": 9, "unread_mentions": 1 }
+            }
+          ],
+          "direct_message_channels": [
+            {
+              "id": 2,
+              "chatable_type": "DirectMessage",
+              "current_user_membership": { "unread_count": 3, "unread_mentions": 2 }
+            }
+          ]
+        }
+        """
+        let response = try JSONDecoder().decode(DiscourseChatChannelsResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(response.entryBadgeCount, 6)
+    }
+
+    func testBadgeTextCapsAtNinetyNine() {
+        XCTAssertNil(DiscourseChatChannelsResponse.badgeText(for: 0))
+        XCTAssertEqual(DiscourseChatChannelsResponse.badgeText(for: 7), "7")
+        XCTAssertEqual(DiscourseChatChannelsResponse.badgeText(for: 99), "99")
+        XCTAssertEqual(DiscourseChatChannelsResponse.badgeText(for: 100), "99+")
+    }
 }

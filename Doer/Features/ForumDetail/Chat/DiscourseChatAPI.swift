@@ -20,12 +20,16 @@ struct DiscourseChatChannel: Decodable, Identifiable, Equatable {
 
     struct Membership: Decodable, Equatable {
         let following: Bool?
+        let muted: Bool?
         let unreadCount: Int?
+        let unreadMentions: Int?
         let lastReadMessageId: Int?
 
         enum CodingKeys: String, CodingKey {
             case following
+            case muted
             case unreadCount = "unread_count"
+            case unreadMentions = "unread_mentions"
             case lastReadMessageId = "last_read_message_id"
         }
     }
@@ -177,6 +181,14 @@ struct DiscourseChatChannel: Decodable, Identifiable, Equatable {
         max(currentUserMembership?.unreadCount ?? 0, 0)
     }
 
+    var mentionCount: Int {
+        max(currentUserMembership?.unreadMentions ?? 0, 0)
+    }
+
+    var isDirectMessage: Bool {
+        (chatableType ?? "").caseInsensitiveCompare("DirectMessage") == .orderedSame
+    }
+
     /// Best-effort channel avatar: custom icon → emoji PNG → category logo → first DM peer → nil.
     func avatarURL(baseURL: String) -> URL? {
         if let raw = resolvedIconURLString {
@@ -295,7 +307,6 @@ struct DiscourseChatChannel: Decodable, Identifiable, Equatable {
         }
         return palette[Int(hash % UInt64(palette.count))]
     }
-
 }
 
 enum DiscourseChatMediaURL {
@@ -320,19 +331,50 @@ enum DiscourseChatMediaURL {
     }
 }
 
+struct DiscourseChatChannelTracking: Equatable {
+    var unreadCount: Int
+    var mentionCount: Int
+
+    init(unreadCount: Int = 0, mentionCount: Int = 0) {
+        self.unreadCount = max(unreadCount, 0)
+        self.mentionCount = max(mentionCount, 0)
+    }
+}
+
 struct DiscourseChatChannelsResponse: Decodable {
     let publicChannels: [DiscourseChatChannel]
     let directMessageChannels: [DiscourseChatChannel]
+    let channelTracking: [Int: DiscourseChatChannelTracking]
 
     enum CodingKeys: String, CodingKey {
         case publicChannels = "public_channels"
         case directMessageChannels = "direct_message_channels"
         case channels
+        case tracking
     }
 
-    init(publicChannels: [DiscourseChatChannel] = [], directMessageChannels: [DiscourseChatChannel] = []) {
+    private enum TrackingKeys: String, CodingKey {
+        case channelTracking = "channel_tracking"
+    }
+
+    private struct TrackingEntry: Decodable {
+        var unreadCount: Int?
+        var mentionCount: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case unreadCount = "unread_count"
+            case mentionCount = "mention_count"
+        }
+    }
+
+    init(
+        publicChannels: [DiscourseChatChannel] = [],
+        directMessageChannels: [DiscourseChatChannel] = [],
+        channelTracking: [Int: DiscourseChatChannelTracking] = [:]
+    ) {
         self.publicChannels = publicChannels
         self.directMessageChannels = directMessageChannels
+        self.channelTracking = channelTracking
     }
 
     init(from decoder: Decoder) throws {
@@ -341,10 +383,50 @@ struct DiscourseChatChannelsResponse: Decodable {
             ?? (try? c.decodeIfPresent([DiscourseChatChannel].self, forKey: .channels))
             ?? []
         directMessageChannels = (try? c.decodeIfPresent([DiscourseChatChannel].self, forKey: .directMessageChannels)) ?? []
+        if let tracking = try? c.nestedContainer(keyedBy: TrackingKeys.self, forKey: .tracking),
+           let raw = try? tracking.decodeIfPresent([String: TrackingEntry].self, forKey: .channelTracking) {
+            var mapped: [Int: DiscourseChatChannelTracking] = [:]
+            for (key, entry) in raw {
+                guard let id = Int(key) else { continue }
+                mapped[id] = DiscourseChatChannelTracking(
+                    unreadCount: entry.unreadCount ?? 0,
+                    mentionCount: entry.mentionCount ?? 0
+                )
+            }
+            channelTracking = mapped
+        } else {
+            channelTracking = [:]
+        }
     }
 
     var all: [DiscourseChatChannel] {
         publicChannels + directMessageChannels
+    }
+
+    /// FluxDo / official chat-channel-unread-indicator: DM = unread + mention;
+    /// public channels = mentions only; muted channels are ignored.
+    var entryBadgeCount: Int {
+        badgeCount(in: directMessageChannels, includeUnread: true)
+            + badgeCount(in: publicChannels, includeUnread: false)
+    }
+
+    static func badgeText(for count: Int) -> String? {
+        guard count > 0 else { return nil }
+        return count > 99 ? "99+" : String(count)
+    }
+
+    func unreadCount(for channel: DiscourseChatChannel) -> Int {
+        channelTracking[channel.id]?.unreadCount ?? channel.unreadCount
+    }
+
+    private func badgeCount(in channels: [DiscourseChatChannel], includeUnread: Bool) -> Int {
+        channels.reduce(0) { partial, channel in
+            if channel.currentUserMembership?.muted == true { return partial }
+            let tracking = channelTracking[channel.id]
+            let mentions = tracking?.mentionCount ?? channel.mentionCount
+            let unread = includeUnread ? (tracking?.unreadCount ?? channel.unreadCount) : 0
+            return partial + unread + mentions
+        }
     }
 }
 

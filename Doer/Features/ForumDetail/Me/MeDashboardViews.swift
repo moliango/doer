@@ -739,6 +739,30 @@ final class MeActionRowView: UIControl {
         let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
         chevron.translatesAutoresizingMaskIntoConstraints = false
         chevron.tintColor = .tertiaryLabel
+        chevron.setContentHuggingPriority(.required, for: .horizontal)
+
+        let badgeLabel = UILabel()
+        badgeLabel.translatesAutoresizingMaskIntoConstraints = false
+        badgeLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        badgeLabel.textColor = .white
+        badgeLabel.textAlignment = .center
+        badgeLabel.backgroundColor = .systemRed
+        badgeLabel.layer.cornerRadius = 10
+        badgeLabel.layer.cornerCurve = .continuous
+        badgeLabel.clipsToBounds = true
+        badgeLabel.setContentHuggingPriority(.required, for: .horizontal)
+        if let text = DiscourseChatChannelsResponse.badgeText(for: row.badgeCount) {
+            badgeLabel.text = " \(text) "
+            badgeLabel.isHidden = false
+        } else {
+            badgeLabel.isHidden = true
+        }
+
+        let trailingStack = UIStackView(arrangedSubviews: [badgeLabel, chevron])
+        trailingStack.axis = .horizontal
+        trailingStack.alignment = .center
+        trailingStack.spacing = 8
+        trailingStack.translatesAutoresizingMaskIntoConstraints = false
 
         let divider = UIView()
         divider.translatesAutoresizingMaskIntoConstraints = false
@@ -748,7 +772,7 @@ final class MeActionRowView: UIControl {
         addSubview(contentView)
         contentView.addSubview(iconContainer)
         contentView.addSubview(textStack)
-        contentView.addSubview(chevron)
+        contentView.addSubview(trailingStack)
         contentView.addSubview(divider)
 
         NSLayoutConstraint.activate([
@@ -772,10 +796,13 @@ final class MeActionRowView: UIControl {
             textStack.leadingAnchor.constraint(equalTo: iconContainer.trailingAnchor, constant: 14),
             textStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
             textStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
-            textStack.trailingAnchor.constraint(equalTo: chevron.leadingAnchor, constant: -12),
+            textStack.trailingAnchor.constraint(equalTo: trailingStack.leadingAnchor, constant: -10),
 
-            chevron.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            chevron.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            trailingStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            trailingStack.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+
+            badgeLabel.heightAnchor.constraint(equalToConstant: 20),
+            badgeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 20),
             chevron.widthAnchor.constraint(equalToConstant: 10),
 
             divider.leadingAnchor.constraint(equalTo: textStack.leadingAnchor),
@@ -783,6 +810,7 @@ final class MeActionRowView: UIControl {
             divider.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
             divider.heightAnchor.constraint(equalToConstant: 0.5),
         ])
+        accessibilityValue = DiscourseChatChannelsResponse.badgeText(for: row.badgeCount)
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
