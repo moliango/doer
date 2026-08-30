@@ -1,5 +1,6 @@
 import UIKit
 import UniformTypeIdentifiers
+import PhotosUI
 
 enum AppearanceFontOption: Hashable {
     case system
@@ -27,6 +28,7 @@ final class AppearanceSettingsViewController: ObservableViewController {
     private let incomingTopicsFloatingRow = ReadingToggleRowView()
     private let miniProgramRow = ReadingToggleRowView()
     private let categoryDrawerSwipeRow = ReadingToggleRowView()
+    private let wallpaperRow = DataManagementActionRowView()
     private let xiaohongshuStaggeredCardsRow = ReadingToggleRowView()
     private let chatTopicDetailRow = ReadingToggleRowView()
     private let themeTaxonomyColorsRow = ReadingToggleRowView()
@@ -163,6 +165,15 @@ final class AppearanceSettingsViewController: ObservableViewController {
             accentColor: accentColor,
             backgroundColor: cardBackground
         )
+        wallpaperRow.configure(
+            title: String(localized: "settings.appearance.wallpaper", defaultValue: "自定义背景"),
+            subtitle: settings.customListBackgroundEnabled
+                ? String(localized: "settings.appearance.wallpaper.on", defaultValue: "已设置本地壁纸，点按可更换或清除")
+                : String(localized: "settings.appearance.wallpaper.off", defaultValue: "选择一张本地图片铺在列表和详情背后"),
+            symbolName: "photo",
+            tintColor: accentColor,
+            backgroundColor: cardBackground
+        )
         xiaohongshuStaggeredCardsRow.configure(
             title: String(localized: "settings.appearance.xiaohongshu_staggered_cards"),
             subtitle: String(localized: "settings.appearance.xiaohongshu_staggered_cards.subtitle"),
@@ -241,6 +252,7 @@ final class AppearanceSettingsViewController: ObservableViewController {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             updateUI()
         }
+        wallpaperRow.addTarget(self, action: #selector(wallpaperTapped), for: .touchUpInside)
 
         xiaohongshuStaggeredCardsRow.onValueChanged = { [weak self] isOn in
             guard let self else { return }
@@ -341,6 +353,7 @@ final class AppearanceSettingsViewController: ObservableViewController {
         homeBody.addArrangedSubview(incomingTopicsFloatingRow)
         homeBody.addArrangedSubview(miniProgramRow)
         homeBody.addArrangedSubview(categoryDrawerSwipeRow)
+        homeBody.addArrangedSubview(wallpaperRow)
         contentStack.addArrangedSubview(verticalSection(
             title: String(localized: "settings.appearance.home_display"),
             symbolName: "house",
@@ -548,6 +561,44 @@ final class AppearanceSettingsViewController: ObservableViewController {
 
     @objc private func languageTapped() {
         showLanguagePicker(sourceView: languageRow)
+    }
+
+    @objc private func wallpaperTapped() {
+        let sheet = UIAlertController(
+            title: String(localized: "settings.appearance.wallpaper", defaultValue: "自定义背景"),
+            message: nil,
+            preferredStyle: .actionSheet
+        )
+        sheet.addAction(UIAlertAction(
+            title: String(localized: "settings.appearance.wallpaper.choose", defaultValue: "选择图片"),
+            style: .default
+        ) { [weak self] _ in
+            self?.presentWallpaperPicker()
+        })
+        if settings.customListBackgroundEnabled {
+            sheet.addAction(UIAlertAction(
+                title: String(localized: "settings.appearance.wallpaper.clear", defaultValue: "清除背景"),
+                style: .destructive
+            ) { [weak self] _ in
+                ForumWallpaper.clear()
+                self?.updateUI()
+            })
+        }
+        sheet.addAction(UIAlertAction(title: String(localized: "common.cancel"), style: .cancel))
+        if let pop = sheet.popoverPresentationController {
+            pop.sourceView = wallpaperRow
+            pop.sourceRect = wallpaperRow.bounds
+        }
+        present(sheet, animated: true)
+    }
+
+    private func presentWallpaperPicker() {
+        var config = PHPickerConfiguration(photoLibrary: .shared())
+        config.filter = .images
+        config.selectionLimit = 1
+        let picker = PHPickerViewController(configuration: config)
+        picker.delegate = self
+        present(picker, animated: true)
     }
 
     @objc private func modeTapped(_ sender: AppearanceModeCardView) {
@@ -1498,6 +1549,42 @@ extension AppSettings.ThemeStyle {
                 UIColor(white: 0.72, alpha: 1),
                 UIColor(white: 0.45, alpha: 1),
             ]
+        }
+    }
+}
+
+extension AppearanceSettingsViewController: PHPickerViewControllerDelegate {
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: true)
+        guard let provider = results.first?.itemProvider,
+              provider.canLoadObject(ofClass: UIImage.self)
+        else { return }
+        provider.loadObject(ofClass: UIImage.self) { [weak self] object, error in
+            Task { @MainActor in
+                if let error {
+                    let alert = UIAlertController(
+                        title: String(localized: "settings.appearance.wallpaper", defaultValue: "自定义背景"),
+                        message: error.localizedDescription,
+                        preferredStyle: .alert
+                    )
+                    alert.addAction(UIAlertAction(title: String(localized: "common.ok"), style: .default))
+                    self?.present(alert, animated: true)
+                    return
+                }
+                guard let image = object as? UIImage else { return }
+                do {
+                    try ForumWallpaper.save(image)
+                    self?.updateUI()
+                } catch {
+                    let alert = UIAlertController(
+                        title: String(localized: "settings.appearance.wallpaper", defaultValue: "自定义背景"),
+                        message: error.localizedDescription,
+                        preferredStyle: .alert
+                    )
+                    alert.addAction(UIAlertAction(title: String(localized: "common.ok"), style: .default))
+                    self?.present(alert, animated: true)
+                }
+            }
         }
     }
 }
