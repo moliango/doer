@@ -286,6 +286,12 @@ final class DiscourseAuthInterceptor: RequestInterceptor {
         csrfLock.unlock()
     }
 
+    var hasCSRFToken: Bool {
+        csrfLock.lock()
+        defer { csrfLock.unlock() }
+        return csrfToken?.isEmpty == false
+    }
+
     func fetchCSRFToken(session: Session, completion: @escaping (String?) -> Void) {
         guard let url = URL(string: "\(baseURL)/session/csrf.json") else {
             completion(nil)

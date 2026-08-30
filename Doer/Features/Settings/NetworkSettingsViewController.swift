@@ -27,6 +27,7 @@ final class NetworkSettingsViewController: ObservableViewController {
     private let testRow = DataManagementActionRowView()
     private let moreRow = DataManagementActionRowView()
     private let cloudflareRow = DataManagementActionRowView()
+    private let healthRow = DataManagementActionRowView()
     private let avatarLoadingCard = AvatarLoadingProfileCardView()
     private var lastProbe: LightweightDohProxyService.ProbeResult?
     private var isProbing = false
@@ -60,6 +61,7 @@ final class NetworkSettingsViewController: ObservableViewController {
         cloudflareRow.addTarget(self, action: #selector(openCloudflare), for: .touchUpInside)
         testRow.addTarget(self, action: #selector(testDoH), for: .touchUpInside)
         moreRow.addTarget(self, action: #selector(openDoHDetail), for: .touchUpInside)
+        healthRow.addTarget(self, action: #selector(openHealth), for: .touchUpInside)
         avatarLoadingCard.onValueChanged = { [weak self] profile in
             guard let self else { return }
             settings.avatarLoadingProfile = profile
@@ -100,7 +102,7 @@ final class NetworkSettingsViewController: ObservableViewController {
             body: dohStack
         ))
 
-        let auxStack = UIStackView(arrangedSubviews: [cloudflareRow, avatarLoadingCard])
+        let auxStack = UIStackView(arrangedSubviews: [cloudflareRow, healthRow, avatarLoadingCard])
         auxStack.axis = .vertical
         auxStack.spacing = 12
         contentStack.addArrangedSubview(makeSection(
@@ -207,6 +209,17 @@ final class NetworkSettingsViewController: ObservableViewController {
             accentColor: accent,
             backgroundColor: card
         )
+
+        healthRow.configure(
+            title: String(localized: "network.health.title", defaultValue: "网络健康"),
+            subtitle: String(
+                localized: "network.health.subtitle",
+                defaultValue: "只读查看当前通道、盾态、CSRF 与并发"
+            ),
+            symbolName: "heart.text.square",
+            tintColor: accent,
+            backgroundColor: card
+        )
     }
 
     @objc private func openCloudflare() {
@@ -239,6 +252,14 @@ final class NetworkSettingsViewController: ObservableViewController {
 
     @objc private func openDoHDetail() {
         navigationController?.pushViewController(DohDetailSettingsViewController(), animated: true)
+    }
+
+    @objc private func openHealth() {
+        let api = ForumAPILookup.discourseAPI(from: self)
+        navigationController?.pushViewController(
+            NetworkHealthViewController(snapshot: .capture(api: api)),
+            animated: true
+        )
     }
 }
 
