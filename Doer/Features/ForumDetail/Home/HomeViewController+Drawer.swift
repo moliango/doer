@@ -184,7 +184,11 @@ extension HomeViewController {
             initialFloor: resumeFloor,
             lastReadPostNumber: mergedLastRead > 0 ? mergedLastRead : topic?.lastReadPostNumber
         )
-        navigationController?.pushViewController(detailVC, animated: true)
+        if usesSplitDetail {
+            showTopicInSplit(detailVC)
+        } else {
+            navigationController?.pushViewController(detailVC, animated: true)
+        }
     }
 
     /// First unread post number, or `nil` to open at the top.
@@ -195,7 +199,7 @@ extension HomeViewController {
         guard let topic else { return nil }
         let lastRead = mergedLastRead ?? topic.lastReadPostNumber ?? 0
         let highest = topic.highestPostNumber ?? topic.postsCount
-        guard lastRead > 0, highest > lastRead else { return nil }
+        guard lastRead > 1, highest > lastRead else { return nil }
         return min(lastRead + 1, highest)
     }
 }

@@ -2,7 +2,7 @@ import SDWebImage
 import UIKit
 
 /// Search card mirrors Home `TopicCell` geometry and badge chrome, with one extra blurb line.
-final class SearchResultCell: UITableViewCell {
+final class SearchResultCell: UITableViewCell, TopicPreviewTargetProviding {
     static let reuseIdentifier = "SearchResultCell"
 
     private var currentAvatarURL: URL?
@@ -269,6 +269,8 @@ final class SearchResultCell: UITableViewCell {
             AvatarImageLoader.setImage(on: avatarImageView, url: avatarURL)
         }
     }
+
+    var topicPreviewTargetView: UIView { cardView }
 
     override func prepareForReuse() {
         super.prepareForReuse()

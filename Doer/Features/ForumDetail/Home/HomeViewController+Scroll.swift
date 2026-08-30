@@ -176,10 +176,11 @@ extension HomeViewController: UITableViewDelegate {
         contextMenuConfigurationForRowAt indexPath: IndexPath,
         point: CGPoint
     ) -> UIContextMenuConfiguration? {
-        guard let topicId = dataSource.itemIdentifier(for: indexPath),
-              Self.xiaohongshuRowIndex(from: topicId) == nil,
-              let topic = viewModel.topic(id: topicId)
+        guard let itemId = dataSource.itemIdentifier(for: indexPath),
+              let resolved = resolveTopicPreview(at: indexPath, itemId: itemId, point: point)
         else { return nil }
+        let topic = resolved.topic
+        let topicId = topic.id
         let category = viewModel.category(for: topic)
         let username = AuthManager.shared.username(for: api.baseURL)
         let inQueue = TopicReadLaterStore.shared.contains(
@@ -217,8 +218,23 @@ extension HomeViewController: UITableViewDelegate {
             topic: topic,
             api: api,
             categoryName: viewModel.categoryDisplayName(for: category),
-            actions: [open, bookmark, later]
+            actions: [open, bookmark, later],
+            previewTargetView: resolved.targetView
         )
+    }
+
+    func tableView(
+        _ tableView: UITableView,
+        previewForHighlightingContextMenuWithConfiguration configuration: UIContextMenuConfiguration
+    ) -> UITargetedPreview? {
+        TopicPreviewMenu.targetedPreview(for: configuration)
+    }
+
+    func tableView(
+        _ tableView: UITableView,
+        previewForDismissingContextMenuWithConfiguration configuration: UIContextMenuConfiguration
+    ) -> UITargetedPreview? {
+        TopicPreviewMenu.targetedPreview(for: configuration)
     }
 
     func tableView(
@@ -226,10 +242,31 @@ extension HomeViewController: UITableViewDelegate {
         willPerformPreviewActionForMenuWith configuration: UIContextMenuConfiguration,
         animator: UIContextMenuInteractionCommitAnimating
     ) {
+        TopicPreviewMenu.applyCommitPopIfAllowed(to: animator)
         guard let number = configuration.identifier as? NSNumber else { return }
         animator.addCompletion { [weak self] in
             self?.openTopic(number.intValue)
         }
+    }
+
+    private func resolveTopicPreview(
+        at indexPath: IndexPath,
+        itemId: Int,
+        point: CGPoint
+    ) -> (topic: DiscourseTopicList.Topic, targetView: UIView?)? {
+        if Self.xiaohongshuRowIndex(from: itemId) != nil {
+            guard let cell = tableView.cellForRow(at: indexPath) as? XiaohongshuTopicGridCell else {
+                return nil
+            }
+            let local = tableView.convert(point, to: cell)
+            guard let hit = cell.topicPreviewHit(at: local),
+                  let topic = viewModel.topic(id: hit.topicId)
+            else { return nil }
+            return (topic, hit.targetView)
+        }
+        guard let topic = viewModel.topic(id: itemId) else { return nil }
+        let target = tableView.cellForRow(at: indexPath).map { TopicPreviewMenu.targetView(in: $0) }
+        return (topic, target)
     }
 
     func tableView(

@@ -72,7 +72,7 @@ final class TopicCell: UITableViewCell {
         iv.contentMode = .scaleAspectFill
         iv.clipsToBounds = true
         iv.layer.cornerRadius = 17
-        iv.backgroundColor = .secondarySystemFill
+        iv.backgroundColor = ImagePaintPolicy.waitingFillColor
         iv.translatesAutoresizingMaskIntoConstraints = false
         return iv
     }()
@@ -338,6 +338,10 @@ final class TopicCell: UITableViewCell {
 
 }
 
+extension TopicCell: TopicPreviewTargetProviding {
+    var topicPreviewTargetView: UIView { cardView }
+}
+
 final class XiaohongshuTopicGridCell: UITableViewCell {
     static let reuseIdentifier = "XiaohongshuTopicGridCell"
     static let estimatedHeight: CGFloat = 274
@@ -438,6 +442,26 @@ final class XiaohongshuTopicGridCell: UITableViewCell {
         guard let topicId = rightCard.topicId else { return }
         onTopicSelected?(topicId)
     }
+
+    func topicPreviewHit(at pointInCell: CGPoint) -> (topicId: Int, targetView: UIView)? {
+        let leftPoint = leftCard.convert(pointInCell, from: self)
+        if leftCard.bounds.contains(leftPoint), let topicId = leftCard.topicId {
+            return (topicId, leftCard)
+        }
+        let rightPoint = rightCard.convert(pointInCell, from: self)
+        if rightCard.bounds.contains(rightPoint), let topicId = rightCard.topicId {
+            return (topicId, rightCard)
+        }
+        guard let side = XiaohongshuPreviewSelection.side(at: pointInCell, in: bounds) else {
+            return nil
+        }
+        switch side {
+        case .left:
+            return leftCard.topicId.map { ($0, leftCard) }
+        case .right:
+            return rightCard.topicId.map { ($0, rightCard) }
+        }
+    }
 }
 
 private final class XiaohongshuTopicCardView: UIControl {
@@ -517,7 +541,7 @@ private final class XiaohongshuTopicCardView: UIControl {
         view.contentMode = .scaleAspectFill
         view.clipsToBounds = true
         view.layer.cornerRadius = 9
-        view.backgroundColor = .secondarySystemFill
+        view.backgroundColor = ImagePaintPolicy.waitingFillColor
         view.translatesAutoresizingMaskIntoConstraints = false
         return view
     }()

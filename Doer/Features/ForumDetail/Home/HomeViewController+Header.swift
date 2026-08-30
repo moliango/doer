@@ -131,7 +131,9 @@ extension HomeViewController {
         let themeStyle = AppSettings.shared.themeStyle
         let pageBackground = themeStyle.topicListBackgroundColor
         view.backgroundColor = pageBackground
-        tableView.backgroundColor = pageBackground
+        tableView.backgroundColor = ForumWallpaper.storedImage == nil ? pageBackground : .clear
+        tableView.isOpaque = ForumWallpaper.storedImage == nil
+        ForumWallpaper.apply(to: view)
         tableView.estimatedRowHeight = topicListLayout.estimatedRowHeight
         headerContainer.backgroundColor = pageBackground
         if var config = searchButton.configuration {

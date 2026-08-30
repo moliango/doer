@@ -669,8 +669,8 @@ final class ChatRoomViewController: ObservableViewController, UITableViewDataSou
             if who.isEmpty { return clipped }
             return "\(who): \(clipped)"
         }()
-        cell.onOpenImages = { [weak self] current, all in
-            self?.presentTopicImageGallery(currentURL: current, imageURLs: all)
+        cell.onOpenImages = { [weak self] current, all, source in
+            self?.presentTopicImageGallery(currentURL: current, imageURLs: all, sourceView: source)
         }
         cell.configure(
             message: msg,
@@ -769,7 +769,7 @@ private final class ChatBubbleCell: UITableViewCell {
     private var uploadsBottomToBubbleConstraint: NSLayoutConstraint?
     private var nameHeightConstraint: NSLayoutConstraint?
     private var bubbleTopToNameConstraint: NSLayoutConstraint?
-    var onOpenImages: ((URL, [URL]) -> Void)?
+    var onOpenImages: ((URL, [URL], UIView?) -> Void)?
     private var forumBaseURL = ""
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -1026,8 +1026,8 @@ private final class ChatBubbleCell: UITableViewCell {
                 maxWidth: maxWidth,
                 cloudflareBaseURL: forumBaseURL
             )
-            imageView.onTap = { [weak self] tapped in
-                self?.onOpenImages?(tapped, urls)
+            imageView.onTap = { [weak self, weak imageView] tapped in
+                self?.onOpenImages?(tapped, urls, imageView?.heroSourceView)
             }
             uploadsStack.addArrangedSubview(imageView)
         }
@@ -1064,6 +1064,7 @@ private final class ChatBubbleCell: UITableViewCell {
 
 private final class ChatBubbleImageView: UIView {
     var onTap: ((URL) -> Void)?
+    var heroSourceView: UIView { imageView }
     private let url: URL
     private let imageView = SDAnimatedImageView()
 

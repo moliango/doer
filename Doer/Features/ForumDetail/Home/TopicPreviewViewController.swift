@@ -168,14 +168,55 @@ final class TopicPreviewViewController: UIViewController {
     }
 }
 
+protocol TopicPreviewTargetProviding: AnyObject {
+    var topicPreviewTargetView: UIView { get }
+}
+
+/// Xiaohongshu dual-card hit-test: left/right by mid-X, and row identifier → unpinned pair.
+enum XiaohongshuPreviewSelection {
+    enum Side: Equatable {
+        case left
+        case right
+    }
+
+    static func side(at point: CGPoint, in bounds: CGRect) -> Side? {
+        guard bounds.width > 0 else { return nil }
+        if point.x < bounds.minX || point.x > bounds.maxX { return nil }
+        return point.x < bounds.midX ? .left : .right
+    }
+
+    static func unpinnedTopicIndex(rowIndex: Int, side: Side) -> Int {
+        rowIndex * 2 + (side == .right ? 1 : 0)
+    }
+
+    static func topic<T>(
+        in unpinnedTopics: [T],
+        rowIdentifier: Int,
+        side: Side
+    ) -> T? {
+        guard let rowIndex = XiaohongshuHomeTopicListLayout.rowIndex(from: rowIdentifier) else {
+            return nil
+        }
+        let index = unpinnedTopicIndex(rowIndex: rowIndex, side: side)
+        guard unpinnedTopics.indices.contains(index) else { return nil }
+        return unpinnedTopics[index]
+    }
+}
+
 enum TopicPreviewMenu {
+    private static let previewTargets = NSMapTable<UIContextMenuConfiguration, UIView>(
+        keyOptions: [.weakMemory, .objectPointerPersonality],
+        valueOptions: .weakMemory
+    )
+
     static func configuration(
         topic: DiscourseTopicList.Topic,
         api: DiscourseAPI,
         categoryName: String?,
-        actions: [UIMenuElement]
+        actions: [UIMenuElement],
+        previewTargetView: UIView? = nil
     ) -> UIContextMenuConfiguration {
-        UIContextMenuConfiguration(
+        let configuration = UIContextMenuConfiguration(
             identifier: NSNumber(value: topic.id),
             previewProvider: {
                 TopicPreviewViewController(api: api, topic: topic, categoryName: categoryName)
@@ -184,5 +225,37 @@ enum TopicPreviewMenu {
                 UIMenu(children: actions)
             }
         )
+        if let previewTargetView {
+            previewTargets.setObject(previewTargetView, forKey: configuration)
+        }
+        return configuration
+    }
+
+    static func targetView(in cell: UITableViewCell) -> UIView {
+        if let providing = cell as? TopicPreviewTargetProviding {
+            return providing.topicPreviewTargetView
+        }
+        return cell.contentView
+    }
+
+    static func targetedPreview(for configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
+        guard let view = previewTargets.object(forKey: configuration) else { return nil }
+        return makeTargetedPreview(for: view)
+    }
+
+    static func makeTargetedPreview(for view: UIView) -> UITargetedPreview {
+        let parameters = UIPreviewParameters()
+        parameters.backgroundColor = .clear
+        let radius = view.layer.cornerRadius
+        if radius > 0, !view.bounds.isEmpty {
+            parameters.visiblePath = UIBezierPath(roundedRect: view.bounds, cornerRadius: radius)
+        }
+        return UITargetedPreview(view: view, parameters: parameters)
+    }
+
+    /// Grow the preview into the pushed topic. Reduce Motion keeps the system default.
+    static func applyCommitPopIfAllowed(to animator: UIContextMenuInteractionCommitAnimating) {
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        animator.preferredCommitStyle = .pop
     }
 }

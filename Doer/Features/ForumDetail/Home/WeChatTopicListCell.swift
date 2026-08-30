@@ -15,7 +15,7 @@ final class WeChatTopicListCell: UITableViewCell {
     private let avatarImageView: UIImageView = {
         let iv = UIImageView()
         iv.contentMode = .scaleAspectFill
-        iv.backgroundColor = .secondarySystemFill
+        iv.backgroundColor = ImagePaintPolicy.waitingFillColor
         iv.translatesAutoresizingMaskIntoConstraints = false
         return iv
     }()

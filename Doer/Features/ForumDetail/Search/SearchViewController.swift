@@ -1178,6 +1178,83 @@ extension SearchViewController: UITableViewDelegate {
         }
     }
 
+    func tableView(
+        _ tableView: UITableView,
+        contextMenuConfigurationForRowAt indexPath: IndexPath,
+        point: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        guard selectedScope == .topics,
+              let itemId = dataSource.itemIdentifier(for: indexPath),
+              itemId.hasPrefix("post:"),
+              let postId = Int(itemId.dropFirst(5)),
+              let post = viewModel.searchResults.first(where: { $0.id == postId })
+        else { return nil }
+        let topic = viewModel.topic(for: post.topicId)
+        let previewTopic = post.makePreviewTopic(topic: topic, baseURL: api.baseURL)
+        let category = topic?.categoryId.flatMap { viewModel.categoriesById[$0] }
+        let cell = tableView.cellForRow(at: indexPath)
+        let open = UIAction(
+            title: String(localized: "topic.preview.open", defaultValue: "打开"),
+            image: UIImage(systemName: "arrow.up.right")
+        ) { [weak self] _ in
+            self?.openSearchPost(post)
+        }
+        return TopicPreviewMenu.configuration(
+            topic: previewTopic,
+            api: api,
+            categoryName: viewModel.categoryDisplayName(for: category),
+            actions: [open],
+            previewTargetView: cell.map { TopicPreviewMenu.targetView(in: $0) }
+        )
+    }
+
+    func tableView(
+        _ tableView: UITableView,
+        previewForHighlightingContextMenuWithConfiguration configuration: UIContextMenuConfiguration
+    ) -> UITargetedPreview? {
+        TopicPreviewMenu.targetedPreview(for: configuration)
+    }
+
+    func tableView(
+        _ tableView: UITableView,
+        previewForDismissingContextMenuWithConfiguration configuration: UIContextMenuConfiguration
+    ) -> UITargetedPreview? {
+        TopicPreviewMenu.targetedPreview(for: configuration)
+    }
+
+    func tableView(
+        _ tableView: UITableView,
+        willPerformPreviewActionForMenuWith configuration: UIContextMenuConfiguration,
+        animator: UIContextMenuInteractionCommitAnimating
+    ) {
+        TopicPreviewMenu.applyCommitPopIfAllowed(to: animator)
+        guard let number = configuration.identifier as? NSNumber else { return }
+        animator.addCompletion { [weak self] in
+            self?.openSearchTopic(id: number.intValue)
+        }
+    }
+
+    private func openSearchPost(_ post: DiscourseSearchResult.SearchPost) {
+        let detailVC = TopicDetailFactory.make(
+            api: api,
+            topicId: post.topicId,
+            initialFloor: post.postNumber,
+            initialPostId: post.id
+        )
+        navigationController?.pushViewController(detailVC, animated: true)
+    }
+
+    private func openSearchTopic(id topicId: Int) {
+        if let post = viewModel.searchResults.first(where: { $0.topicId == topicId }) {
+            openSearchPost(post)
+            return
+        }
+        navigationController?.pushViewController(
+            TopicDetailFactory.make(api: api, topicId: topicId),
+            animated: true
+        )
+    }
+
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
         guard selectedScope == .topics else { return }
         let totalRows = tableView.numberOfRows(inSection: 0)
@@ -1186,5 +1263,35 @@ extension SearchViewController: UITableViewDelegate {
                 await viewModel.loadMoreResults()
             }
         }
+    }
+}
+
+extension DiscourseSearchResult.SearchPost {
+    func makePreviewTopic(
+        topic: DiscourseSearchResult.SearchTopic?,
+        baseURL: String
+    ) -> DiscourseTopicList.Topic {
+        let rawTitle = topicTitleHeadline?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let titleSource: String = {
+            if !rawTitle.isEmpty {
+                return CookedContentPipeline.plainTextPreview(fromCooked: rawTitle, baseURL: baseURL)
+            }
+            if let fancy = topic?.fancyTitle, !fancy.isEmpty { return fancy }
+            if let title = topic?.title, !title.isEmpty { return title }
+            return String(localized: "search.untitled", defaultValue: "无标题")
+        }()
+        let excerpt = CookedContentPipeline.plainTextPreview(fromCooked: blurb ?? "", baseURL: baseURL)
+        return .makeRecommendation(
+            id: topicId,
+            title: titleSource,
+            fancyTitle: topic?.fancyTitle,
+            postsCount: topic?.postsCount ?? max(postNumber, 1),
+            replyCount: max((topic?.postsCount ?? 1) - 1, 0),
+            categoryId: topic?.categoryId,
+            createdAt: createdAt ?? "",
+            lastPostedAt: nil,
+            tags: topic?.tags ?? [],
+            excerpt: excerpt.isEmpty ? nil : excerpt
+        )
     }
 }

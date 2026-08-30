@@ -358,3 +358,7 @@ final class CompactPinnedTopicCell: UITableViewCell {
         return URL(string: trimmed, relativeTo: base)?.absoluteURL
     }
 }
+
+extension CompactPinnedTopicCell: TopicPreviewTargetProviding {
+    var topicPreviewTargetView: UIView { cardView }
+}

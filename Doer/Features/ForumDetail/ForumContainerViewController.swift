@@ -9,6 +9,7 @@ final class ForumContainerViewController: UIViewController, AuthGating {
 
     private(set) var forum: ForumInstance
     private let api: DiscourseAPI
+    var forumAPI: DiscourseAPI { api }
     private let notificationCoordinator: ForumNotificationCoordinator
     private let authManager = AuthManager.shared
     private let showsDismissButton: Bool
@@ -128,7 +129,7 @@ final class ForumContainerViewController: UIViewController, AuthGating {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = DoerLaunchAppearance.backgroundColor
+        view.backgroundColor = AppSettings.shared.themeStyle.topicListBackgroundColor
         DohDebugLog.record("forum container viewDidLoad base=\(forum.baseURL)", subsystem: "Launch")
 
         authManager.restoreAuthState(for: forum)
@@ -399,6 +400,16 @@ final class ForumContainerViewController: UIViewController, AuthGating {
     }
 
     private func setupLaunchLoadingOverlay() {
+        if !isHomeInitialContentReady {
+            // Home hydrates list cache in viewDidLoad. Load it before covering the UI
+            // so a cached cold start can skip the brand overlay entirely.
+            _ = tabBarViewController?.selectedViewController?.view
+        }
+        if isHomeInitialContentReady {
+            launchOverlayDismissed = true
+            return
+        }
+
         launchOverlayStartedAt = Date()
         launchLoadingView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(launchLoadingView)
@@ -461,8 +472,13 @@ final class ForumContainerViewController: UIViewController, AuthGating {
     private func dismissLaunchLoadingOverlayRespectingMinimumDuration() {
         guard !launchOverlayDismissed else { return }
         guard launchLoadingView.superview != nil else { return }
-        let elapsed = Date().timeIntervalSince(launchOverlayStartedAt)
-        let delay = max(0, Self.launchOverlayMinimumDuration - elapsed)
+        let delay: TimeInterval
+        if isHomeInitialContentReady {
+            delay = 0
+        } else {
+            let elapsed = Date().timeIntervalSince(launchOverlayStartedAt)
+            delay = max(0, Self.launchOverlayMinimumDuration - elapsed)
+        }
 
         launchOverlayDismissed = true
         launchOverlayFallbackTask?.cancel()
@@ -473,8 +489,6 @@ final class ForumContainerViewController: UIViewController, AuthGating {
             DohDebugLog.record("launch overlay dismissing", subsystem: "Launch")
             self.launchLoadingView.dismiss {
                 self.launchLoadingView.removeFromSuperview()
-                // Leave cream launch color only while the splash covers the UI.
-                self.view.backgroundColor = AppSettings.shared.themeStyle.topicListBackgroundColor
                 self.presentPendingAppUpdateIfPossible()
             }
         }

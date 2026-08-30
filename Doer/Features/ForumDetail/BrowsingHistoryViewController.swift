@@ -494,12 +494,28 @@ extension BrowsingHistoryViewController: UITableViewDelegate {
             let detailVC = TopicDetailFactory.make(api: self.api, topicId: topicId)
             self.navigationController?.pushViewController(detailVC, animated: true)
         }
+        let previewTarget = tableView.cellForRow(at: indexPath).map { TopicPreviewMenu.targetView(in: $0) }
         return TopicPreviewMenu.configuration(
             topic: topic,
             api: api,
             categoryName: viewModel.categoryDisplayName(for: viewModel.category(for: topic)),
-            actions: [open]
+            actions: [open],
+            previewTargetView: previewTarget
         )
+    }
+
+    func tableView(
+        _ tableView: UITableView,
+        previewForHighlightingContextMenuWithConfiguration configuration: UIContextMenuConfiguration
+    ) -> UITargetedPreview? {
+        TopicPreviewMenu.targetedPreview(for: configuration)
+    }
+
+    func tableView(
+        _ tableView: UITableView,
+        previewForDismissingContextMenuWithConfiguration configuration: UIContextMenuConfiguration
+    ) -> UITargetedPreview? {
+        TopicPreviewMenu.targetedPreview(for: configuration)
     }
 
     func tableView(
@@ -507,6 +523,7 @@ extension BrowsingHistoryViewController: UITableViewDelegate {
         willPerformPreviewActionForMenuWith configuration: UIContextMenuConfiguration,
         animator: UIContextMenuInteractionCommitAnimating
     ) {
+        TopicPreviewMenu.applyCommitPopIfAllowed(to: animator)
         guard let number = configuration.identifier as? NSNumber else { return }
         animator.addCompletion { [weak self] in
             guard let self else { return }

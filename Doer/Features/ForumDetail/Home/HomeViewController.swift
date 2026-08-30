@@ -51,6 +51,11 @@ final class HomeViewController: ObservableViewController {
     /// Drawer mode: filter leaves room for chrome on the same row.
     var filterTrailingToChromeConstraint: NSLayoutConstraint?
     var floatingActionButtonBottomConstraint: NSLayoutConstraint?
+    var tableTrailingToSuperviewConstraint: NSLayoutConstraint?
+    var tableTrailingToSplitConstraint: NSLayoutConstraint?
+    var splitDetailContainer: UIView?
+    var splitDetailNavigation: UINavigationController?
+    var splitDetailLeadingConstraint: NSLayoutConstraint?
     var isSearchRowCollapsed = false
     /// Cancels in-flight morph so a stale expand completion cannot hide the
     /// compact search icon while the row is still collapsed (fast flick bug).
@@ -761,10 +766,11 @@ final class HomeViewController: ObservableViewController {
         let skeletonTopConstraint = loadingSkeletonView.topAnchor.constraint(equalTo: headerContainer.bottomAnchor, constant: Self.baseTableTopSpacing)
         loadingSkeletonTopConstraint = skeletonTopConstraint
 
+        tableTrailingToSuperviewConstraint = tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         NSLayoutConstraint.activate([
             tableView.topAnchor.constraint(equalTo: view.topAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableTrailingToSuperviewConstraint!,
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
             skeletonTopConstraint,
@@ -862,6 +868,7 @@ final class HomeViewController: ObservableViewController {
         if !viewModel.topics.isEmpty {
             isInitialTopicLoadPending = false
             updateUI()
+            postInitialContentReadyIfNeeded()
         }
         reloadTopics()
         DohDebugLog.record(
@@ -871,6 +878,7 @@ final class HomeViewController: ObservableViewController {
         Task {
             await api.loadOrFetchEmojiMap()
         }
+        setupSplitDetailIfNeeded()
     }
 
     @MainActor deinit {
@@ -946,6 +954,14 @@ final class HomeViewController: ObservableViewController {
         updateIncomingTopicsHeader()
         startIncomingTopicsPolling()
         reloadAfterBecomingVisibleIfNeeded()
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard previousTraitCollection?.horizontalSizeClass != traitCollection.horizontalSizeClass
+                || previousTraitCollection?.userInterfaceIdiom != traitCollection.userInterfaceIdiom
+        else { return }
+        applySplitLayout()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
