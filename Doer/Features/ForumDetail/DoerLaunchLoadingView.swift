@@ -9,12 +9,16 @@ final class DoerLaunchLoadingView: UIView {
     private let dotsStackView = UIStackView()
     private let versionLabel = UILabel()
     private var dotViews: [UIView] = []
-    private let linuxDoTextColor = UIColor(red: 0.095, green: 0.096, blue: 0.105, alpha: 1)
-    private let linuxDoYellow = UIColor(red: 1.0, green: 0.68, blue: 0.02, alpha: 1)
+    private let loadingDotColor = UIColor { trait in
+        if trait.userInterfaceStyle == .dark {
+            return UIColor(red: 1.0, green: 0.78, blue: 0.18, alpha: 1)
+        }
+        return UIColor(red: 1.0, green: 0.68, blue: 0.02, alpha: 1)
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = DoerLaunchAppearance.backgroundColor
+        backgroundColor = AppSettings.shared.themeStyle.topicListBackgroundColor
         isOpaque = true
         isUserInteractionEnabled = true
         isAccessibilityElement = true
@@ -29,64 +33,56 @@ final class DoerLaunchLoadingView: UIView {
     }
 
     func applyThemeStyle() {
-        backgroundColor = DoerLaunchAppearance.backgroundColor
-        brandLabel.textColor = linuxDoTextColor
+        backgroundColor = AppSettings.shared.themeStyle.topicListBackgroundColor
+        brandLabel.textColor = .label
         brandLabel.font = AppSettings.shared.appInterfaceFont(
             ofSize: 30,
             weight: .heavy,
             fallback: .systemFont(ofSize: 30, weight: .heavy)
         )
         valuesLabel.text = String(localized: "launch.loading.values")
-        valuesLabel.textColor = linuxDoTextColor.withAlphaComponent(0.72)
+        valuesLabel.textColor = .secondaryLabel
         valuesLabel.font = AppSettings.shared.appInterfaceFont(
             ofSize: 15,
             weight: .semibold,
             fallback: .systemFont(ofSize: 15, weight: .semibold)
         )
         loadingLabel.text = String(localized: "launch.loading.subtitle")
-        loadingLabel.textColor = linuxDoTextColor.withAlphaComponent(0.62)
+        loadingLabel.textColor = .secondaryLabel
         loadingLabel.font = AppSettings.shared.appInterfaceFont(
             ofSize: 12,
             weight: .medium,
             fallback: .systemFont(ofSize: 12, weight: .medium)
         )
         versionLabel.text = AppVersion.installed().marketingDisplayString
-        versionLabel.textColor = linuxDoTextColor.withAlphaComponent(0.45)
+        versionLabel.textColor = .tertiaryLabel
         versionLabel.font = AppSettings.shared.appInterfaceFont(
             ofSize: 12,
             weight: .medium,
             fallback: .systemFont(ofSize: 12, weight: .medium)
         )
-        dotViews.forEach { $0.backgroundColor = linuxDoYellow }
+        dotViews.forEach { $0.backgroundColor = loadingDotColor }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else {
+            stopLoadingDots()
+            stopLogoBreathing()
+            return
+        }
+        startLoadingDots()
+        startLogoBreathing()
     }
 
     func startPresenting() {
-        guard self.window != nil else { return }
         alpha = 1
-        rootStackView.alpha = 0
-        rootStackView.transform = CGAffineTransform(translationX: 0, y: 16).scaledBy(x: 0.96, y: 0.96)
-        valuesLabel.alpha = 0
-        valuesLabel.transform = CGAffineTransform(translationX: 0, y: 8)
-        loadingLabel.alpha = 0
-        dotsStackView.alpha = 0
-
-        let heroAnimator = DoerMotion.propertyAnimator(
-            duration: DoerMotion.emphasized,
-            timingParameters: DoerMotion.softSpring
-        )
-        heroAnimator.addAnimations {
-            self.rootStackView.alpha = 1
-            self.rootStackView.transform = .identity
-        }
-        heroAnimator.startAnimation()
-        DoerMotion.animate(duration: DoerMotion.standard, delay: 0.12) {
-            self.valuesLabel.alpha = 1
-            self.valuesLabel.transform = .identity
-        }
-        DoerMotion.animate(duration: DoerMotion.standard, delay: 0.22) {
-            self.loadingLabel.alpha = 1
-            self.dotsStackView.alpha = 1
-        }
+        rootStackView.alpha = 1
+        rootStackView.transform = .identity
+        valuesLabel.alpha = 1
+        valuesLabel.transform = .identity
+        loadingLabel.alpha = 1
+        dotsStackView.alpha = 1
         startLoadingDots()
         startLogoBreathing()
     }

@@ -124,4 +124,60 @@ final class LaunchConfigurationTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: assetURL.path))
         XCTAssertNotNil(UIColor(named: DoerLaunchAppearance.backgroundColorName))
     }
+
+    func testLaunchBackgroundColorAssetIncludesDarkAppearance() throws {
+        let projectRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let assetURL = projectRoot.appendingPathComponent(
+            "Doer/Assets.xcassets/LaunchBackground.colorset/Contents.json"
+        )
+        let data = try Data(contentsOf: assetURL)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let colors = try XCTUnwrap(root["colors"] as? [[String: Any]])
+
+        var darkRed: CGFloat?
+        var darkGreen: CGFloat?
+        var darkBlue: CGFloat?
+        for color in colors {
+            let appearances = color["appearances"] as? [[String: Any]] ?? []
+            let isDark = appearances.contains {
+                $0["appearance"] as? String == "luminosity" && $0["value"] as? String == "dark"
+            }
+            guard isDark,
+                  let payload = color["color"] as? [String: Any],
+                  let components = payload["components"] as? [String: String]
+            else { continue }
+            darkRed = CGFloat(Double(components["red"] ?? "") ?? 1)
+            darkGreen = CGFloat(Double(components["green"] ?? "") ?? 1)
+            darkBlue = CGFloat(Double(components["blue"] ?? "") ?? 1)
+        }
+
+        XCTAssertNotNil(darkRed, "LaunchBackground.colorset must include a dark appearance")
+        let luminance = 0.2126 * (darkRed ?? 1) + 0.7152 * (darkGreen ?? 1) + 0.0722 * (darkBlue ?? 1)
+        XCTAssertLessThan(luminance, 0.08, "Dark launch background must be near black, not cream")
+    }
+
+    func testLaunchBackgroundResolvesDarkerThanCreamInDarkTraitCollection() throws {
+        let named = try XCTUnwrap(UIColor(named: DoerLaunchAppearance.backgroundColorName))
+        let dark = named.resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark))
+        let light = named.resolvedColor(with: UITraitCollection(userInterfaceStyle: .light))
+
+        var darkRed: CGFloat = 0
+        var darkGreen: CGFloat = 0
+        var darkBlue: CGFloat = 0
+        var darkAlpha: CGFloat = 0
+        XCTAssertTrue(dark.getRed(&darkRed, green: &darkGreen, blue: &darkBlue, alpha: &darkAlpha))
+        let darkLuminance = 0.2126 * darkRed + 0.7152 * darkGreen + 0.0722 * darkBlue
+        XCTAssertLessThan(darkLuminance, 0.2, "Dark LaunchBackground must not be cream")
+
+        var lightRed: CGFloat = 0
+        var lightGreen: CGFloat = 0
+        var lightBlue: CGFloat = 0
+        var lightAlpha: CGFloat = 0
+        XCTAssertTrue(light.getRed(&lightRed, green: &lightGreen, blue: &lightBlue, alpha: &lightAlpha))
+        let lightLuminance = 0.2126 * lightRed + 0.7152 * lightGreen + 0.0722 * lightBlue
+        XCTAssertGreaterThan(lightLuminance, 0.85)
+        XCTAssertGreaterThan(lightLuminance - darkLuminance, 0.5)
+    }
 }

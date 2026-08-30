@@ -14,8 +14,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
         let window = UIWindow(windowScene: windowScene)
         self.window = window
-        window.backgroundColor = DoerLaunchAppearance.backgroundColor
         AppSettings.shared.applyAppearance()
+        window.backgroundColor = AppSettings.shared.themeStyle.topicListBackgroundColor
         let defaultForum = DatabaseManager.shared.defaultForum()
         DohDebugLog.record(
             "scene willConnect forum=\(defaultForum.baseURL) theme=\(AppSettings.shared.themeStyle.rawValue)",
