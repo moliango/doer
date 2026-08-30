@@ -617,7 +617,7 @@ struct DiscourseTopicDetail: Decodable {
         let username: String
         let avatarTemplate: String?
         let createdAt: String
-        let cooked: String
+        var cooked: String
         let raw: String?
         let canEdit: Bool
         let yours: Bool

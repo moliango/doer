@@ -61,6 +61,8 @@ enum TopicDetailHTMLParsing {
              .table,
              .divider:
             return true
+        case .policy(let policy):
+            return policy.content.allSatisfy(canRenderNatively)
         case .blockquote(let blocks), .spoiler(let blocks):
             return blocks.allSatisfy(canRenderNatively)
         case .discourseQuote(_, _, _, _, _, _, _, let content):
@@ -169,6 +171,15 @@ enum TopicDetailPollResultMerger {
                     row.map { mergeInitialPollState(blocks: $0, pollResults: pollResults, pollsVotes: pollsVotes) }
                 }
             )
+        case .policy(let policy):
+            return .policy(PolicyBlock(
+                acceptLabel: policy.acceptLabel,
+                revokeLabel: policy.revokeLabel,
+                version: policy.version,
+                groups: policy.groups,
+                accepted: policy.accepted,
+                content: mergeInitialPollState(blocks: policy.content, pollResults: pollResults, pollsVotes: pollsVotes)
+            ))
         case .paragraph,
              .heading,
              .codeBlock,
@@ -236,6 +247,15 @@ enum TopicDetailPollResultMerger {
                     row.map { merge(blocks: $0, voteResponse: voteResponse, submittedOptionIds: submittedOptionIds) }
                 }
             )
+        case .policy(let policy):
+            return .policy(PolicyBlock(
+                acceptLabel: policy.acceptLabel,
+                revokeLabel: policy.revokeLabel,
+                version: policy.version,
+                groups: policy.groups,
+                accepted: policy.accepted,
+                content: merge(blocks: policy.content, voteResponse: voteResponse, submittedOptionIds: submittedOptionIds)
+            ))
         case .paragraph,
              .heading,
              .codeBlock,
@@ -455,6 +475,59 @@ enum TopicDetailPaginationPolicy {
     }
 }
 
+enum TopicDetailFirstPaintPolicy {
+    /// Default / floor-1 entry paints the OP via `posts#by_number` before TopicView.
+    /// Notification / deep-link jumps to another floor must not flash post 1 first.
+    static func shouldEarlyPaintOpeningPost(initialFloor: Int?, initialPostId: Int?) -> Bool {
+        if let initialFloor {
+            return initialFloor <= 1
+        }
+        return initialPostId == nil
+    }
+
+    static func displayPosts(
+        topicPosts: [DiscourseTopicDetail.Post]?,
+        firstPost: DiscourseTopicDetail.Post?
+    ) -> [DiscourseTopicDetail.Post] {
+        if let topicPosts {
+            return topicPosts
+        }
+        return [firstPost].compactMap { $0 }
+    }
+
+    static func postsNeedingParse(
+        _ posts: [DiscourseTopicDetail.Post],
+        alreadyParsedIds: Set<Int>
+    ) -> [DiscourseTopicDetail.Post] {
+        posts.filter { !alreadyParsedIds.contains($0.id) }
+    }
+
+    static func shouldSkipParse(postId: Int, alreadyParsedIds: Set<Int>) -> Bool {
+        alreadyParsedIds.contains(postId)
+    }
+
+    static func postsWithEarlyOpeningCooked(
+        streamPosts: [DiscourseTopicDetail.Post],
+        earlyPost: DiscourseTopicDetail.Post
+    ) -> [DiscourseTopicDetail.Post] {
+        streamPosts.map { post in
+            guard post.id == earlyPost.id else { return post }
+            var updated = post
+            updated.cooked = earlyPost.cooked
+            return updated
+        }
+    }
+
+    /// TopicView failed after by_number already painted the OP — keep it and surface a remainder error.
+    static func shouldPreserveEarlyOpeningPost(
+        isReady: Bool,
+        hasFirstPost: Bool,
+        hasTopic: Bool
+    ) -> Bool {
+        isReady && hasFirstPost && !hasTopic
+    }
+}
+
 enum TopicDetailSnapshotPolicy {
     enum Decision: Equatable {
         case skip
@@ -482,7 +555,8 @@ final class TopicDetailViewModel: DoerObservableObject {
     var isReady = false
     var isLoadingMore = false
     var isLoadingEarlier = false
-    var isFilteringByOP = false
+    /// Client-side username filter (OP-only is the same field set to `opUsername`).
+    private(set) var filterUsername: String?
     /// Client-side: only root posts (no reply_to_post_number) + OP. FluxDo `filter_top_level_replies`.
     var isFilteringTopLevel = false
     /// FluxDo nested tree mode (uses `/n/topic` API, not flat reordering).
@@ -523,17 +597,29 @@ final class TopicDetailViewModel: DoerObservableObject {
     private var categoryMetadataTask: Task<Void, Never>?
     private var categoryMetadataCategoryId: Int?
     private var loadedCategoryMetadataId: Int?
+    /// Last layout width from `loadTopic` / jump; used by username-filter reload.
+    private var lastContainerWidth: CGFloat = 0
+    /// Set when `filterUsername` changes before first-paint `isReady`.
+    private var pendingUsernameFilterReload = false
+    private var usernameFilterReloadTask: Task<Void, Never>?
 
     init(api: DiscourseAPI) {
         self.api = api
     }
 
     var posts: [DiscourseTopicDetail.Post] {
-        topic?.postStream.posts ?? []
+        TopicDetailFirstPaintPolicy.displayPosts(
+            topicPosts: topic?.postStream.posts,
+            firstPost: firstPost
+        )
     }
 
     var opUsername: String? {
         firstPost?.username ?? posts.first?.username
+    }
+
+    var isFilteringByOP: Bool {
+        TopicUsernameFilterPolicy.isFilteringOP(filterUsername: filterUsername, opUsername: opUsername)
     }
 
     var visiblePosts: [DiscourseTopicDetail.Post] {
@@ -556,8 +642,8 @@ final class TopicDetailViewModel: DoerObservableObject {
     /// Flat stream posts (filters applied). Used as the safe fallback under nested mode.
     private func flatVisiblePosts() -> [DiscourseTopicDetail.Post] {
         var base = posts.filter { !Self.isSystemActionPost($0) }
-        if isFilteringByOP, let op = opUsername {
-            base = base.filter { $0.username == op }
+        if let filterUsername {
+            base = base.filter { TopicUsernameFilterPolicy.postMatches(username: $0.username, filterUsername: filterUsername) }
         }
         if isFilteringTopLevel {
             // Keep topic starter + posts that are not replies to another post.
@@ -666,7 +752,11 @@ final class TopicDetailViewModel: DoerObservableObject {
     }
 
     var hasActiveTopicFilter: Bool {
-        isFilteringByOP || isFilteringTopLevel || isNestedViewEnabled
+        filterUsername != nil || isFilteringTopLevel || isNestedViewEnabled
+    }
+
+    func isFiltering(username: String) -> Bool {
+        TopicUsernameFilterPolicy.usernamesMatch(filterUsername, username)
     }
 
     var canLoadMore: Bool {
@@ -711,22 +801,46 @@ final class TopicDetailViewModel: DoerObservableObject {
     }
 
     func setFilteringByOP(_ enabled: Bool) {
-        guard isFilteringByOP != enabled else { return }
-        isFilteringByOP = enabled
-        // FluxDo: content filters are mutually exclusive with each other and exit tree view.
         if enabled {
+            guard let op = opUsername else { return }
+            setFilterUsername(op)
+        } else if isFilteringByOP {
+            setFilterUsername(nil)
+        }
+    }
+
+    func toggleFilterUsername(_ username: String) {
+        setFilterUsername(TopicUsernameFilterPolicy.toggling(current: filterUsername, requested: username))
+    }
+
+    func setFilterUsername(_ username: String?) {
+        let next = TopicUsernameFilterPolicy.normalized(username)
+        guard !TopicUsernameFilterPolicy.usernamesMatch(filterUsername, next) else { return }
+        filterUsername = next
+        // FluxDo: content filters are mutually exclusive with each other and exit tree view.
+        if next != nil {
             isFilteringTopLevel = false
             isNestedViewEnabled = false
         }
         notifyChanged()
+        requestUsernameFilterReload()
     }
 
     func setFilteringTopLevel(_ enabled: Bool) {
         guard isFilteringTopLevel != enabled else { return }
         isFilteringTopLevel = enabled
         if enabled {
-            isFilteringByOP = false
+            let needsUnfilteredReload = filterUsername != nil || pendingUsernameFilterReload
+            filterUsername = nil
             isNestedViewEnabled = false
+            notifyChanged()
+            if TopicUsernameFilterPolicy.shouldFetchUnfilteredTopicView(
+                hadUsernameFilter: needsUnfilteredReload,
+                showingNested: false
+            ) {
+                requestUsernameFilterReload()
+            }
+            return
         }
         notifyChanged()
     }
@@ -735,7 +849,11 @@ final class TopicDetailViewModel: DoerObservableObject {
         guard isNestedViewEnabled != enabled else { return }
         isNestedViewEnabled = enabled
         if enabled {
-            isFilteringByOP = false
+            if filterUsername != nil {
+                usernameFilterReloadTask?.cancel()
+                pendingUsernameFilterReload = true
+            }
+            filterUsername = nil
             isFilteringTopLevel = false
             let topicId = topic?.id ?? nestedTopicId
             if let topicId {
@@ -749,6 +867,11 @@ final class TopicDetailViewModel: DoerObservableObject {
             // clearNestedState already sets isNestedViewEnabled = false; keep flag consistent
             // when called from setNestedViewEnabled(false) after the flag was set above.
             notifyChanged()
+            if pendingUsernameFilterReload {
+                Task { [weak self] in
+                    await self?.flushPendingUsernameFilterReload()
+                }
+            }
         }
     }
 
@@ -764,15 +887,84 @@ final class TopicDetailViewModel: DoerObservableObject {
     }
 
     func clearTopicFilters() {
-        let changed = isFilteringByOP || isFilteringTopLevel || isNestedViewEnabled
-        isFilteringByOP = false
+        let hadUsernameFilter = filterUsername != nil
+        let changed = hadUsernameFilter || isFilteringTopLevel || isNestedViewEnabled
+        filterUsername = nil
         isFilteringTopLevel = false
         if isNestedViewEnabled {
             setNestedViewEnabled(false)
+            if hadUsernameFilter {
+                requestUsernameFilterReload()
+            }
             return
         }
         guard changed else { return }
         notifyChanged()
+        if hadUsernameFilter {
+            requestUsernameFilterReload()
+        }
+    }
+
+    /// Reload TopicView with the current `filterUsername` (`nil` clears `username_filters`).
+    /// Does not run on first-paint `loadTopic`; waits until `isReady`.
+    func reloadForUsernameFilter() async {
+        pendingUsernameFilterReload = false
+        guard isReady, !isNestedViewEnabled, let topicId = topic?.id else {
+            pendingUsernameFilterReload = true
+            return
+        }
+        cancelForwardWindowPrefetch()
+        parseGeneration += 1
+        let generation = parseGeneration
+        isLoading = true
+        errorMessage = nil
+        notifyChanged()
+
+        do {
+            let detail = try await api.fetchTopic(
+                id: topicId,
+                trackVisit: false,
+                usernameFilters: filterUsername
+            )
+            guard generation == parseGeneration else { return }
+            if isNestedViewEnabled {
+                pendingUsernameFilterReload = true
+                isLoading = false
+                notifyChanged()
+                return
+            }
+            let applied = await applyLoadedTopicDetail(
+                detail,
+                containerWidth: lastContainerWidth,
+                generation: generation
+            )
+            if !applied {
+                return
+            }
+        } catch {
+            guard generation == parseGeneration else { return }
+            errorMessage = error.localizedDescription
+            isLoading = false
+            notifyChanged()
+        }
+    }
+
+    private func requestUsernameFilterReload() {
+        if isReady, topic?.id != nil, !isNestedViewEnabled {
+            pendingUsernameFilterReload = false
+            usernameFilterReloadTask?.cancel()
+            usernameFilterReloadTask = Task { [weak self] in
+                await self?.reloadForUsernameFilter()
+            }
+        } else {
+            pendingUsernameFilterReload = true
+        }
+    }
+
+    private func flushPendingUsernameFilterReload() async {
+        guard pendingUsernameFilterReload else { return }
+        pendingUsernameFilterReload = false
+        await reloadForUsernameFilter()
     }
 
     // MARK: - Nested tree (FluxDo /n/topic)
@@ -993,19 +1185,47 @@ final class TopicDetailViewModel: DoerObservableObject {
         _ = await parseAndStore(posts: missing, generation: parseGeneration)
     }
 
-    func loadTopic(id: Int, containerWidth: CGFloat) async {
+    func loadTopic(
+        id: Int,
+        containerWidth: CGFloat,
+        initialFloor: Int? = nil,
+        initialPostId: Int? = nil
+    ) async {
+        lastContainerWidth = containerWidth
+        if filterUsername != nil {
+            pendingUsernameFilterReload = true
+        }
         let firstPaintStartedAt = Date()
         DohDebugLog.record("open topic=\(id)", subsystem: "topic.firstpaint")
-        await loadTopic(id: id, containerWidth: containerWidth, retryingExplicitCancellation: false)
+        let shouldEarlyPaint = TopicDetailFirstPaintPolicy.shouldEarlyPaintOpeningPost(
+            initialFloor: initialFloor,
+            initialPostId: initialPostId
+        )
+        await loadTopic(
+            id: id,
+            containerWidth: containerWidth,
+            retryingExplicitCancellation: false,
+            shouldEarlyPaintOpeningPost: shouldEarlyPaint
+        )
         if isReady {
             let ms = Int(Date().timeIntervalSince(firstPaintStartedAt) * 1000)
             DohDebugLog.record("ready topic=\(id) elapsedMs=\(ms)", subsystem: "topic.firstpaint")
+            await flushPendingUsernameFilterReload()
         }
     }
 
     /// After Cloudflare verification: keep a recovery message, retry fetch with backoff,
     /// and avoid wiping the page into a permanent CF error while grace is active.
-    func recoverAfterCloudflare(id: Int, containerWidth: CGFloat) async {
+    func recoverAfterCloudflare(
+        id: Int,
+        containerWidth: CGFloat,
+        initialFloor: Int? = nil,
+        initialPostId: Int? = nil
+    ) async {
+        lastContainerWidth = containerWidth
+        if filterUsername != nil {
+            pendingUsernameFilterReload = true
+        }
         isLoading = true
         errorMessage = String(
             localized: "cloudflare.recovering",
@@ -1019,26 +1239,31 @@ final class TopicDetailViewModel: DoerObservableObject {
             1_200_000_000,
             2_000_000_000,
         ]
+        let shouldEarlyPaint = TopicDetailFirstPaintPolicy.shouldEarlyPaintOpeningPost(
+            initialFloor: initialFloor,
+            initialPostId: initialPostId
+        )
         var lastError: String?
         for index in delays.indices {
             if index > 0 {
                 try? await Task.sleep(nanoseconds: delays[index - 1])
             }
-            do {
-                let detail = try await api.fetchTopic(id: id, trackVisit: true)
-                parseGeneration += 1
-                let generation = parseGeneration
-                guard await applyLoadedTopicDetail(
-                    detail,
-                    containerWidth: containerWidth,
-                    generation: generation
-                ) else {
-                    isLoading = false
-                    notifyChanged()
-                    return
-                }
+            parseGeneration += 1
+            let generation = parseGeneration
+            let result = await fetchAndApplyTopic(
+                id: id,
+                containerWidth: containerWidth,
+                generation: generation,
+                shouldEarlyPaintOpeningPost: shouldEarlyPaint
+            )
+            switch result {
+            case .topicApplied:
+                await flushPendingUsernameFilterReload()
                 return
-            } catch {
+            case .generationSuperseded:
+                // A newer loadTopic/jump owns isLoading — do not clear it here.
+                return
+            case .topicFailed(let error):
                 lastError = error.localizedDescription
                 let isCF = lastError?.localizedCaseInsensitiveContains("cloudflare") == true
                 if isCF, index < delays.count - 1 {
@@ -1063,13 +1288,20 @@ final class TopicDetailViewModel: DoerObservableObject {
         notifyChanged()
     }
 
-    private func loadTopic(id: Int, containerWidth: CGFloat, retryingExplicitCancellation: Bool) async {
+    private func loadTopic(
+        id: Int,
+        containerWidth: CGFloat,
+        retryingExplicitCancellation: Bool,
+        shouldEarlyPaintOpeningPost: Bool
+    ) async {
         cancelForwardWindowPrefetch()
+        usernameFilterReloadTask?.cancel()
         isLoading = true
         isReady = false
         errorMessage = nil
         parsedBlocks = [:]
         unsupportedPostIds = []
+        firstPost = nil
         parseGeneration += 1
         let generation = parseGeneration
         notifyChanged()
@@ -1081,19 +1313,19 @@ final class TopicDetailViewModel: DoerObservableObject {
             return
         }
 
-        do {
-            let detail = try await api.fetchTopic(id: id, trackVisit: true)
-            guard await applyLoadedTopicDetail(
-                detail,
-                containerWidth: containerWidth,
-                generation: generation
-            ) else {
-                isLoading = false
-                notifyChanged()
-                return
-            }
+        let result = await fetchAndApplyTopic(
+            id: id,
+            containerWidth: containerWidth,
+            generation: generation,
+            shouldEarlyPaintOpeningPost: shouldEarlyPaintOpeningPost
+        )
+        switch result {
+        case .topicApplied:
             return
-        } catch {
+        case .generationSuperseded:
+            // A newer load/jump owns isLoading — do not clear it here.
+            return
+        case .topicFailed(let error):
             #if DEBUG
             print("[TopicDetail] Load failed: \(error)")
             #endif
@@ -1115,7 +1347,23 @@ final class TopicDetailViewModel: DoerObservableObject {
                     notifyChanged()
                     return
                 }
-                await loadTopic(id: id, containerWidth: containerWidth, retryingExplicitCancellation: true)
+                await loadTopic(
+                    id: id,
+                    containerWidth: containerWidth,
+                    retryingExplicitCancellation: true,
+                    shouldEarlyPaintOpeningPost: shouldEarlyPaintOpeningPost
+                )
+                return
+            }
+            if generation == parseGeneration,
+               TopicDetailFirstPaintPolicy.shouldPreserveEarlyOpeningPost(
+                isReady: isReady,
+                hasFirstPost: firstPost != nil,
+                hasTopic: topic != nil
+               ) {
+                errorMessage = error.localizedDescription
+                isLoading = false
+                notifyChanged()
                 return
             }
             errorMessage = error.localizedDescription
@@ -1123,6 +1371,110 @@ final class TopicDetailViewModel: DoerObservableObject {
 
         isLoading = false
         notifyChanged()
+    }
+
+    private enum TopicDetailLoadResult {
+        case topicApplied
+        case generationSuperseded
+        case topicFailed(Error)
+    }
+
+    /// Parallel `posts#by_number` (OP) + TopicView. Shared by first open and CF recovery.
+    private func fetchAndApplyTopic(
+        id: Int,
+        containerWidth: CGFloat,
+        generation: Int,
+        shouldEarlyPaintOpeningPost: Bool
+    ) async -> TopicDetailLoadResult {
+        let startedAt = Date()
+        let earlyTask: Task<Void, Never>?
+        if shouldEarlyPaintOpeningPost {
+            earlyTask = Task { [weak self] in
+                await self?.fetchAndApplyEarlyOpeningPost(
+                    topicId: id,
+                    generation: generation,
+                    startedAt: startedAt
+                )
+            }
+        } else {
+            earlyTask = nil
+        }
+
+        do {
+            let detail = try await api.fetchTopic(id: id, trackVisit: true)
+            earlyTask?.cancel()
+            let ms = Int(Date().timeIntervalSince(startedAt) * 1000)
+            DohDebugLog.record("topicview topic=\(id) elapsedMs=\(ms)", subsystem: "topic.firstpaint")
+            let applied = await applyLoadedTopicDetail(
+                detail,
+                containerWidth: containerWidth,
+                generation: generation
+            )
+            return applied ? .topicApplied : .generationSuperseded
+        } catch {
+            if let earlyTask {
+                await earlyTask.value
+            }
+            return .topicFailed(error)
+        }
+    }
+
+    private func fetchAndApplyEarlyOpeningPost(
+        topicId: Int,
+        generation: Int,
+        startedAt: Date
+    ) async {
+        guard generation == parseGeneration, !Task.isCancelled else { return }
+        do {
+            let post = try await api.fetchPostByNumber(topicId: topicId, postNumber: 1)
+            guard generation == parseGeneration, !Task.isCancelled else { return }
+            let ms = Int(Date().timeIntervalSince(startedAt) * 1000)
+            DohDebugLog.record("by_number topic=\(topicId) elapsedMs=\(ms)", subsystem: "topic.firstpaint")
+            await applyEarlyOpeningPost(post, generation: generation)
+        } catch {
+            DohDebugLog.record("by_number topic=\(topicId) failed", subsystem: "topic.firstpaint")
+        }
+    }
+
+    private func applyEarlyOpeningPost(
+        _ post: DiscourseTopicDetail.Post,
+        generation: Int
+    ) async {
+        guard generation == parseGeneration, !Task.isCancelled else { return }
+        firstPost = post
+        if topic != nil {
+            overlayEarlyCookedOnLoadedTopic(earlyPost: post)
+            // TopicView already painted this OP — skip a late reparse/notify that would
+            // churn the snapshot after a jump/resume that already ran.
+            if parsedBlocks[post.id] != nil { return }
+            guard await parseAndStore(posts: [post], generation: generation) else { return }
+            guard generation == parseGeneration, !Task.isCancelled else { return }
+            notifyChanged()
+            return
+        }
+        guard await parseAndStore(posts: [post], generation: generation) else { return }
+        guard generation == parseGeneration, !Task.isCancelled else { return }
+        if topic != nil {
+            overlayEarlyCookedOnLoadedTopic(earlyPost: post)
+            notifyChanged()
+            return
+        }
+        isReady = true
+        isLoading = false
+        errorMessage = nil
+        notifyChanged()
+    }
+
+    private func overlayEarlyCookedOnLoadedTopic(earlyPost: DiscourseTopicDetail.Post) {
+        guard var detail = topic else { return }
+        detail.postStream.posts = TopicDetailFirstPaintPolicy.postsWithEarlyOpeningCooked(
+            streamPosts: detail.postStream.posts,
+            earlyPost: earlyPost
+        )
+        topic = detail
+        if let updated = detail.postStream.posts.first(where: { $0.id == earlyPost.id }) {
+            firstPost = updated
+        }
     }
 
     /// Apply a freshly fetched topic: parse ~1–2 screens, paint, then fill the rest off the first-paint path.
@@ -1133,6 +1485,14 @@ final class TopicDetailViewModel: DoerObservableObject {
         containerWidth: CGFloat,
         generation: Int
     ) async -> Bool {
+        guard generation == parseGeneration else { return false }
+        var detail = detail
+        if let early = firstPost {
+            detail.postStream.posts = TopicDetailFirstPaintPolicy.postsWithEarlyOpeningCooked(
+                streamPosts: detail.postStream.posts,
+                earlyPost: early
+            )
+        }
         topic = detail
         startLoadingCategoryMetadata(for: detail.categoryId)
 
@@ -1160,7 +1520,16 @@ final class TopicDetailViewModel: DoerObservableObject {
             return true
         }
 
-        guard await parseAndStore(posts: split.immediate, generation: generation) else {
+        let alreadyParsedIds = Set(parsedBlocks.keys)
+        let toParse = TopicDetailFirstPaintPolicy.postsNeedingParse(
+            split.immediate,
+            alreadyParsedIds: alreadyParsedIds
+        )
+        if !toParse.isEmpty {
+            guard await parseAndStore(posts: toParse, generation: generation) else {
+                return false
+            }
+        } else if generation != parseGeneration {
             return false
         }
 
@@ -1478,6 +1847,8 @@ final class TopicDetailViewModel: DoerObservableObject {
     }
 
     func jumpToFloor(_ floor: Int, containerWidth: CGFloat) async {
+        guard floor > 1 else { return }
+        lastContainerWidth = containerWidth
         guard !allPostIds.isEmpty, let topicId = topic?.id else { return }
 
         let targetIndex = max(0, min(floor - 1, allPostIds.count - 1))
@@ -1728,7 +2099,7 @@ final class TopicDetailViewModel: DoerObservableObject {
         }
 
         do {
-            let detail = try await api.fetchTopic(id: topicId, trackVisit: false)
+            let detail = try await api.fetchTopic(id: topicId, trackVisit: false, usernameFilters: filterUsername)
             let newStream = detail.postStream.stream ?? detail.postStream.posts.map(\.id)
             guard !newStream.isEmpty else {
                 notifyChanged()

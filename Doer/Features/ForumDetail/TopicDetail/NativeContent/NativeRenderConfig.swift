@@ -341,6 +341,7 @@ enum NativeContentRenderer {
         HeadingRenderer.self,
         DividerRenderer.self,
         PollRenderer.self,
+        PolicyRenderer.self,
         ListRenderer.self,
         BlockquoteRenderer.self,
         ImageRenderer.self,
@@ -422,6 +423,18 @@ enum PollRenderer: BlockRenderer {
     static func render(_ block: ContentBlock, config: NativeRenderConfig, delegate: PostCellDelegate?) -> UIView {
         guard case .poll(let poll) = block else { return UIView() }
         return PollBlockView(poll: poll, config: config, delegate: delegate)
+    }
+}
+
+enum PolicyRenderer: BlockRenderer {
+    static func canRender(_ block: ContentBlock) -> Bool {
+        if case .policy = block { return true }
+        return false
+    }
+
+    static func render(_ block: ContentBlock, config: NativeRenderConfig, delegate: PostCellDelegate?) -> UIView {
+        guard case .policy(let policy) = block else { return UIView() }
+        return PolicyBlockView(policy: policy, config: config, delegate: delegate)
     }
 }
 
@@ -915,6 +928,87 @@ private final class PollPieChartView: UIView {
             width: hole,
             height: hole
         ))
+    }
+}
+
+private final class PolicyBlockView: UIView {
+    private let policy: PolicyBlock
+    private let config: NativeRenderConfig
+    private weak var delegate: PostCellDelegate?
+    private var accepted: Bool
+    private let actionButton = UIButton(type: .system)
+    private let statusLabel = UILabel()
+
+    init(policy: PolicyBlock, config: NativeRenderConfig, delegate: PostCellDelegate?) {
+        self.policy = policy
+        self.config = config
+        self.delegate = delegate
+        self.accepted = policy.accepted
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        layer.cornerRadius = 12
+        layer.cornerCurve = .continuous
+        layer.borderWidth = 1
+        layer.borderColor = UIColor.separator.cgColor
+        backgroundColor = UIColor.secondarySystemFill.withAlphaComponent(0.35)
+
+        let bodyStack = UIStackView()
+        bodyStack.translatesAutoresizingMaskIntoConstraints = false
+        bodyStack.axis = .vertical
+        bodyStack.spacing = 8
+        let inner = NativeContentRenderer.renderBlocks(
+            policy.content,
+            config: config,
+            delegate: delegate,
+            promoteCallouts: false
+        )
+        inner.forEach { bodyStack.addArrangedSubview($0) }
+
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.font = config.baseFont.withRelativeSize(-1)
+        statusLabel.textColor = .secondaryLabel
+        actionButton.translatesAutoresizingMaskIntoConstraints = false
+        actionButton.addTarget(self, action: #selector(toggleTapped), for: .touchUpInside)
+        refreshChrome()
+
+        let footer = UIStackView(arrangedSubviews: [actionButton, statusLabel])
+        footer.translatesAutoresizingMaskIntoConstraints = false
+        footer.axis = .horizontal
+        footer.spacing = 12
+        footer.alignment = .center
+
+        addSubview(bodyStack)
+        addSubview(footer)
+        NSLayoutConstraint.activate([
+            bodyStack.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            bodyStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            bodyStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            footer.topAnchor.constraint(equalTo: bodyStack.bottomAnchor, constant: 10),
+            footer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            footer.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            footer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func refreshChrome() {
+        let title = accepted ? policy.revokeLabel : policy.acceptLabel
+        actionButton.setTitle(title, for: .normal)
+        statusLabel.text = accepted
+            ? String(localized: "post.policy.accepted", defaultValue: "已接受")
+            : String(localized: "post.policy.pending", defaultValue: "尚未接受")
+    }
+
+    @objc private func toggleTapped() {
+        guard let postId = config.postId else { return }
+        let next = !accepted
+        accepted = next
+        refreshChrome()
+        delegate?.postCell(didTogglePolicyAccepted: next, forPostId: postId)
     }
 }
 

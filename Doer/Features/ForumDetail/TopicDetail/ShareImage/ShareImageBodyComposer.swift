@@ -517,6 +517,18 @@ enum ShareImageBodyComposer {
                 segments.append(.text(options))
             }
 
+        case .policy(let policy):
+            for child in policy.content {
+                append(
+                    block: child,
+                    baseURL: baseURL,
+                    config: config,
+                    into: &segments,
+                    imageCount: &imageCount,
+                    omittedImages: &omittedImages
+                )
+            }
+
         case .rawHTML(let html):
             // Re-parse raw HTML islands through the shared pipeline so we never
             // dump markdown/source leftovers onto the card.

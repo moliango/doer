@@ -40,8 +40,9 @@ extension ChatTopicDetailViewController {
             isBookmarked: topic?.bookmarked == true,
             isInReadLater: isReadLater,
             notificationLevel: topic?.notificationLevel,
-            hasActiveFilter: viewModel.isFilteringByOP || viewModel.isFilteringTopLevel || viewModel.isNestedViewEnabled,
+            hasActiveFilter: viewModel.hasActiveTopicFilter,
             isFilteringByOP: viewModel.isFilteringByOP,
+            filterUsername: viewModel.filterUsername,
             isFilteringTopLevel: viewModel.isFilteringTopLevel,
             isNestedViewEnabled: viewModel.isNestedViewEnabled,
             canEdit: topic?.canEdit == true,
@@ -98,7 +99,11 @@ extension ChatTopicDetailViewController {
         case .openTimeline:
             showTimelineSheet()
         case .jumpToFloor(let floor):
-            Task { await jumpToFloor(floor) }
+            if floor <= 1 {
+                scrollToContentTop(animated: true)
+            } else {
+                Task { await jumpToFloor(floor) }
+            }
         case .readingSettings:
             navigationController?.pushViewController(ReadingSettingsViewController(), animated: true)
         case .tableOfContents:
@@ -115,6 +120,9 @@ extension ChatTopicDetailViewController {
             performAssign(mode: .clear)
         case .filterOP:
             viewModel.setFilteringByOP(!viewModel.isFilteringByOP)
+            configureTopicActions()
+        case .filterUser(let username):
+            viewModel.toggleFilterUsername(username)
             configureTopicActions()
         case .filterTopLevel:
             viewModel.setFilteringTopLevel(!viewModel.isFilteringTopLevel)
@@ -281,6 +289,13 @@ extension ChatTopicDetailViewController {
             self.applySnapshot()
             self.configureTopicActions()
         }
+        if let username = viewModel.filterUsername, !viewModel.isFilteringByOP {
+            add(String(format: String(localized: "topic.filter_user", defaultValue: "只看 %@"), username), on: true) { [weak self] in
+                self?.viewModel.toggleFilterUsername(username)
+                self?.applySnapshot()
+                self?.configureTopicActions()
+            }
+        }
         add(String(localized: "topic.filter_top_level", defaultValue: "只看顶层"), on: viewModel.isFilteringTopLevel) { [weak self] in
             guard let self else { return }
             self.viewModel.setFilteringTopLevel(!self.viewModel.isFilteringTopLevel)
@@ -355,67 +370,7 @@ extension ChatTopicDetailViewController {
     // MARK: - Actions
 
     @objc private func searchTopicTapped() {
-        let alert = UIAlertController(
-            title: String(localized: "topic.search", defaultValue: "搜索话题"),
-            message: nil,
-            preferredStyle: .alert
-        )
-        alert.addTextField { field in
-            field.placeholder = String(localized: "topic.search.placeholder", defaultValue: "输入关键词")
-            field.returnKeyType = .search
-        }
-        alert.addAction(UIAlertAction(title: String(localized: "common.cancel"), style: .cancel))
-        alert.addAction(UIAlertAction(title: String(localized: "topic.search", defaultValue: "搜索话题"), style: .default) { [weak self, weak alert] _ in
-            guard let self,
-                  let query = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !query.isEmpty
-            else { return }
-            self.performTopicSearch(query)
-        })
-        present(alert, animated: true)
-    }
-
-    private func performTopicSearch(_ query: String) {
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let result = try await api.searchTopic(topicId: self.topicId, term: query)
-                let posts = (result.posts ?? []).filter { $0.topicId == self.topicId }
-                presentSearchResults(posts, query: query)
-            } catch {
-                showPostActionError(error)
-            }
-        }
-    }
-
-    private func presentSearchResults(_ posts: [DiscourseSearchResult.SearchPost], query: String) {
-        guard !posts.isEmpty else {
-            let alert = UIAlertController(
-                title: String(localized: "topic.search", defaultValue: "搜索话题"),
-                message: String(localized: "topic.search.empty", defaultValue: "没有找到匹配内容"),
-                preferredStyle: .alert
-            )
-            alert.addAction(UIAlertAction(title: String(localized: "common.done"), style: .default))
-            present(alert, animated: true)
-            return
-        }
-        let sheet = UIAlertController(title: query, message: nil, preferredStyle: .actionSheet)
-        for post in posts.prefix(12) {
-            let excerptSource = post.blurb ?? post.username
-            let excerpt = CookedContentPipeline.plainTextPreview(fromCooked: excerptSource)
-            let title = "#\(post.postNumber)  \(String((excerpt.isEmpty ? post.username : excerpt).prefix(70)))"
-            sheet.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in
-                guard let self else { return }
-                if post.id > 0 {
-                    self.scrollToPostId(post.id)
-                } else {
-                    Task { await self.jumpToFloor(post.postNumber) }
-                }
-            })
-        }
-        sheet.addAction(UIAlertAction(title: String(localized: "common.cancel"), style: .cancel))
-        sheet.popoverPresentationController?.barButtonItem = navigationItem.rightBarButtonItems?.last
-        present(sheet, animated: true)
+        findController.show()
     }
 
     private func shareTopicLink() {

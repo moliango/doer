@@ -227,6 +227,15 @@ enum TableRenderer: BlockRenderer {
                 return .blockquote(blocks: scaleImagesForCell(inner))
             case .details(let summary, let inner):
                 return .details(summary: summary, content: scaleImagesForCell(inner))
+            case .policy(let policy):
+                return .policy(PolicyBlock(
+                    acceptLabel: policy.acceptLabel,
+                    revokeLabel: policy.revokeLabel,
+                    version: policy.version,
+                    groups: policy.groups,
+                    accepted: policy.accepted,
+                    content: scaleImagesForCell(policy.content)
+                ))
             default:
                 return block
             }

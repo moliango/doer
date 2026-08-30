@@ -56,6 +56,7 @@ final class TopicDetailViewController: ObservableViewController {
     var liveSyncTimer: Timer?
     var appForegroundObserver: NSObjectProtocol?
     let tocController = TopicTocController()
+    let findController = TopicFindBarController()
     var pluginScope: PluginScope {
         PluginScope(
             baseURL: api.baseURL,
@@ -111,7 +112,7 @@ final class TopicDetailViewController: ObservableViewController {
         if self.viewModel.isNestedViewEnabled {
             // Keep Discourse post_number so jump / share links stay stable in tree mode.
             floorNumber = post.postNumber
-        } else if self.viewModel.isFilteringByOP {
+        } else if self.viewModel.filterUsername != nil {
             floorNumber = (visiblePosts.firstIndex(where: { $0.id == itemId }) ?? 0) + 1
         } else {
             // Use stream-based floor number when not filtering
@@ -216,11 +217,20 @@ final class TopicDetailViewController: ObservableViewController {
         return label
     }()
 
-    let footerSpinner: UIActivityIndicatorView = {
+        let footerSpinner: UIActivityIndicatorView = {
         let spinner = UIActivityIndicatorView(style: .medium)
         spinner.hidesWhenStopped = true
         spinner.frame = CGRect(x: 0, y: 0, width: 0, height: 44)
         return spinner
+    }()
+
+    let remainderErrorFooter: UILabel = {
+        let label = UILabel()
+        label.font = .systemFont(ofSize: 13)
+        label.textColor = .secondaryLabel
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        return label
     }()
 
     lazy var topLoadingBar: UIView = {
@@ -427,6 +437,7 @@ final class TopicDetailViewController: ObservableViewController {
 
         bottomBar.delegate = self
         tableView.tableFooterView = footerSpinner
+        installTopicFindBar()
 
         NSLayoutConstraint.activate([
             tableView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -472,12 +483,19 @@ final class TopicDetailViewController: ObservableViewController {
             if preferNestedOnLoad {
                 viewModel.setNestedViewEnabled(true)
             }
-            await viewModel.loadTopic(id: topicId, containerWidth: view.bounds.width)
+            await viewModel.loadTopic(
+                id: topicId,
+                containerWidth: view.bounds.width,
+                initialFloor: initialFloor,
+                initialPostId: initialPostId
+            )
             // Nested load can fail silently (plugin missing / empty tree / unparsed nodes).
             // Always abandon tree when nothing can paint — do not require errorMessage.
             if viewModel.isNestedViewEnabled {
                 viewModel.abandonNestedIfUnrenderable()
-                viewModel.errorMessage = nil
+                if viewModel.topic != nil {
+                    viewModel.errorMessage = nil
+                }
             }
             // Prefer list hint; fall back to detail payload when present.
             if let detailLastRead = viewModel.topic?.lastReadPostNumber {
@@ -491,14 +509,23 @@ final class TopicDetailViewController: ObservableViewController {
             if localHighest > 0 {
                 lastReadPostNumber = max(lastReadPostNumber ?? 0, localHighest)
             }
-            // Notification / deep-link targets are Discourse post_number or post id —
-            // never treat them as raw stream indices (deleted posts create gaps).
-            if let initialPostId {
-                jumpToPostId(initialPostId)
-            } else if let initialFloor {
-                await jumpToPostNumber(initialFloor)
-            } else if let resume = resumeUnreadFloor() {
-                jumpToFloor(resume)
+            let openingPostId = viewModel.posts.first(where: { $0.postNumber == 1 })?.id
+            switch TopicDetailOpenAnchor.resolve(
+                initialPostId: initialPostId,
+                initialFloor: initialFloor,
+                lastRead: lastReadPostNumber ?? 0,
+                totalFloors: viewModel.totalFloors,
+                pinLatestWhenFullyRead: false,
+                openingPostId: openingPostId
+            ) {
+            case .postId(let postId):
+                if isOpeningPostId(postId) { break }
+                jumpToPostId(postId)
+            case .floor(let floor):
+                if floor <= 1 { break }
+                await jumpToPostNumber(floor)
+            case .top:
+                break
             }
         }
         Task {
@@ -553,6 +580,7 @@ final class TopicDetailViewController: ObservableViewController {
         view.bringSubviewToFront(tocFabButton)
         view.bringSubviewToFront(bottomBar)
         view.bringSubviewToFront(newRepliesBanner)
+        view.bringSubviewToFront(findController.bar)
         // Reserve bottom space for the centered floor control and the floating reply affordance.
         let bottomInset: CGFloat = 56 + 12 + 32
         if tableView.contentInset.bottom != bottomInset {
@@ -566,6 +594,10 @@ final class TopicDetailViewController: ObservableViewController {
         // Also wait out Diffable mutation / self-sizing beginUpdates to avoid
         // `_visibleRows` vs `_visibleCells` length traps.
         if !isApplyingPostSnapshot, !tableView.doer_isMutatingData, let floor = pendingScrollToFloor {
+            if floor <= 1, shouldStayAtOpeningPost(floor: floor) {
+                pendingScrollToFloor = nil
+                return
+            }
             let streamIndex = floor - 1
             guard streamIndex >= 0, streamIndex < viewModel.allPostIds.count else {
                 pendingScrollToFloor = nil
@@ -630,18 +662,26 @@ final class TopicDetailViewController: ObservableViewController {
         }
         loadingSkeletonView.setSkeletonActive(showsInitialLoading, animated: view.window != nil)
 
-        // Error
-        if let error = viewModel.errorMessage {
+        // Centered empty-state only when nothing is on screen. After first-paint OP,
+        // remainder failures go to the table footer so they do not cover the post.
+        if let error = viewModel.errorMessage, !viewModel.isReady {
             errorLabel.text = error
             errorLabel.isHidden = false
         } else {
             errorLabel.isHidden = true
         }
 
-        // Footer: load-more spinner or suggested topics
+        // Footer: load-more spinner, remainder-load error, or suggested topics
         if viewModel.isLoadingMore {
             tableView.tableFooterView = footerSpinner
             footerSpinner.startAnimating()
+        } else if TopicDetailFirstPaintPolicy.shouldPreserveEarlyOpeningPost(
+            isReady: viewModel.isReady,
+            hasFirstPost: viewModel.posts.first != nil,
+            hasTopic: viewModel.topic != nil
+        ), let error = viewModel.errorMessage {
+            footerSpinner.stopAnimating()
+            applyRemainderLoadErrorFooter(error)
         } else {
             footerSpinner.stopAnimating()
             updateSuggestedTopicsFooter()
@@ -694,7 +734,10 @@ final class TopicDetailViewController: ObservableViewController {
             // If nested filtering still produced nothing but flat stream is parsed, force flat ids.
             if readyIds.isEmpty {
                 seen.removeAll(keepingCapacity: true)
-                let flatFallback = viewModel.posts.compactMap { post -> Int? in
+                if viewModel.isNestedViewEnabled {
+                    viewModel.forceDisableNested(notify: false)
+                }
+                let flatFallback = viewModel.visiblePosts.compactMap { post -> Int? in
                     guard viewModel.parsedBlocks[post.id] != nil,
                           seen.insert(post.id).inserted else { return nil }
                     return post.id
@@ -749,9 +792,13 @@ final class TopicDetailViewController: ObservableViewController {
 
             // After a jump, defer scroll to next layout pass so cells are sized
             if let targetFloor = viewModel.jumpTargetFloor {
-                viewModel.jumpTargetFloor = nil
-                pendingScrollToFloor = targetFloor
-                tableView.setNeedsLayout()
+                if targetFloor <= 1 {
+                    viewModel.jumpTargetFloor = nil
+                } else {
+                    viewModel.jumpTargetFloor = nil
+                    pendingScrollToFloor = targetFloor
+                    tableView.setNeedsLayout()
+                }
             }
             if shouldAnimateInitialContent {
                 animateInitialContentTransition()
@@ -765,7 +812,10 @@ final class TopicDetailViewController: ObservableViewController {
         let accentColor = AppSettings.shared.themeStyle.accentColor
         let themeStyle = AppSettings.shared.themeStyle
         view.backgroundColor = themeStyle.topicListBackgroundColor
-        tableView.backgroundColor = themeStyle.topicListBackgroundColor
+        tableView.backgroundColor = ForumWallpaper.storedImage == nil
+            ? themeStyle.topicListBackgroundColor
+            : .clear
+        ForumWallpaper.apply(to: view)
         topLoadingBar.backgroundColor = themeStyle.topicCardBackgroundColor
         loadingSkeletonView.applyThemeStyle()
         var replyConfig = floatingReplyButton.configuration ?? UIButton.Configuration.filled()
@@ -779,6 +829,23 @@ final class TopicDetailViewController: ObservableViewController {
         tocFabButton.configuration = tocConfig
     }
 
+    func applyRemainderLoadErrorFooter(_ text: String) {
+        remainderErrorFooter.text = text
+        remainderErrorFooter.font = TopicDetailTypography.chromeFont(.error, weight: .regular)
+        let width = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
+        let fittingWidth = max(0, width - 32)
+        let size = remainderErrorFooter.sizeThatFits(
+            CGSize(width: fittingWidth, height: .greatestFiniteMagnitude)
+        )
+        remainderErrorFooter.frame = CGRect(
+            x: 0,
+            y: 0,
+            width: width,
+            height: max(44, size.height + 24)
+        )
+        tableView.tableFooterView = remainderErrorFooter
+    }
+
     func updateSuggestedTopicsFooter() {
     let relatedTopics = viewModel.topic?.relatedTopics ?? []
     let suggestedTopics = viewModel.topic?.suggestedTopics ?? []
@@ -789,7 +856,8 @@ final class TopicDetailViewController: ObservableViewController {
         && AppSettings.shared.showSuggestedTopics
     guard show else {
         if tableView.tableFooterView === suggestedTopicsFooter
-            || tableView.tableFooterView === footerSpinner {
+            || tableView.tableFooterView === footerSpinner
+            || tableView.tableFooterView === remainderErrorFooter {
             tableView.tableFooterView = UIView(
                 frame: CGRect(x: 0, y: 0, width: 0, height: CGFloat.leastNormalMagnitude)
             )
@@ -957,7 +1025,9 @@ final class TopicDetailViewController: ObservableViewController {
                 self.api.resetSession()
                 await self.viewModel.recoverAfterCloudflare(
                     id: self.topicId,
-                    containerWidth: self.view.bounds.width
+                    containerWidth: self.view.bounds.width,
+                    initialFloor: self.initialFloor,
+                    initialPostId: self.initialPostId
                 )
             }
 

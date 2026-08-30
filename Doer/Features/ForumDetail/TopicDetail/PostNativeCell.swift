@@ -131,7 +131,7 @@ final class PostNativeCell: UITableViewCell {
         iv.layer.cornerRadius = 16
         iv.layer.borderWidth = 1.0 / UIScreen.main.scale
         iv.layer.borderColor = UIColor.separator.withAlphaComponent(0.45).cgColor
-        iv.backgroundColor = .secondarySystemFill
+        iv.backgroundColor = ImagePaintPolicy.waitingFillColor
         iv.translatesAutoresizingMaskIntoConstraints = false
         return iv
     }()

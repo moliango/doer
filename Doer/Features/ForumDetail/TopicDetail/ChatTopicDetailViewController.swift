@@ -50,6 +50,7 @@ class ChatTopicDetailViewController: ObservableViewController {
     private var isLoadingEarlier = false
     private var postRowHeightCache: [Int: CGFloat] = [:]
     lazy var readingTracker = TopicReadingTracker(api: api)
+    let findController = TopicFindBarController()
 
     private lazy var tableView: UITableView = {
         let tv = TopicDetailPopAwareTableView(frame: .zero, style: .plain)
@@ -160,6 +161,15 @@ class ChatTopicDetailViewController: ObservableViewController {
         return label
     }()
 
+    private let remainderErrorFooter: UILabel = {
+        let label = UILabel()
+        label.font = .systemFont(ofSize: 13)
+        label.textColor = .secondaryLabel
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        return label
+    }()
+
     private var chatInputBarBottomConstraint: NSLayoutConstraint?
 
     /// Bottom chat input from the subclass hook; plus still opens the full composer.
@@ -224,7 +234,8 @@ class ChatTopicDetailViewController: ObservableViewController {
 
     private func updateCanvasBackground(to canvas: UIColor) {
         view.backgroundColor = canvas
-        tableView.backgroundColor = canvas
+        tableView.backgroundColor = ForumWallpaper.storedImage == nil ? canvas : .clear
+        ForumWallpaper.apply(to: view, dim: 0.55)
         if let bg = tableView.backgroundView {
             bg.backgroundColor = canvas
         } else {
@@ -289,11 +300,12 @@ class ChatTopicDetailViewController: ObservableViewController {
         view.addSubview(chatInputBar)
         view.addSubview(loadingSkeletonView)
         view.addSubview(errorLabel)
+        installTopicFindBar()
 
         let inputBottom = chatInputBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         chatInputBarBottomConstraint = inputBottom
         NSLayoutConstraint.activate([
-            tableView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            tableView.topAnchor.constraint(equalTo: findController.bar.bottomAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: chatInputBar.topAnchor),
@@ -302,7 +314,7 @@ class ChatTopicDetailViewController: ObservableViewController {
             chatInputBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             inputBottom,
 
-            loadingSkeletonView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            loadingSkeletonView.topAnchor.constraint(equalTo: findController.bar.bottomAnchor),
             loadingSkeletonView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             loadingSkeletonView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             loadingSkeletonView.bottomAnchor.constraint(equalTo: chatInputBar.topAnchor),
@@ -459,7 +471,32 @@ class ChatTopicDetailViewController: ObservableViewController {
         }
     }
 
+    private func applyRemainderLoadErrorFooter(_ text: String) {
+        remainderErrorFooter.text = text
+        remainderErrorFooter.font = TopicDetailTypography.chromeFont(.error, weight: .regular)
+        let width = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
+        let fittingWidth = max(0, width - 32)
+        let size = remainderErrorFooter.sizeThatFits(
+            CGSize(width: fittingWidth, height: .greatestFiniteMagnitude)
+        )
+        remainderErrorFooter.frame = CGRect(
+            x: 0,
+            y: 0,
+            width: width,
+            height: max(44, size.height + 24)
+        )
+        tableView.tableFooterView = remainderErrorFooter
+    }
+
     private func updateSuggestedTopicsFooter() {
+        if TopicDetailFirstPaintPolicy.shouldPreserveEarlyOpeningPost(
+            isReady: viewModel.isReady,
+            hasFirstPost: viewModel.posts.first != nil,
+            hasTopic: viewModel.topic != nil
+        ), let error = viewModel.errorMessage {
+            applyRemainderLoadErrorFooter(error)
+            return
+        }
         let relatedTopics = viewModel.topic?.relatedTopics ?? []
         let suggestedTopics = viewModel.topic?.suggestedTopics ?? []
         let show = viewModel.isReady
@@ -467,7 +504,8 @@ class ChatTopicDetailViewController: ObservableViewController {
             && (!relatedTopics.isEmpty || !suggestedTopics.isEmpty)
             && AppSettings.shared.showSuggestedTopics
         guard show else {
-            if tableView.tableFooterView === suggestedTopicsFooter {
+            if tableView.tableFooterView === suggestedTopicsFooter
+                || tableView.tableFooterView === remainderErrorFooter {
                 tableView.tableFooterView = UIView()
             }
             return
@@ -502,11 +540,18 @@ class ChatTopicDetailViewController: ObservableViewController {
             viewModel.setNestedViewEnabled(true)
         }
         let width = max(view.bounds.width, UIScreen.main.bounds.width)
-        await viewModel.loadTopic(id: topicId, containerWidth: width)
+        await viewModel.loadTopic(
+            id: topicId,
+            containerWidth: width,
+            initialFloor: initialFloor,
+            initialPostId: initialPostId
+        )
         // Nested may fail without errorMessage (catch path clears it). Exit tree if unrenderable.
         if viewModel.isNestedViewEnabled {
             viewModel.abandonNestedIfUnrenderable()
-            viewModel.errorMessage = nil
+            if viewModel.topic != nil {
+                viewModel.errorMessage = nil
+            }
         }
         // Merge server detail last_read with constructor hint / local store.
         if let detailLast = viewModel.topic?.lastReadPostNumber {
@@ -526,12 +571,15 @@ class ChatTopicDetailViewController: ObservableViewController {
             initialFloor: initialFloor,
             lastRead: lastReadPostNumber ?? 0,
             totalFloors: viewModel.totalFloors,
-            pinLatestWhenFullyRead: scrollsToBottomWhenOpeningLatest()
+            pinLatestWhenFullyRead: scrollsToBottomWhenOpeningLatest(),
+            openingPostId: viewModel.posts.first(where: { $0.postNumber == 1 })?.id
         ) {
         case .postId(let postId):
-            scrollToPostId(postId)
+            if isOpeningPostId(postId) { break }
+            jumpToPostId(postId)
         case .floor(let floor):
-            await jumpToFloor(floor)
+            if floor <= 1 { break }
+            await jumpToPostNumber(floor)
         case .top:
             break
         }
@@ -552,13 +600,15 @@ class ChatTopicDetailViewController: ObservableViewController {
         // Title-only white body: nested produced nothing paintable — force flat stream ids.
         if ids.isEmpty {
             seen.removeAll(keepingCapacity: true)
-            let flat = viewModel.posts.compactMap { post -> Int? in
+            if viewModel.isNestedViewEnabled {
+                viewModel.forceDisableNested(notify: false)
+            }
+            let flat = viewModel.visiblePosts.compactMap { post -> Int? in
                 guard viewModel.parsedBlocks[post.id] != nil,
                       seen.insert(post.id).inserted else { return nil }
                 return post.id
             }
             if !flat.isEmpty {
-                viewModel.forceDisableNested(notify: false)
                 ids = flat
             }
         }
@@ -615,11 +665,7 @@ class ChatTopicDetailViewController: ObservableViewController {
         )
         timeline.onJumpToPostId = { [weak self] postId in
             guard let self else { return }
-            if let index = self.viewModel.allPostIds.firstIndex(of: postId) {
-                Task { await self.jumpToFloor(index + 1) }
-            } else {
-                self.scrollToPostId(postId)
-            }
+            self.jumpToPostId(postId)
         }
         timeline.modalPresentationStyle = .pageSheet
         timeline.isModalInPresentation = true
@@ -695,6 +741,109 @@ class ChatTopicDetailViewController: ObservableViewController {
         tableView.scrollToRow(at: indexPath, at: jumpScrollPosition(), animated: false)
     }
 
+    func shouldStayAtOpeningPost(floor: Int? = nil, postNumber: Int? = nil, postId: Int? = nil) -> Bool {
+        let openingId = viewModel.posts.first(where: { $0.postNumber == 1 })?.id
+            ?? viewModel.allPostIds.first
+        let isOpening = TopicDetailOpenAnchor.isOpeningPostTarget(
+            floor: floor,
+            postNumber: postNumber,
+            postId: postId,
+            openingPostId: openingId
+        )
+        return TopicDetailOpenAnchor.shouldStayAtOpeningPost(
+            isOpeningPostTarget: isOpening,
+            contentOffsetY: tableView.contentOffset.y
+        )
+    }
+
+    func isOpeningPostId(_ postId: Int) -> Bool {
+        if viewModel.posts.first(where: { $0.postNumber == 1 })?.id == postId { return true }
+        return viewModel.allPostIds.first == postId
+    }
+
+    func scrollToContentTop(animated: Bool) {
+        let y = -tableView.adjustedContentInset.top
+        guard abs(tableView.contentOffset.y - y) > 1 else { return }
+        tableView.setContentOffset(CGPoint(x: 0, y: y), animated: animated)
+    }
+
+    func jumpToPostId(_ postId: Int) {
+        if isOpeningPostId(postId) {
+            scrollToContentTop(animated: false)
+            return
+        }
+        if dataSource.snapshot().indexOfItem(postId) != nil {
+            scrollToPostId(postId)
+            return
+        }
+        guard let streamIndex = viewModel.allPostIds.firstIndex(of: postId) else { return }
+        Task { await jumpToFloor(streamIndex + 1) }
+    }
+
+    func jumpToPostNumber(_ postNumber: Int) async {
+        guard postNumber > 1 else {
+            scrollToContentTop(animated: false)
+            return
+        }
+        if let post = viewModel.post(byPostNumber: postNumber) {
+            jumpToPostId(post.id)
+            return
+        }
+        do {
+            let post = try await api.fetchPostByNumber(topicId: topicId, postNumber: postNumber)
+            if viewModel.allPostIds.contains(post.id) {
+                jumpToPostId(post.id)
+            }
+        } catch {
+            showPostActionError(error)
+        }
+    }
+
+    func jumpToFindHit(_ hit: TopicFindHit) {
+        if hit.postId > 0 {
+            jumpToPostId(hit.postId)
+            return
+        }
+        Task { await jumpToPostNumber(hit.postNumber) }
+    }
+
+    func installTopicFindBar() {
+        findController.install(
+            in: view,
+            topAnchor: view.safeAreaLayoutGuide.topAnchor,
+            onJump: { [weak self] hit in
+                self?.jumpToFindHit(hit)
+            },
+            search: { [weak self] query in
+                guard let self else { return [] }
+                let result = try await self.api.searchTopic(topicId: self.topicId, term: query)
+                return (result.posts ?? [])
+                    .filter { $0.topicId == self.topicId }
+                    .map { TopicFindHit(postId: $0.id, postNumber: $0.postNumber) }
+            }
+        )
+        findController.onVisibilityChange = { [weak self] _ in
+            self?.view.layoutIfNeeded()
+        }
+    }
+
+    func presentUserProfilePreview(username: String) {
+        let previewVC = UserProfilePreviewViewController(api: api, username: username)
+        previewVC.onViewProfile = { [weak self] selectedUsername in
+            guard let self else { return }
+            let vc = UserProfileViewController(api: self.api, username: selectedUsername)
+            self.navigationController?.pushViewController(vc, animated: true)
+        }
+        previewVC.onFilterPostsByUsername = { [weak self] selectedUsername in
+            guard let self else { return }
+            self.viewModel.toggleFilterUsername(selectedUsername)
+            self.applySnapshot()
+            self.configureTopicActions()
+        }
+        previewVC.isFilteringThisUser = viewModel.isFiltering(username: username)
+        present(previewVC, animated: true)
+    }
+
     func scrollToLatestMessage() {
         let count = dataSource.snapshot().numberOfItems
         guard count > 0 else { return }
@@ -704,6 +853,7 @@ class ChatTopicDetailViewController: ObservableViewController {
     }
 
     func jumpToFloor(_ floor: Int) async {
+        guard floor > 1 else { return }
         await viewModel.jumpToFloor(floor, containerWidth: view.bounds.width)
         applySnapshot()
         let ids = viewModel.allPostIds
@@ -920,7 +1070,7 @@ class ChatTopicDetailViewController: ObservableViewController {
             switch destination {
             case let .topic(id, postNumber):
                 if id == topicId, let postNumber {
-                    Task { await jumpToFloor(postNumber) }
+                    Task { await jumpToPostNumber(postNumber) }
                 } else {
                     let vc = TopicDetailFactory.make(
                         api: api,
@@ -1026,7 +1176,12 @@ class ChatTopicDetailViewController: ObservableViewController {
             if shouldReload {
                 self.api.resetSession()
                 let width = max(self.view.bounds.width, UIScreen.main.bounds.width)
-                await self.viewModel.recoverAfterCloudflare(id: self.topicId, containerWidth: width)
+                await self.viewModel.recoverAfterCloudflare(
+                    id: self.topicId,
+                    containerWidth: width,
+                    initialFloor: self.initialFloor,
+                    initialPostId: self.initialPostId
+                )
             }
 
             await MainActor.run {
@@ -1313,13 +1468,7 @@ extension ChatTopicDetailViewController: WeChatChatPostCellDelegate {
     }
 
     func weChatChatPostCell(_ cell: WeChatChatPostCell, didTapAvatar username: String) {
-        let previewVC = UserProfilePreviewViewController(api: api, username: username)
-        previewVC.onViewProfile = { [weak self] selectedUsername in
-            guard let self else { return }
-            let vc = UserProfileViewController(api: self.api, username: selectedUsername)
-            self.navigationController?.pushViewController(vc, animated: true)
-        }
-        present(previewVC, animated: true)
+        presentUserProfilePreview(username: username)
     }
 
     func weChatChatPostCell(_ cell: WeChatChatPostCell, didTapReplyQuote postId: Int?, postNumber: Int?) {
@@ -1328,7 +1477,7 @@ extension ChatTopicDetailViewController: WeChatChatPostCellDelegate {
             return
         }
         if let postNumber {
-            Task { await jumpToFloor(postNumber) }
+            Task { await jumpToPostNumber(postNumber) }
         }
     }
 }
@@ -1336,8 +1485,8 @@ extension ChatTopicDetailViewController: WeChatChatPostCellDelegate {
 // MARK: - Content taps (native blocks inside bubble)
 
 extension ChatTopicDetailViewController: PostCellDelegate {
-    func postCell(didTapImageURL url: URL, imageURLs: [URL]) {
-        presentTopicImageGallery(currentURL: url, imageURLs: imageURLs)
+    func postCell(didTapImageURL url: URL, imageURLs: [URL], sourceView: UIView?) {
+        presentTopicImageGallery(currentURL: url, imageURLs: imageURLs, sourceView: sourceView)
     }
 
     func postCell(didTapLinkURL url: URL) {
@@ -1433,17 +1582,11 @@ extension ChatTopicDetailViewController: PostCellDelegate {
     }
 
     func postCell(didTapAvatarForUsername username: String) {
-        let previewVC = UserProfilePreviewViewController(api: api, username: username)
-        previewVC.onViewProfile = { [weak self] selectedUsername in
-            guard let self else { return }
-            let vc = UserProfileViewController(api: self.api, username: selectedUsername)
-            self.navigationController?.pushViewController(vc, animated: true)
-        }
-        present(previewVC, animated: true)
+        presentUserProfilePreview(username: username)
     }
 
     func postCell(didTapQuotedPostNumber postNumber: Int) {
-        Task { await jumpToFloor(postNumber) }
+        Task { await jumpToPostNumber(postNumber) }
     }
 
     func postCell(didTapReaction reactionId: String, forPost post: DiscourseTopicDetail.Post) {
@@ -1479,6 +1622,25 @@ extension ChatTopicDetailViewController: PostCellDelegate {
                         pollName: pollName,
                         optionIds: optionIds
                     )
+                    self.reloadPostCell(postId: postId)
+                } catch {
+                    self.reloadPostCell(postId: postId)
+                    self.showPostActionError(error)
+                }
+            }
+        }
+    }
+
+    func postCell(didTogglePolicyAccepted accepted: Bool, forPostId postId: Int) {
+        performAuthenticated { [weak self] in
+            guard let self else { return }
+            Task {
+                do {
+                    if accepted {
+                        try await self.api.acceptPolicy(postId: postId)
+                    } else {
+                        try await self.api.unacceptPolicy(postId: postId)
+                    }
                     self.reloadPostCell(postId: postId)
                 } catch {
                     self.reloadPostCell(postId: postId)

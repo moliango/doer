@@ -10,7 +10,7 @@ enum DiscourseRouter {
     case hotTopics(page: Int)
     case topTopics(page: Int)
     case categories
-    case topic(id: Int, trackVisit: Bool)
+    case topic(id: Int, trackVisit: Bool, usernameFilters: String? = nil)
     case topicPosts(topicId: Int, postIds: [Int])
     /// FluxDo nested tree roots: GET /n/topic/:id.json
     case nestedTopicRoots(topicId: Int, sort: String, page: Int, trackVisit: Bool)
@@ -85,13 +85,16 @@ enum DiscourseRouter {
     /// discourse-assign: claim / assign topic (FluxDo parity).
     case assignTopic
     case unassignTopic
+    case acceptPolicy
+    case unacceptPolicy
     
     var method: HTTPMethod {
         switch self {
         case .createTopic, .createBookmark, .createInvite, .toggleSharedIssue, .createBoost, .flagBoost, .upload,
              .topicNotificationLevel, .presenceUpdate, .saveDraft, .assignTopic, .useDiscourseTemplate:
             return .post
-        case .toggleReaction, .votePoll, .follow, .userNotificationLevel, .updateTopic, .updatePost:
+        case .toggleReaction, .votePoll, .follow, .userNotificationLevel, .updateTopic, .updatePost,
+             .acceptPolicy, .unacceptPolicy:
             return .put
         case .deleteBookmark, .unfollow, .deleteDraft, .clearRecentSearches, .deleteBoost, .unassignTopic:
             return .delete
@@ -119,10 +122,17 @@ enum DiscourseRouter {
             return "/top.json?page=\(page)"
         case .categories:
             return "/categories.json?include_subcategories=true"
-        case .topic(let id, let trackVisit):
+        case .topic(let id, let trackVisit, let usernameFilters):
             var path = "/t/\(id).json"
+            var query: [String] = []
             if trackVisit {
-                path += "?track_visit=true"
+                query.append("track_visit=true")
+            }
+            if let usernameFilters, !usernameFilters.isEmpty {
+                query.append("username_filters=\(Self.queryValue(usernameFilters))")
+            }
+            if !query.isEmpty {
+                path += "?" + query.joined(separator: "&")
             }
             return path
         case .nestedTopicRoots(let topicId, let sort, let page, let trackVisit):
@@ -283,6 +293,10 @@ enum DiscourseRouter {
             return "/assign/assign"
         case .unassignTopic:
             return "/assign/unassign"
+        case .acceptPolicy:
+            return "/policy/accept"
+        case .unacceptPolicy:
+            return "/policy/unaccept"
         }
     }
 

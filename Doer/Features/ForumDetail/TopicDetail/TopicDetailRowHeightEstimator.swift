@@ -55,6 +55,8 @@ enum TopicDetailRowHeightEstimator {
             return CGFloat(max(items.count, 1)) * 22 + 8
         case .poll:
             return 120
+        case .policy:
+            return 160
         case .table(let headers, let rows):
             return CGFloat(headers.count + rows.count) * 28 + 16
         case .details(_, let content):

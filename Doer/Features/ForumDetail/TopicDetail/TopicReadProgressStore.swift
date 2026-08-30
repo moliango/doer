@@ -160,20 +160,47 @@ enum TopicDetailOpenAnchor: Equatable {
         initialFloor: Int?,
         lastRead: Int,
         totalFloors: Int,
-        pinLatestWhenFullyRead: Bool
+        pinLatestWhenFullyRead: Bool,
+        openingPostId: Int? = nil
     ) -> TopicDetailOpenAnchor {
+        // Floor 1 is the document start after first paint. Check it before post id so
+        // `/t/:id/1` and search/notification OP hits do not animate a jump onto the OP.
+        if let initialFloor, initialFloor <= 1 {
+            return .top
+        }
         if let initialPostId {
+            if let openingPostId, initialPostId == openingPostId {
+                return .top
+            }
             return .postId(initialPostId)
         }
-        if let initialFloor {
-            return .floor(initialFloor)
-        }
-        if lastRead > 0, totalFloors > lastRead {
-            return .floor(min(lastRead + 1, totalFloors))
+        if lastRead > 1, totalFloors > lastRead {
+            return collapseOpeningFloor(.floor(min(lastRead + 1, totalFloors)))
         }
         if pinLatestWhenFullyRead, totalFloors > 0, lastRead >= totalFloors {
-            return .floor(totalFloors)
+            return collapseOpeningFloor(.floor(totalFloors))
         }
         return .top
+    }
+
+    static func isOpeningPostTarget(floor: Int?, postNumber: Int?, postId: Int?, openingPostId: Int?) -> Bool {
+        if let floor, floor <= 1 { return true }
+        if let postNumber, postNumber <= 1 { return true }
+        if let postId, let openingPostId, postId == openingPostId { return true }
+        return false
+    }
+
+    /// Already showing the OP at the top — skip overlay / animated scrollToRow.
+    static func shouldStayAtOpeningPost(isOpeningPostTarget: Bool, contentOffsetY: CGFloat) -> Bool {
+        isOpeningPostTarget && contentOffsetY <= 24
+    }
+
+    /// Floor 1 is already the default viewport after first paint. Jumping there
+    /// flashes the overlay / animated scroll even though the OP is on screen.
+    private static func collapseOpeningFloor(_ anchor: TopicDetailOpenAnchor) -> TopicDetailOpenAnchor {
+        if case .floor(let floor) = anchor, floor <= 1 {
+            return .top
+        }
+        return anchor
     }
 }

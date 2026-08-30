@@ -6,8 +6,8 @@ import UIKit
 // MARK: - PostCellDelegate
 
 extension TopicDetailViewController: PostCellDelegate {
-    func postCell(didTapImageURL url: URL, imageURLs: [URL]) {
-        presentTopicImageGallery(currentURL: url, imageURLs: imageURLs)
+    func postCell(didTapImageURL url: URL, imageURLs: [URL], sourceView: UIView?) {
+        presentTopicImageGallery(currentURL: url, imageURLs: imageURLs, sourceView: sourceView)
     }
 
     func postCell(didTapLinkURL url: URL) {
@@ -122,6 +122,25 @@ extension TopicDetailViewController: PostCellDelegate {
         }
     }
 
+    func postCell(didTogglePolicyAccepted accepted: Bool, forPostId postId: Int) {
+        performAuthenticated { [weak self] in
+            guard let self else { return }
+            Task {
+                do {
+                    if accepted {
+                        try await self.api.acceptPolicy(postId: postId)
+                    } else {
+                        try await self.api.unacceptPolicy(postId: postId)
+                    }
+                    self.reloadPostCell(postId: postId)
+                } catch {
+                    self.reloadPostCell(postId: postId)
+                    self.showPostActionError(error)
+                }
+            }
+        }
+    }
+
     func postCell(didCastPostVotingVote direction: String, forPost post: DiscourseTopicDetail.Post) {
         performAuthenticated { [weak self] in
             guard let self else { return }
@@ -159,13 +178,7 @@ extension TopicDetailViewController: PostCellDelegate {
     }
 
     func postCell(didTapAvatarForUsername username: String) {
-        let previewVC = UserProfilePreviewViewController(api: api, username: username)
-        previewVC.onViewProfile = { [weak self] selectedUsername in
-            guard let self else { return }
-            let vc = UserProfileViewController(api: self.api, username: selectedUsername)
-            self.navigationController?.pushViewController(vc, animated: true)
-        }
-        present(previewVC, animated: true)
+        presentUserProfilePreview(username: username)
     }
 
     func postCell(didTapQuotedPostNumber postNumber: Int) {

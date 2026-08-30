@@ -15,6 +15,18 @@ enum TopicDetailFilterMenu {
             onChanged()
         }
 
+        var filterActions: [UIMenuElement] = [author]
+        if let username = viewModel.filterUsername, !viewModel.isFilteringByOP {
+            filterActions.append(UIAction(
+                title: String(format: String(localized: "topic.filter_user", defaultValue: "只看 %@"), username),
+                image: UIImage(systemName: "person.crop.circle.badge.checkmark"),
+                state: .on
+            ) { _ in
+                viewModel.toggleFilterUsername(username)
+                onChanged()
+            })
+        }
+
         let topLevel = UIAction(
             title: String(localized: "topic.filter_top_level", defaultValue: "只看顶层"),
             image: UIImage(systemName: "arrow.triangle.branch"),
@@ -37,7 +49,7 @@ enum TopicDetailFilterMenu {
         }
 
         var children: [UIMenuElement] = [
-            author,
+            UIMenu(options: .displayInline, children: filterActions),
             topLevel,
             UIMenu(options: .displayInline, children: [nested]),
         ]

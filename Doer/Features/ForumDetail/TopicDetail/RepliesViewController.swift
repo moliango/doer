@@ -221,8 +221,8 @@ extension RepliesViewController: UITableViewDelegate {
 // MARK: - PostCellDelegate
 
 extension RepliesViewController: PostCellDelegate {
-    func postCell(didTapImageURL url: URL, imageURLs: [URL]) {
-        presentTopicImageGallery(currentURL: url, imageURLs: imageURLs)
+    func postCell(didTapImageURL url: URL, imageURLs: [URL], sourceView: UIView?) {
+        presentTopicImageGallery(currentURL: url, imageURLs: imageURLs, sourceView: sourceView)
     }
 
     func postCell(didTapLinkURL url: URL) {

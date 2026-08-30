@@ -246,6 +246,16 @@ final class TopicReadStateTests: XCTestCase {
             TopicDetailOpenAnchor.resolve(
                 initialPostId: nil,
                 initialFloor: nil,
+                lastRead: 1,
+                totalFloors: 80,
+                pinLatestWhenFullyRead: false
+            ),
+            .top
+        )
+        XCTAssertEqual(
+            TopicDetailOpenAnchor.resolve(
+                initialPostId: nil,
+                initialFloor: nil,
                 lastRead: 12,
                 totalFloors: 80,
                 pinLatestWhenFullyRead: true
@@ -269,6 +279,59 @@ final class TopicReadStateTests: XCTestCase {
                 lastRead: 80,
                 totalFloors: 80,
                 pinLatestWhenFullyRead: false
+            ),
+            .top
+        )
+        XCTAssertEqual(
+            TopicDetailOpenAnchor.resolve(
+                initialPostId: nil,
+                initialFloor: 1,
+                lastRead: 0,
+                totalFloors: 80,
+                pinLatestWhenFullyRead: false
+            ),
+            .top
+        )
+        XCTAssertEqual(
+            TopicDetailOpenAnchor.resolve(
+                initialPostId: 99,
+                initialFloor: 1,
+                lastRead: 0,
+                totalFloors: 80,
+                pinLatestWhenFullyRead: false
+            ),
+            .top
+        )
+        XCTAssertTrue(
+            TopicDetailOpenAnchor.shouldStayAtOpeningPost(
+                isOpeningPostTarget: true,
+                contentOffsetY: 0
+            )
+        )
+        XCTAssertFalse(
+            TopicDetailOpenAnchor.shouldStayAtOpeningPost(
+                isOpeningPostTarget: true,
+                contentOffsetY: 400
+            )
+        )
+        XCTAssertTrue(TopicDetailOpenAnchor.isOpeningPostTarget(floor: 1, postNumber: nil, postId: nil, openingPostId: nil))
+        XCTAssertEqual(
+            TopicDetailOpenAnchor.resolve(
+                initialPostId: nil,
+                initialFloor: 16,
+                lastRead: 0,
+                totalFloors: 80,
+                pinLatestWhenFullyRead: false
+            ),
+            .floor(16)
+        )
+        XCTAssertEqual(
+            TopicDetailOpenAnchor.resolve(
+                initialPostId: nil,
+                initialFloor: nil,
+                lastRead: 1,
+                totalFloors: 1,
+                pinLatestWhenFullyRead: true
             ),
             .top
         )

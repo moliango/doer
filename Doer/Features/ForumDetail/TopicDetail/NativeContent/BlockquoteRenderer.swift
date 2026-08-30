@@ -195,7 +195,7 @@ enum ObsidianCalloutSupport {
     private static func isCalloutBodyTerminator(_ block: ContentBlock) -> Bool {
         switch block {
         case .heading, .blockquote, .discourseQuote, .divider, .codeBlock, .table,
-             .list, .details, .spoiler, .onebox, .video, .poll, .rawHTML, .imageGrid:
+             .list, .details, .spoiler, .onebox, .video, .poll, .policy, .rawHTML, .imageGrid:
             return true
         case .paragraph, .image:
             return false

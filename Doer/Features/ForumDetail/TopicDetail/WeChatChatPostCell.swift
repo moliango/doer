@@ -126,7 +126,7 @@ class WeChatChatPostCell: UITableViewCell {
         iv.clipsToBounds = true
         iv.layer.cornerRadius = 4
         iv.layer.cornerCurve = .continuous
-        iv.backgroundColor = .secondarySystemFill
+        iv.backgroundColor = ImagePaintPolicy.waitingFillColor
         iv.isUserInteractionEnabled = true
         iv.translatesAutoresizingMaskIntoConstraints = false
         return iv

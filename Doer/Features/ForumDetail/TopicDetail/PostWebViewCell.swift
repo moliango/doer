@@ -41,6 +41,8 @@ private extension ContentBlock {
                 + rows.flatMap { row in row.flatMap { $0.flatMap(\.galleryImageURLStrings) } }
         case .details(let summary, let content):
             return summary.galleryImageURLStrings + content.flatMap(\.galleryImageURLStrings)
+        case .policy(let policy):
+            return policy.content.flatMap(\.galleryImageURLStrings)
         case .codeBlock, .poll, .video, .divider, .rawHTML:
             return []
         }
@@ -73,7 +75,7 @@ private extension InlineNode {
 }
 
 extension UIViewController {
-    func presentTopicImageGallery(currentURL: URL, imageURLs: [URL]) {
+    func presentTopicImageGallery(currentURL: URL, imageURLs: [URL], sourceView: UIView? = nil) {
         // Avoid stacking two galleries (tap races / web+native double fire) —
         // closing the top one used to "pop" the lower one from the side.
         if presentedViewController != nil {
@@ -86,10 +88,129 @@ extension UIViewController {
         }
         guard !galleryURLs.isEmpty else { return }
 
-        let controller = TopicImageGalleryViewController(urls: galleryURLs, initialURL: currentURL)
+        let sourceFrame = TopicImageGalleryHeroPolicy.sourceFrameInScreen(sourceView)
+        let heroImage = TopicImageGalleryHeroPolicy.heroBitmap(from: sourceView)
+        let shouldFly = TopicImageGalleryHeroPolicy.shouldFly(
+            hasSource: sourceFrame != nil && heroImage != nil,
+            reduceMotion: UIAccessibility.isReduceMotionEnabled
+        )
+
+        let controller = TopicImageGalleryViewController(
+            urls: galleryURLs,
+            initialURL: currentURL,
+            heroSourceView: shouldFly ? sourceView : nil,
+            heroImage: shouldFly ? heroImage : nil,
+            heroSourceFrameInScreen: shouldFly ? sourceFrame : nil
+        )
         controller.modalPresentationStyle = .overFullScreen
-        controller.modalTransitionStyle = .crossDissolve
-        present(controller, animated: true)
+        if shouldFly {
+            TopicImageGalleryHeroPolicy.hideSourceDuringFlight(sourceView)
+            present(controller, animated: false)
+        } else {
+            controller.modalTransitionStyle = .crossDissolve
+            present(controller, animated: true)
+        }
+    }
+}
+
+enum TopicImageGalleryDismissPolicy {
+    static let translationThreshold: CGFloat = 140
+    static let velocityThreshold: CGFloat = 900
+
+    static func shouldDismiss(translationY: CGFloat, velocityY: CGFloat) -> Bool {
+        translationY > translationThreshold || velocityY > velocityThreshold
+    }
+
+    static func backgroundAlpha(for translationY: CGFloat, viewHeight: CGFloat) -> CGFloat {
+        let height = max(viewHeight, 1)
+        let progress = min(max(translationY / height, 0), 1)
+        return 1 - progress * 0.85
+    }
+}
+
+enum TopicImageGalleryHeroPolicy {
+    static func shouldFly(hasSource: Bool, reduceMotion: Bool) -> Bool {
+        hasSource && !reduceMotion
+    }
+
+    static func canReturnToSource(
+        sourceInWindow: Bool,
+        sourceFrameInScreen: CGRect,
+        screenBounds: CGRect
+    ) -> Bool {
+        sourceInWindow
+            && !sourceFrameInScreen.isNull
+            && !sourceFrameInScreen.isEmpty
+            && sourceFrameInScreen.intersects(screenBounds)
+    }
+
+    static func sourceFrameInScreen(_ sourceView: UIView?) -> CGRect? {
+        guard let sourceView, sourceView.window != nil else { return nil }
+        let frame = sourceView.convert(sourceView.bounds, to: nil)
+        guard !frame.isEmpty, frame.width > 1, frame.height > 1 else { return nil }
+        return frame
+    }
+
+    static func aspectFitFrame(for imageSize: CGSize, in container: CGRect) -> CGRect {
+        guard imageSize.width > 0, imageSize.height > 0, container.width > 0, container.height > 0 else {
+            return container
+        }
+        let scale = min(container.width / imageSize.width, container.height / imageSize.height)
+        let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        return CGRect(
+            x: container.midX - size.width / 2,
+            y: container.midY - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
+    }
+
+    static func heroBitmap(from sourceView: UIView?) -> UIImage? {
+        guard let sourceView else { return nil }
+        if let imageView = sourceView as? UIImageView, let image = imageView.image {
+            return image
+        }
+        guard sourceView.bounds.width > 1, sourceView.bounds.height > 1 else { return nil }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = sourceView.window?.screen.scale ?? UIScreen.main.scale
+        format.opaque = false
+        if let parent = sourceView.superview {
+            let rect = sourceView.frame
+            guard rect.width > 1, rect.height > 1 else { return nil }
+            let renderer = UIGraphicsImageRenderer(size: rect.size, format: format)
+            return renderer.image { ctx in
+                ctx.cgContext.translateBy(x: -rect.minX, y: -rect.minY)
+                parent.drawHierarchy(in: parent.bounds, afterScreenUpdates: false)
+            }
+        }
+        let renderer = UIGraphicsImageRenderer(bounds: sourceView.bounds, format: format)
+        return renderer.image { _ in
+            sourceView.drawHierarchy(in: sourceView.bounds, afterScreenUpdates: false)
+        }
+    }
+
+    /// UIImageView sources hide so the bitmap does not double-draw. Web snapshot
+    /// taps use a clear anchor; hide the pixels with an opaque veil instead.
+    static func hideSourceDuringFlight(_ sourceView: UIView?) {
+        guard let sourceView else { return }
+        if sourceView is UIImageView {
+            sourceView.alpha = 0
+            return
+        }
+        if sourceView.backgroundColor == nil || sourceView.backgroundColor == .clear {
+            sourceView.backgroundColor = sourceView.superview?.backgroundColor
+                ?? sourceView.window?.backgroundColor
+                ?? .systemBackground
+        }
+        sourceView.alpha = 1
+    }
+
+    static func restoreSourceAfterFlight(_ sourceView: UIView?) {
+        guard let sourceView else { return }
+        sourceView.alpha = 1
+        if !(sourceView is UIImageView) {
+            sourceView.backgroundColor = .clear
+        }
     }
 }
 
@@ -98,6 +219,18 @@ final class TopicImageGalleryViewController: UIViewController {
     private var currentIndex: Int
     private var didScrollToInitialIndex = false
     private var isDismissing = false
+    private weak var heroSourceView: UIView?
+    private let heroImage: UIImage?
+    private let heroSourceFrameInScreen: CGRect?
+    private var didPlayPresentHero = false
+    private var isPlayingHero = false
+    private var presentHeroFlyer: UIImageView?
+    private lazy var dismissPanRecognizer: UIPanGestureRecognizer = {
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handleDismissPan(_:)))
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = self
+        return pan
+    }()
 
     private lazy var collectionView: UICollectionView = {
         let layout = UICollectionViewFlowLayout()
@@ -180,10 +313,19 @@ final class TopicImageGalleryViewController: UIViewController {
         .lightContent
     }
 
-    init(urls: [URL], initialURL: URL) {
+    init(
+        urls: [URL],
+        initialURL: URL,
+        heroSourceView: UIView? = nil,
+        heroImage: UIImage? = nil,
+        heroSourceFrameInScreen: CGRect? = nil
+    ) {
         let uniqueURLs = TopicImageGallerySources.uniqueImageURLs(urls)
         self.urls = uniqueURLs
         self.currentIndex = uniqueURLs.firstIndex { $0.absoluteString == initialURL.absoluteString } ?? 0
+        self.heroSourceView = heroSourceView
+        self.heroImage = heroImage
+        self.heroSourceFrameInScreen = heroSourceFrameInScreen
         super.init(nibName: nil, bundle: nil)
         modalPresentationCapturesStatusBarAppearance = true
     }
@@ -199,19 +341,52 @@ final class TopicImageGalleryViewController: UIViewController {
         setupUI()
         updateCounter()
         ForumImageLoader.prefetch(urls: urls)
+        if shouldPlayPresentHero {
+            view.backgroundColor = .clear
+            collectionView.alpha = 0
+            collectionView.backgroundColor = .clear
+            actionStack.alpha = 0
+            counterLabel.alpha = 0
+        }
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        playPresentHeroIfNeeded()
+        if shouldPlayPresentHero, !didPlayPresentHero {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.playPresentHeroIfNeeded()
+                guard self.shouldPlayPresentHero, !self.didPlayPresentHero else { return }
+                self.didPlayPresentHero = true
+                self.restoreHeroSourceAlpha()
+                self.presentHeroFlyer?.removeFromSuperview()
+                self.presentHeroFlyer = nil
+                self.revealGalleryChrome()
+            }
+        }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isBeingDismissed {
+            restoreHeroSourceAlpha()
+        }
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        guard !didScrollToInitialIndex, !urls.isEmpty else { return }
-        guard collectionView.bounds.width > 1, collectionView.bounds.height > 1 else { return }
-        guard urls.indices.contains(currentIndex) else { return }
-        didScrollToInitialIndex = true
-        collectionView.scrollToItem(
-            at: IndexPath(item: currentIndex, section: 0),
-            at: .centeredHorizontally,
-            animated: false
-        )
+        if !didScrollToInitialIndex, !urls.isEmpty,
+           collectionView.bounds.width > 1, collectionView.bounds.height > 1,
+           urls.indices.contains(currentIndex) {
+            didScrollToInitialIndex = true
+            collectionView.scrollToItem(
+                at: IndexPath(item: currentIndex, section: 0),
+                at: .centeredHorizontally,
+                animated: false
+            )
+        }
+        playPresentHeroIfNeeded()
     }
 
     private func setupUI() {
@@ -253,6 +428,7 @@ final class TopicImageGalleryViewController: UIViewController {
 
         downloadButton.addTarget(self, action: #selector(downloadTapped), for: .touchUpInside)
         shareButton.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
+        view.addGestureRecognizer(dismissPanRecognizer)
     }
 
     private static func makeToolbarButton(
@@ -332,17 +508,123 @@ final class TopicImageGalleryViewController: UIViewController {
     }
 
     @objc private func closeTapped() {
+        dismissGallery(preferHero: true)
+    }
+
+    private var shouldPlayPresentHero: Bool {
+        heroImage != nil && heroSourceFrameInScreen != nil
+    }
+
+    private func installPresentHeroFlyerIfNeeded() {
+        guard !didPlayPresentHero, presentHeroFlyer == nil, shouldPlayPresentHero else { return }
+        guard let heroImage, let heroSourceFrameInScreen else { return }
+        guard view.bounds.width > 1 else { return }
+        let from = view.convert(heroSourceFrameInScreen, from: nil)
+        guard from.width > 1, from.height > 1 else { return }
+        let flyer = makeHeroFlyer(image: heroImage, frame: from)
+        flyer.layer.cornerRadius = heroSourceView?.layer.cornerRadius
+            ?? heroSourceView?.superview?.layer.cornerRadius
+            ?? 0
+        view.insertSubview(flyer, aboveSubview: collectionView)
+        presentHeroFlyer = flyer
+    }
+
+    private func playPresentHeroIfNeeded() {
+        guard !didPlayPresentHero else { return }
+        guard shouldPlayPresentHero else {
+            didPlayPresentHero = true
+            return
+        }
+        guard view.window != nil else { return }
+
+        installPresentHeroFlyerIfNeeded()
+        guard let heroImage, let flyer = presentHeroFlyer else { return }
+        let container = collectionView.bounds.width > 1 ? collectionView.bounds : view.bounds
+        let to = TopicImageGalleryHeroPolicy.aspectFitFrame(for: heroImage.size, in: container)
+        guard to.width > 1, to.height > 1 else { return }
+
+        didPlayPresentHero = true
+        isPlayingHero = true
+        view.isUserInteractionEnabled = false
+
+        DoerMotion.animate(
+            duration: DoerMotion.emphasized,
+            timingParameters: DoerMotion.easeOutCubic,
+            animations: {
+                flyer.frame = to
+                flyer.layer.cornerRadius = 0
+                self.view.backgroundColor = .black
+            },
+            completion: { _ in
+                self.revealGalleryChrome()
+                flyer.removeFromSuperview()
+                self.presentHeroFlyer = nil
+                self.isPlayingHero = false
+                self.view.isUserInteractionEnabled = true
+            }
+        )
+    }
+
+    private func revealGalleryChrome() {
+        collectionView.alpha = 1
+        collectionView.backgroundColor = .black
+        actionStack.alpha = 1
+        counterLabel.alpha = 1
+        view.backgroundColor = .black
+    }
+
+    private func makeHeroFlyer(image: UIImage, frame: CGRect) -> UIImageView {
+        let flyer = UIImageView(image: image)
+        flyer.contentMode = .scaleAspectFill
+        flyer.clipsToBounds = true
+        flyer.frame = frame
+        flyer.layer.cornerCurve = .continuous
+        return flyer
+    }
+
+    private func restoreHeroSourceAlpha() {
+        TopicImageGalleryHeroPolicy.restoreSourceAfterFlight(heroSourceView)
+    }
+
+    private func canFlyBackToSource() -> Bool {
+        guard TopicImageGalleryHeroPolicy.shouldFly(
+            hasSource: heroSourceView != nil && (currentCell()?.loadedImage ?? heroImage) != nil,
+            reduceMotion: UIAccessibility.isReduceMotionEnabled
+        ) else {
+            return false
+        }
+        let screen = view.window?.bounds ?? UIScreen.main.bounds
+        let frame = TopicImageGalleryHeroPolicy.sourceFrameInScreen(heroSourceView) ?? .zero
+        return TopicImageGalleryHeroPolicy.canReturnToSource(
+            sourceInWindow: heroSourceView?.window != nil,
+            sourceFrameInScreen: frame,
+            screenBounds: screen
+        )
+    }
+
+    private func dismissGallery(preferHero: Bool) {
         guard !isDismissing, !isBeingDismissed else { return }
         isDismissing = true
         view.isUserInteractionEnabled = false
-        // Snap to the current page first so dismiss does not animate a mid-swipe
-        // horizontal offset (reads as "slide out to the side, then close again").
         let width = max(collectionView.bounds.width, 1)
         if urls.indices.contains(currentIndex) {
             collectionView.setContentOffset(
                 CGPoint(x: CGFloat(currentIndex) * width, y: 0),
                 animated: false
             )
+        }
+
+        if preferHero, canFlyBackToSource() {
+            playDismissHero()
+            return
+        }
+
+        restoreHeroSourceAlpha()
+        if modalTransitionStyle == .crossDissolve {
+            dismiss(animated: true) { [weak self] in
+                self?.isDismissing = false
+            }
+            return
         }
 
         let finish = { [weak self] in
@@ -362,7 +644,6 @@ final class TopicImageGalleryViewController: UIViewController {
             animations: {
                 self.view.backgroundColor = .clear
                 self.collectionView.alpha = 0
-                self.collectionView.transform = CGAffineTransform(scaleX: 0.92, y: 0.92)
                 self.actionStack.alpha = 0
                 self.counterLabel.alpha = 0
                 self.toastLabel.alpha = 0
@@ -371,6 +652,138 @@ final class TopicImageGalleryViewController: UIViewController {
                 finish()
             }
         )
+    }
+
+    private func playDismissHero() {
+        let image = currentCell()?.loadedImage ?? heroImage
+        guard let image, let source = heroSourceView, source.window != nil else {
+            restoreHeroSourceAlpha()
+            dismiss(animated: false) { self.isDismissing = false }
+            return
+        }
+
+        isPlayingHero = true
+        let fitInCollection = TopicImageGalleryHeroPolicy.aspectFitFrame(
+            for: image.size,
+            in: collectionView.bounds
+        )
+        let from = collectionView.convert(fitInCollection, to: view)
+        let dest = source.convert(source.bounds, to: view)
+        let flyer = makeHeroFlyer(image: image, frame: from)
+        flyer.layer.cornerRadius = 0
+        collectionView.alpha = 0
+        collectionView.transform = .identity
+        collectionView.backgroundColor = .clear
+        actionStack.alpha = 0
+        counterLabel.alpha = 0
+        toastLabel.alpha = 0
+        view.insertSubview(flyer, aboveSubview: collectionView)
+
+        DoerMotion.animate(
+            duration: DoerMotion.standard,
+            timingParameters: DoerMotion.easeInCubic,
+            animations: {
+                flyer.frame = dest
+                let radius = source.layer.cornerRadius > 0
+                    ? source.layer.cornerRadius
+                    : (source.superview?.layer.cornerRadius ?? 0)
+                flyer.layer.cornerRadius = radius
+                self.view.backgroundColor = .clear
+            },
+            completion: { _ in
+                self.restoreHeroSourceAlpha()
+                flyer.removeFromSuperview()
+                self.isPlayingHero = false
+                self.dismiss(animated: false) {
+                    self.isDismissing = false
+                }
+            }
+        )
+    }
+
+    @objc private func handleDismissPan(_ pan: UIPanGestureRecognizer) {
+        guard !isBeingDismissed, !isPlayingHero else { return }
+        let translation = pan.translation(in: view)
+        let velocity = pan.velocity(in: view)
+        let y = max(translation.y, 0)
+
+        switch pan.state {
+        case .began:
+            collectionView.isScrollEnabled = false
+        case .changed:
+            applyInteractiveDismiss(translationY: y)
+        case .ended, .cancelled, .failed:
+            collectionView.isScrollEnabled = true
+            if pan.state == .ended,
+               TopicImageGalleryDismissPolicy.shouldDismiss(translationY: y, velocityY: velocity.y) {
+                finishInteractiveDismiss(currentY: y)
+            } else if !isDismissing {
+                cancelInteractiveDismiss()
+            }
+        default:
+            break
+        }
+    }
+
+    private func applyInteractiveDismiss(translationY: CGFloat) {
+        collectionView.transform = CGAffineTransform(translationX: 0, y: translationY)
+        let alpha = TopicImageGalleryDismissPolicy.backgroundAlpha(
+            for: translationY,
+            viewHeight: view.bounds.height
+        )
+        view.backgroundColor = UIColor.black.withAlphaComponent(alpha)
+        collectionView.backgroundColor = .clear
+        actionStack.alpha = alpha
+        counterLabel.alpha = alpha
+    }
+
+    private func finishInteractiveDismiss(currentY: CGFloat) {
+        guard !isDismissing else { return }
+        if canFlyBackToSource() {
+            isDismissing = true
+            view.isUserInteractionEnabled = false
+            playDismissHero()
+            return
+        }
+        isDismissing = true
+        view.isUserInteractionEnabled = false
+        let distance = max(view.bounds.height - currentY, 1)
+        let duration = min(max(TimeInterval(distance / 1_800), 0.18), 0.32)
+        UIView.animate(
+            withDuration: duration,
+            delay: 0,
+            options: [.curveEaseIn, .beginFromCurrentState]
+        ) {
+            self.collectionView.transform = CGAffineTransform(
+                translationX: 0,
+                y: self.view.bounds.height
+            )
+            self.view.backgroundColor = .clear
+            self.actionStack.alpha = 0
+            self.counterLabel.alpha = 0
+            self.toastLabel.alpha = 0
+        } completion: { _ in
+            self.restoreHeroSourceAlpha()
+            self.dismiss(animated: false) {
+                self.isDismissing = false
+            }
+        }
+    }
+
+    private func cancelInteractiveDismiss() {
+        UIView.animate(
+            withDuration: 0.28,
+            delay: 0,
+            usingSpringWithDamping: 0.86,
+            initialSpringVelocity: 0.4,
+            options: [.beginFromCurrentState, .allowUserInteraction]
+        ) {
+            self.collectionView.transform = .identity
+            self.view.backgroundColor = .black
+            self.collectionView.backgroundColor = .black
+            self.actionStack.alpha = 1
+            self.counterLabel.alpha = 1
+        }
     }
 
     @objc private func image(_ image: UIImage, didFinishSavingWithError error: NSError?, contextInfo: UnsafeRawPointer) {
@@ -440,6 +853,35 @@ extension TopicImageGalleryViewController: UICollectionViewDataSource, UICollect
     }
 }
 
+extension TopicImageGalleryViewController: UIGestureRecognizerDelegate {
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer === dismissPanRecognizer else { return true }
+        guard !isDismissing, !isPlayingHero else { return false }
+        if (currentCell()?.zoomScale ?? 1) > 1.01 {
+            return false
+        }
+        let velocity = dismissPanRecognizer.velocity(in: view)
+        let translation = dismissPanRecognizer.translation(in: view)
+        let dy: CGFloat
+        let dx: CGFloat
+        if abs(velocity.y) < 12, abs(velocity.x) < 12 {
+            dy = translation.y
+            dx = translation.x
+        } else {
+            dy = velocity.y
+            dx = velocity.x
+        }
+        return dy > 0 && abs(dy) > abs(dx)
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        false
+    }
+}
+
 private final class TopicImageGalleryCell: UICollectionViewCell, UIScrollViewDelegate {
     static let reuseIdentifier = "TopicImageGalleryCell"
 
@@ -447,6 +889,10 @@ private final class TopicImageGalleryCell: UICollectionViewCell, UIScrollViewDel
 
     var loadedImage: UIImage? {
         imageView.image
+    }
+
+    var zoomScale: CGFloat {
+        scrollView.zoomScale
     }
 
     var onSingleTap: (() -> Void)?
@@ -499,6 +945,7 @@ private final class TopicImageGalleryCell: UICollectionViewCell, UIScrollViewDel
         onSingleTap = nil
         imageView.sd_cancelCurrentImageLoad()
         imageView.image = nil
+        imageView.alpha = 1
         scrollView.zoomScale = 1
         scrollView.contentInset = .zero
         activityIndicator.stopAnimating()
@@ -508,8 +955,13 @@ private final class TopicImageGalleryCell: UICollectionViewCell, UIScrollViewDel
         representedURL = url
         scrollView.zoomScale = 1
         scrollView.contentInset = .zero
-        imageView.image = nil
-        activityIndicator.startAnimating()
+        ImagePaintPolicy.prepareForLoad(on: imageView)
+
+        if AvatarImageLoader.cachedImageIfAvailable(for: url) != nil {
+            activityIndicator.stopAnimating()
+        } else {
+            activityIndicator.startAnimating()
+        }
 
         ForumImageLoader.setImage(on: imageView, url: url) { [weak self] image, _, _, _ in
             guard let self, self.representedURL == url else { return }
@@ -597,7 +1049,7 @@ private final class TopicImageGalleryCell: UICollectionViewCell, UIScrollViewDel
 }
 
 protocol PostCellDelegate: AnyObject {
-    func postCell(didTapImageURL url: URL, imageURLs: [URL])
+    func postCell(didTapImageURL url: URL, imageURLs: [URL], sourceView: UIView?)
     func postCell(didTapLinkURL url: URL)
     func postCell(didTapShowRepliesForPostId postId: Int)
     func postCell(didTapToggleDetails detailsIndex: Int, postId: Int)
@@ -614,6 +1066,7 @@ protocol PostCellDelegate: AnyObject {
     func postCell(didTapReaction reactionId: String, forPost post: DiscourseTopicDetail.Post)
     func postCell(didTapToggleSharedIssueForTopicId topicId: Int)
     func postCell(didSubmitPollVoteForPostId postId: Int, pollName: String, optionIds: [String])
+    func postCell(didTogglePolicyAccepted accepted: Bool, forPostId postId: Int)
     func postCell(didCastPostVotingVote direction: String, forPost post: DiscourseTopicDetail.Post)
     func postCell(didQuoteSelectedText text: String, postId: Int?)
     func postCell(didRequestDecrypt text: String, postId: Int?)
@@ -623,6 +1076,7 @@ extension PostCellDelegate {
     func postCell(didCastPostVotingVote direction: String, forPost post: DiscourseTopicDetail.Post) {}
     func postCell(didQuoteSelectedText text: String, postId: Int?) {}
     func postCell(didRequestDecrypt text: String, postId: Int?) {}
+    func postCell(didTogglePolicyAccepted accepted: Bool, forPostId postId: Int) {}
 }
 
 final class PostWebViewCell: UITableViewCell {
@@ -644,7 +1098,7 @@ final class PostWebViewCell: UITableViewCell {
         iv.contentMode = .scaleAspectFill
         iv.clipsToBounds = true
         iv.layer.cornerRadius = 16
-        iv.backgroundColor = .secondarySystemFill
+        iv.backgroundColor = ImagePaintPolicy.waitingFillColor
         iv.translatesAutoresizingMaskIntoConstraints = false
         return iv
     }()
@@ -690,6 +1144,13 @@ final class PostWebViewCell: UITableViewCell {
         iv.isUserInteractionEnabled = true
         iv.translatesAutoresizingMaskIntoConstraints = false
         return iv
+    }()
+
+    private let imageHeroAnchorView: UIView = {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
     }()
 
     // MARK: - Bottom Bar
@@ -943,7 +1404,11 @@ final class PostWebViewCell: UITableViewCell {
                         }
                         return nil
                     })
-                    delegate?.postCell(didTapImageURL: url, imageURLs: imageURLs)
+                    imageHeroAnchorView.frame = region.frame
+                    if imageHeroAnchorView.superview !== snapshotImageView {
+                        snapshotImageView.addSubview(imageHeroAnchorView)
+                    }
+                    delegate?.postCell(didTapImageURL: url, imageURLs: imageURLs, sourceView: imageHeroAnchorView)
                 case .link(let url):
                     delegate?.postCell(didTapLinkURL: url)
                 case .details(let index):
@@ -989,6 +1454,7 @@ final class PostWebViewCell: UITableViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         snapshotImageView.image = nil
+        imageHeroAnchorView.removeFromSuperview()
         interactiveRegions = []
         delegate = nil
         postId = 0

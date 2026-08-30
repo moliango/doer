@@ -8,6 +8,7 @@ final class TopicMoreMenuViewController: UIViewController {
         var notificationLevel: DiscourseTopicDetail.NotificationLevel?
         var hasActiveFilter: Bool
         var isFilteringByOP: Bool = false
+        var filterUsername: String? = nil
         var isFilteringTopLevel: Bool = false
         var isNestedViewEnabled: Bool = false
         var canEdit: Bool
@@ -36,6 +37,7 @@ final class TopicMoreMenuViewController: UIViewController {
         case assignPickUser
         case unassign
         case filterOP
+        case filterUser(String)
         case filterTopLevel
         case filterNested
         case filterClear
@@ -656,6 +658,15 @@ final class TopicMoreMenuViewController: UIViewController {
                 model.isFilteringByOP,
                 { [weak self] in self?.emit(.filterOP) }
             ),
+        ]
+        if let username = model.filterUsername, !model.isFilteringByOP {
+            items.append((
+                String(format: String(localized: "topic.filter_user", defaultValue: "只看 %@"), username),
+                true,
+                { [weak self] in self?.emit(.filterUser(username)) }
+            ))
+        }
+        items.append(contentsOf: [
             (
                 String(localized: "topic.filter_top_level", defaultValue: "只看顶层"),
                 model.isFilteringTopLevel,
@@ -666,7 +677,7 @@ final class TopicMoreMenuViewController: UIViewController {
                 model.isNestedViewEnabled,
                 { [weak self] in self?.emit(.filterNested) }
             ),
-        ]
+        ])
         // FluxDo: cancel when any filter (including nested) is active.
         if model.hasActiveFilter {
             items.append((

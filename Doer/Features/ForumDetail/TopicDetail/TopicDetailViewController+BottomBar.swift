@@ -85,6 +85,10 @@ extension TopicDetailViewController: TopicDetailBottomBarDelegate {
         let total = viewModel.totalFloors
         guard total > 0 else { return }
         let target = min(max(currentVisibleFloor() + delta, 1), total)
+        if target <= 1 {
+            scrollToTop()
+            return
+        }
         jumpToFloor(target)
     }
 
@@ -100,7 +104,7 @@ extension TopicDetailViewController: TopicDetailBottomBarDelegate {
         if current < total {
             jumpToFloor(current + 1)
         } else {
-            jumpToFloor(1)
+            scrollToTop()
         }
     }
 
@@ -243,6 +247,10 @@ extension TopicDetailViewController: TopicDetailBottomBarDelegate {
     }
 
     func jumpToPostId(_ postId: Int) {
+        if isOpeningPostId(postId) {
+            scrollToContentTop(animated: true)
+            return
+        }
         if scrollToPostIdIfVisible(postId, animated: true) {
             return
         }
@@ -253,7 +261,10 @@ extension TopicDetailViewController: TopicDetailBottomBarDelegate {
     /// Jump using Discourse `post_number` (as in `/t/:id/:post_number` and notifications).
     /// Resolves to stream position so deleted-post gaps do not land on the wrong reply.
     func jumpToPostNumber(_ postNumber: Int) async {
-        guard postNumber > 0 else { return }
+        guard postNumber > 1 else {
+            scrollToContentTop(animated: true)
+            return
+        }
 
         if let post = viewModel.posts.first(where: { $0.postNumber == postNumber }) {
             jumpToPostId(post.id)
@@ -278,8 +289,9 @@ extension TopicDetailViewController: TopicDetailBottomBarDelegate {
 
     /// Stream floor is 1-based index into `allPostIds` (not Discourse `post_number`).
     func jumpToFloor(_ floor: Int) {
+        guard floor > 1 else { return }
         let total = viewModel.totalFloors
-        guard floor >= 1, floor <= total else { return }
+        guard floor <= total else { return }
 
         let postId = viewModel.allPostIds[floor - 1]
         if scrollToPostIdIfVisible(postId, animated: true) {
@@ -341,6 +353,32 @@ extension TopicDetailViewController: TopicDetailBottomBarDelegate {
 
     func hideJumpOverlay() {
         jumpOverlay.isHidden = true
+    }
+
+    func isOpeningPostId(_ postId: Int) -> Bool {
+        if viewModel.posts.first(where: { $0.postNumber == 1 })?.id == postId { return true }
+        return viewModel.allPostIds.first == postId
+    }
+
+    func scrollToContentTop(animated: Bool) {
+        let y = -tableView.adjustedContentInset.top
+        guard abs(tableView.contentOffset.y - y) > 1 else { return }
+        tableView.setContentOffset(CGPoint(x: 0, y: y), animated: animated)
+    }
+
+    func shouldStayAtOpeningPost(floor: Int? = nil, postNumber: Int? = nil, postId: Int? = nil) -> Bool {
+        let openingId = viewModel.posts.first(where: { $0.postNumber == 1 })?.id
+            ?? viewModel.allPostIds.first
+        let isOpening = TopicDetailOpenAnchor.isOpeningPostTarget(
+            floor: floor,
+            postNumber: postNumber,
+            postId: postId,
+            openingPostId: openingId
+        )
+        return TopicDetailOpenAnchor.shouldStayAtOpeningPost(
+            isOpeningPostTarget: isOpening,
+            contentOffsetY: tableView.contentOffset.y
+        )
     }
 
     var canNavigateBack: Bool {

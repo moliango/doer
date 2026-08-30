@@ -158,8 +158,9 @@ extension TopicDetailViewController {
             isBookmarked: topic?.bookmarked == true,
             isInReadLater: isReadLater,
             notificationLevel: topic?.notificationLevel,
-            hasActiveFilter: viewModel.isFilteringByOP || viewModel.isFilteringTopLevel || viewModel.isNestedViewEnabled,
+            hasActiveFilter: viewModel.hasActiveTopicFilter,
             isFilteringByOP: viewModel.isFilteringByOP,
+            filterUsername: viewModel.filterUsername,
             isFilteringTopLevel: viewModel.isFilteringTopLevel,
             isNestedViewEnabled: viewModel.isNestedViewEnabled,
             canEdit: topic?.canEdit == true,
@@ -214,7 +215,11 @@ extension TopicDetailViewController {
         case .openTimeline:
             showTimelineSheet()
         case .jumpToFloor(let floor):
-            jumpToFloor(floor)
+            if floor <= 1 {
+                scrollToContentTop(animated: true)
+            } else {
+                jumpToFloor(floor)
+            }
         case .readingSettings:
             navigationController?.pushViewController(ReadingSettingsViewController(), animated: true)
         case .tableOfContents:
@@ -231,6 +236,9 @@ extension TopicDetailViewController {
             performAssign(mode: .clear)
         case .filterOP:
             viewModel.setFilteringByOP(!viewModel.isFilteringByOP)
+            configureTopicActions()
+        case .filterUser(let username):
+            viewModel.toggleFilterUsername(username)
             configureTopicActions()
         case .filterTopLevel:
             viewModel.setFilteringTopLevel(!viewModel.isFilteringTopLevel)
@@ -386,6 +394,12 @@ extension TopicDetailViewController {
             self.viewModel.setFilteringByOP(!self.viewModel.isFilteringByOP)
             self.configureTopicActions()
         }
+        if let username = viewModel.filterUsername, !viewModel.isFilteringByOP {
+            add(String(format: String(localized: "topic.filter_user", defaultValue: "只看 %@"), username), on: true) { [weak self] in
+                self?.viewModel.toggleFilterUsername(username)
+                self?.configureTopicActions()
+            }
+        }
         add(String(localized: "topic.filter_top_level", defaultValue: "只看顶层"), on: viewModel.isFilteringTopLevel) { [weak self] in
             guard let self else { return }
             self.viewModel.setFilteringTopLevel(!self.viewModel.isFilteringTopLevel)
@@ -451,8 +465,58 @@ extension TopicDetailViewController {
         coordinator.aiAssistantTapped()
     }
 
+    func installTopicFindBar() {
+        findController.install(
+            in: view,
+            topAnchor: view.safeAreaLayoutGuide.topAnchor,
+            onJump: { [weak self] hit in
+                self?.jumpToFindHit(hit)
+            },
+            search: { [weak self] query in
+                guard let self else { return [] }
+                let result = try await self.api.searchTopic(topicId: self.topicId, term: query)
+                return (result.posts ?? [])
+                    .filter { $0.topicId == self.topicId }
+                    .map { TopicFindHit(postId: $0.id, postNumber: $0.postNumber) }
+            }
+        )
+        findController.onVisibilityChange = { [weak self] visible in
+            guard let self else { return }
+            let extra: CGFloat = visible ? 48 : 0
+            if self.tableView.contentInset.top != extra {
+                self.tableView.contentInset.top = extra
+                self.tableView.verticalScrollIndicatorInsets.top = extra
+            }
+            self.view.layoutIfNeeded()
+        }
+    }
+
+    func jumpToFindHit(_ hit: TopicFindHit) {
+        if hit.postId > 0 {
+            jumpToPostId(hit.postId)
+            return
+        }
+        Task { await jumpToPostNumber(hit.postNumber) }
+    }
+
+    func presentUserProfilePreview(username: String) {
+        let previewVC = UserProfilePreviewViewController(api: api, username: username)
+        previewVC.onViewProfile = { [weak self] selectedUsername in
+            guard let self else { return }
+            let vc = UserProfileViewController(api: self.api, username: selectedUsername)
+            self.navigationController?.pushViewController(vc, animated: true)
+        }
+        previewVC.onFilterPostsByUsername = { [weak self] selectedUsername in
+            guard let self else { return }
+            self.viewModel.toggleFilterUsername(selectedUsername)
+            self.configureTopicActions()
+        }
+        previewVC.isFilteringThisUser = viewModel.isFiltering(username: username)
+        present(previewVC, animated: true)
+    }
+
     @objc func searchTopicTapped() {
-        coordinator.searchTopicTapped()
+        findController.show()
     }
 
     @objc func pluginStateDidChange() {

@@ -365,71 +365,7 @@ final class TopicDetailCoordinator {
     }
 
     func searchTopicTapped() {
-        guard let host else { return }
-        let alert = UIAlertController(
-            title: String(localized: "topic.search", defaultValue: "搜索话题"),
-            message: nil,
-            preferredStyle: .alert
-        )
-        alert.addTextField { field in
-            field.placeholder = String(localized: "topic.search.placeholder", defaultValue: "输入关键词")
-            field.returnKeyType = .search
-        }
-        alert.addAction(UIAlertAction(title: String(localized: "common.cancel"), style: .cancel))
-        alert.addAction(UIAlertAction(title: String(localized: "topic.search", defaultValue: "搜索话题"), style: .default) { [weak self, weak alert] _ in
-            guard let self,
-                  let query = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !query.isEmpty
-            else { return }
-            self.performTopicSearch(query)
-        })
-        host.present(alert, animated: true)
-    }
-
-    private func performTopicSearch(_ query: String) {
-        Task { [weak self] in
-            guard let self, let host = self.host else { return }
-            do {
-                let result = try await self.api.searchTopic(topicId: self.topicId, term: query)
-                let posts = (result.posts ?? []).filter { $0.topicId == self.topicId }
-                self.presentSearchResults(posts, query: query)
-            } catch {
-                host.showPostActionError(error)
-            }
-        }
-    }
-
-    private func presentSearchResults(_ posts: [DiscourseSearchResult.SearchPost], query: String) {
-        guard let host else { return }
-        guard !posts.isEmpty else {
-            let alert = UIAlertController(
-                title: String(localized: "topic.search", defaultValue: "搜索话题"),
-                message: String(localized: "topic.search.empty", defaultValue: "没有找到匹配内容"),
-                preferredStyle: .alert
-            )
-            alert.addAction(UIAlertAction(title: String(localized: "common.done"), style: .default))
-            host.present(alert, animated: true)
-            return
-        }
-        let sheet = UIAlertController(title: query, message: nil, preferredStyle: .actionSheet)
-        for post in posts.prefix(12) {
-            let excerptSource = post.blurb ?? post.username
-            let excerpt = CookedContentPipeline.plainTextPreview(fromCooked: excerptSource)
-            let title = "#\(post.postNumber)  \(String((excerpt.isEmpty ? post.username : excerpt).prefix(70)))"
-            sheet.addAction(UIAlertAction(title: title, style: .default) { [weak host] _ in
-                // Search returns real post ids / post_number — never treat post_number as stream floor.
-                if post.id > 0 {
-                    host?.jumpToPostId(post.id)
-                } else {
-                    Task { @MainActor [weak host] in
-                        await host?.jumpToPostNumber(post.postNumber)
-                    }
-                }
-            })
-        }
-        sheet.addAction(UIAlertAction(title: String(localized: "common.cancel"), style: .cancel))
-        sheet.popoverPresentationController?.barButtonItem = host.navigationItem.rightBarButtonItems?.last
-        host.present(sheet, animated: true)
+        host?.searchTopicTapped()
     }
 
     func editTopic() {

@@ -102,7 +102,11 @@ extension DiscourseAPI {
         return detail.postStream.posts.first?.cooked
     }
 
-    func fetchTopic(id: Int, trackVisit: Bool = false) async throws -> DiscourseTopicDetail {
+    func fetchTopic(
+        id: Int,
+        trackVisit: Bool = false,
+        usernameFilters: String? = nil
+    ) async throws -> DiscourseTopicDetail {
         var headers: HTTPHeaders?
         if trackVisit {
             headers = [
@@ -110,8 +114,13 @@ extension DiscourseAPI {
                 "Discourse-Track-View-Topic-Id": "\(id)",
             ]
         }
+        let filters = usernameFilters?.trimmingCharacters(in: .whitespacesAndNewlines)
         let detail: DiscourseTopicDetail = try await request(
-            route: .topic(id: id, trackVisit: trackVisit),
+            route: .topic(
+                id: id,
+                trackVisit: trackVisit,
+                usernameFilters: (filters?.isEmpty == false) ? filters : nil
+            ),
             headers: headers
         )
         // Successful topic JSON means the main forum zone is healthy — lift a

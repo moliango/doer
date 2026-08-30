@@ -75,6 +75,118 @@ final class TopicDetailNativeLayoutTests: XCTestCase {
         XCTAssertTrue(short.deferred.isEmpty)
     }
 
+    func testPostsFallBackToOpeningPostWhenTopicIsNil() throws {
+        let op = try decodePost(includesActionMetadata: false)
+        XCTAssertEqual(
+            TopicDetailFirstPaintPolicy.displayPosts(topicPosts: nil, firstPost: op).map(\.id),
+            [op.id]
+        )
+        XCTAssertTrue(
+            TopicDetailFirstPaintPolicy.displayPosts(topicPosts: nil, firstPost: nil).isEmpty
+        )
+
+        let stream = try decodePost(includesActionMetadata: false, replyCount: 3)
+        XCTAssertEqual(
+            TopicDetailFirstPaintPolicy.displayPosts(topicPosts: [stream], firstPost: op).map(\.id),
+            [stream.id]
+        )
+    }
+
+    func testFirstPaintSkipsReparseWhenParsedBlocksAlreadyHaveOpeningPost() throws {
+        let op = try decodePost(includesActionMetadata: false)
+        let replyObject: [String: Any] = [
+            "id": 9,
+            "username": "sam",
+            "created_at": "2026-07-19T00:00:00.000Z",
+            "cooked": "<p>Reply</p>",
+            "post_number": 2,
+            "reply_count": 0,
+        ]
+        let reply = try JSONDecoder().decode(
+            DiscourseTopicDetail.Post.self,
+            from: JSONSerialization.data(withJSONObject: replyObject)
+        )
+        XCTAssertTrue(TopicDetailFirstPaintPolicy.shouldSkipParse(postId: op.id, alreadyParsedIds: [op.id]))
+        XCTAssertFalse(TopicDetailFirstPaintPolicy.shouldSkipParse(postId: reply.id, alreadyParsedIds: [op.id]))
+
+        let toParse = TopicDetailFirstPaintPolicy.postsNeedingParse(
+            [op, reply],
+            alreadyParsedIds: [op.id]
+        )
+        XCTAssertEqual(toParse.map(\.id), [reply.id])
+    }
+
+    func testEarlyOpeningCookedOverlaysStreamPostWhenIdsMatch() throws {
+        var stream = try decodePost(includesActionMetadata: false)
+        stream.cooked = "<p>topicview</p>"
+        var early = stream
+        early.cooked = "<p>by_number</p>"
+
+        let overlaid = TopicDetailFirstPaintPolicy.postsWithEarlyOpeningCooked(
+            streamPosts: [stream],
+            earlyPost: early
+        )
+        XCTAssertEqual(overlaid.first?.cooked, "<p>by_number</p>")
+
+        // Different id must not be overwritten — synthesize via JSON so `id` stays a let.
+        let otherObject: [String: Any] = [
+            "id": 99,
+            "username": "sam",
+            "created_at": "2026-07-19T00:00:00.000Z",
+            "cooked": "<p>other</p>",
+            "post_number": 2,
+            "reply_count": 0,
+        ]
+        let otherPost = try JSONDecoder().decode(
+            DiscourseTopicDetail.Post.self,
+            from: JSONSerialization.data(withJSONObject: otherObject)
+        )
+        let skipped = TopicDetailFirstPaintPolicy.postsWithEarlyOpeningCooked(
+            streamPosts: [otherPost],
+            earlyPost: early
+        )
+        XCTAssertEqual(skipped.first?.cooked, "<p>other</p>")
+    }
+
+    func testEarlyPaintOpeningPostOnlyForDefaultOrFloorOneEntry() {
+        XCTAssertTrue(TopicDetailFirstPaintPolicy.shouldEarlyPaintOpeningPost(initialFloor: nil, initialPostId: nil))
+        XCTAssertTrue(TopicDetailFirstPaintPolicy.shouldEarlyPaintOpeningPost(initialFloor: 1, initialPostId: nil))
+        XCTAssertFalse(TopicDetailFirstPaintPolicy.shouldEarlyPaintOpeningPost(initialFloor: 16, initialPostId: nil))
+        XCTAssertTrue(TopicDetailFirstPaintPolicy.shouldEarlyPaintOpeningPost(initialFloor: 1, initialPostId: 42))
+        XCTAssertFalse(TopicDetailFirstPaintPolicy.shouldEarlyPaintOpeningPost(initialFloor: nil, initialPostId: 42))
+    }
+
+    func testTopicViewFailurePreservesEarlyOpeningPostWhenReady() {
+        XCTAssertTrue(
+            TopicDetailFirstPaintPolicy.shouldPreserveEarlyOpeningPost(
+                isReady: true,
+                hasFirstPost: true,
+                hasTopic: false
+            )
+        )
+        XCTAssertFalse(
+            TopicDetailFirstPaintPolicy.shouldPreserveEarlyOpeningPost(
+                isReady: false,
+                hasFirstPost: true,
+                hasTopic: false
+            )
+        )
+        XCTAssertFalse(
+            TopicDetailFirstPaintPolicy.shouldPreserveEarlyOpeningPost(
+                isReady: true,
+                hasFirstPost: false,
+                hasTopic: false
+            )
+        )
+        XCTAssertFalse(
+            TopicDetailFirstPaintPolicy.shouldPreserveEarlyOpeningPost(
+                isReady: true,
+                hasFirstPost: true,
+                hasTopic: true
+            )
+        )
+    }
+
     /// Jump mid-thread then prepend earlier floors must keep stream order
     /// (regression: #16 appearing above #1 after load-earlier).
     func testStreamOrderSortKeepsLowerFloorsBeforeHigher() {
