@@ -240,7 +240,10 @@ final class AppUpdateService {
             return cached.release
         }
 
-        var request = URLRequest(url: endpoint)
+        var request = URLRequest(url: try GitHubProxy.applyIfValid(
+            to: endpoint,
+            prefix: defaults.string(forKey: "githubProxyPrefix") ?? ""
+        ))
         request.httpMethod = "GET"
         request.timeoutInterval = 20
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData

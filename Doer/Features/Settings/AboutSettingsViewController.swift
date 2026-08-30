@@ -8,6 +8,7 @@ final class AboutSettingsViewController: ObservableViewController {
 
     private let settings = AppSettings.shared
     private let checkUpdateRow = DataManagementActionRowView()
+    private let githubProxyRow = DataManagementActionRowView()
     private let licenseRow = DataManagementActionRowView()
     private let sourceRow = DataManagementActionRowView()
     private let logsRow = DataManagementActionRowView()
@@ -58,6 +59,7 @@ final class AboutSettingsViewController: ObservableViewController {
         ])
 
         checkUpdateRow.addTarget(self, action: #selector(checkForUpdates), for: .touchUpInside)
+        githubProxyRow.addTarget(self, action: #selector(editGithubProxy), for: .touchUpInside)
         licenseRow.addTarget(self, action: #selector(openLicenses), for: .touchUpInside)
         sourceRow.addTarget(self, action: #selector(openSource), for: .touchUpInside)
         logsRow.addTarget(self, action: #selector(openLogs), for: .touchUpInside)
@@ -94,7 +96,7 @@ final class AboutSettingsViewController: ObservableViewController {
 
         contentStack.addArrangedSubview(makeHero())
 
-        let infoStack = UIStackView(arrangedSubviews: [checkUpdateRow, licenseRow])
+        let infoStack = UIStackView(arrangedSubviews: [checkUpdateRow, githubProxyRow, licenseRow])
         infoStack.axis = .vertical
         infoStack.spacing = 12
         contentStack.addArrangedSubview(makeSection(
@@ -221,6 +223,16 @@ final class AboutSettingsViewController: ObservableViewController {
             tintColor: accent,
             backgroundColor: card
         )
+        let proxy = settings.githubProxyPrefix
+        githubProxyRow.configure(
+            title: String(localized: "update.github_proxy", defaultValue: "GitHub 镜像"),
+            subtitle: proxy.isEmpty
+                ? String(localized: "update.github_proxy.direct", defaultValue: "直连 GitHub")
+                : proxy,
+            symbolName: "arrow.triangle.branch",
+            tintColor: accent,
+            backgroundColor: card
+        )
         licenseRow.configure(
             title: String(localized: "settings.about.open_source_license", defaultValue: "开源许可"),
             subtitle: String(
@@ -313,6 +325,47 @@ final class AboutSettingsViewController: ObservableViewController {
 
     @objc private func checkForUpdates() {
         AppUpdateCoordinator.shared.checkManually(from: self)
+    }
+
+    @objc private func editGithubProxy() {
+        let alert = UIAlertController(
+            title: String(localized: "update.github_proxy", defaultValue: "GitHub 镜像"),
+            message: String(
+                localized: "update.github_proxy.hint",
+                defaultValue: "填写反代前缀，例如 https://ghproxy.com/ ，空则直连。"
+            ),
+            preferredStyle: .alert
+        )
+        alert.addTextField { [weak self] field in
+            field.placeholder = "https://ghproxy.com/"
+            field.text = self?.settings.githubProxyPrefix
+            field.autocapitalizationType = .none
+            field.autocorrectionType = .no
+            field.keyboardType = .URL
+        }
+        alert.addAction(UIAlertAction(title: String(localized: "common.cancel"), style: .cancel))
+        alert.addAction(UIAlertAction(title: String(localized: "common.save", defaultValue: "保存"), style: .default) { [weak self] _ in
+            guard let self else { return }
+            let raw = alert.textFields?.first?.text ?? ""
+            if raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                self.settings.githubProxyPrefix = ""
+                self.refreshDataViews()
+                return
+            }
+            guard GitHubProxy.isValid(raw) else {
+                let invalid = UIAlertController(
+                    title: String(localized: "update.github_proxy", defaultValue: "GitHub 镜像"),
+                    message: GitHubProxyError.invalidPrefix.localizedDescription,
+                    preferredStyle: .alert
+                )
+                invalid.addAction(UIAlertAction(title: String(localized: "common.ok"), style: .default))
+                self.present(invalid, animated: true)
+                return
+            }
+            self.settings.githubProxyPrefix = raw
+            self.refreshDataViews()
+        })
+        present(alert, animated: true)
     }
 
     @objc private func openLicenses() {

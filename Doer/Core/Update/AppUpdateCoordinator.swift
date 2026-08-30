@@ -117,7 +117,15 @@ final class AppUpdateCoordinator {
     }
 
     static func openReleasePage(_ url: URL) {
-        UIApplication.shared.open(url)
+        let prefix = UserDefaults.standard.string(forKey: "githubProxyPrefix") ?? ""
+        let destination: URL
+        do {
+            destination = try GitHubProxy.applyIfValid(to: url, prefix: prefix)
+        } catch {
+            UIApplication.shared.open(url)
+            return
+        }
+        UIApplication.shared.open(destination)
     }
 
     private func present(
