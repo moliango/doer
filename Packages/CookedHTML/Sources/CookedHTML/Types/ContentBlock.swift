@@ -70,6 +70,31 @@ public struct PollBlock: Sendable, Equatable {
     }
 }
 
+public struct PolicyBlock: Sendable, Equatable {
+    public let acceptLabel: String
+    public let revokeLabel: String
+    public let version: String?
+    public let groups: String?
+    public let accepted: Bool
+    public let content: [ContentBlock]
+
+    public init(
+        acceptLabel: String,
+        revokeLabel: String,
+        version: String?,
+        groups: String?,
+        accepted: Bool,
+        content: [ContentBlock]
+    ) {
+        self.acceptLabel = acceptLabel
+        self.revokeLabel = revokeLabel
+        self.version = version
+        self.groups = groups
+        self.accepted = accepted
+        self.content = content
+    }
+}
+
 /// A content block annotated with its original source HTML.
 public struct AnnotatedBlock: Sendable {
     public let block: ContentBlock
@@ -125,6 +150,7 @@ public enum ContentBlock: Sendable, Equatable {
     ///   - items: list items in document order.
     case list(ordered: Bool, start: Int, items: [ListItem])
     case poll(PollBlock)
+    case policy(PolicyBlock)
     case table(headers: [[ContentBlock]], rows: [[[ContentBlock]]])
     case details(summary: [InlineNode], content: [ContentBlock])
     case spoiler(blocks: [ContentBlock])
@@ -162,6 +188,8 @@ public extension ContentBlock {
                 + rows.flatMap { row in row.flatMap(\.imageSourceURLs) }
         case .details(let summary, let content):
             return summary.imageSourceURLs + content.imageSourceURLs
+        case .policy(let policy):
+            return policy.content.imageSourceURLs
         case .codeBlock, .poll, .divider, .rawHTML:
             return []
         }

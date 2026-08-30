@@ -132,6 +132,8 @@ public enum TocExtractor {
                     walk(content)
                 case .discourseQuote(_, _, _, _, _, _, _, let content):
                     walk(content)
+                case .policy(let policy):
+                    walk(policy.content)
                 case .list(_, _, let items):
                     for item in items { walk(item.children) }
                 case .table(let headers, let rows):

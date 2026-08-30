@@ -74,6 +74,8 @@ public enum CookedTextExporter {
         case .poll(let poll):
             let options = poll.options.map(\.text).filter { !$0.isEmpty }.joined(separator: " | ")
             return options.isEmpty ? "[poll]" : "[poll] \(options)"
+        case .policy(let policy):
+            return plainText(from: policy.content)
         case .table(let headers, let rows):
             var lines: [String] = []
             if !headers.isEmpty {
@@ -152,6 +154,8 @@ public enum CookedTextExporter {
         case .poll(let poll):
             let options = poll.options.map { "- [ ] \($0.text)" }.joined(separator: "\n")
             return options.isEmpty ? nil : options
+        case .policy(let policy):
+            return markdown(from: policy.content)
         case .table(let headers, let rows):
             var lines: [String] = []
             if !headers.isEmpty {

@@ -145,6 +145,12 @@ enum BlockExtractor {
         case "img":
             return extractBlockImage(from: element, options: options)
 
+        case "audio":
+            if let audio = extractAudio(from: element, options: options) {
+                return [audio]
+            }
+            return []
+
         case "a":
             // Table cells and unwrapped markdown often emit `<a href="..."><img></a>`
             // at block level. Keep the CDN `src`; the href may be a GitHub blob page.
@@ -391,6 +397,14 @@ enum BlockExtractor {
             return [.poll(poll)]
         }
 
+        if hasClassToken("policy", in: classAttr) {
+            return [.policy(extractPolicy(from: element, options: options))]
+        }
+
+        if let audio = extractAudio(from: element, options: options) {
+            return [audio]
+        }
+
         // Lightbox wrapper
         if classAttr.contains("lightbox-wrapper") {
             if let img = try? element.select("img").first() {
@@ -423,6 +437,53 @@ enum BlockExtractor {
         let inner = extract(from: element, options: options)
         if inner.isEmpty { return [] }
         return inner
+    }
+
+    private static func extractPolicy(from element: Element, options: ParseOptions) -> PolicyBlock {
+        let accept = nonEmptyAttribute("data-accept", from: element) ?? "接受"
+        let revoke = nonEmptyAttribute("data-revoke", from: element) ?? "撤销"
+        let version = nonEmptyAttribute("data-version", from: element)
+        let groups = nonEmptyAttribute("data-groups", from: element)
+        let classAttr = ((try? element.attr("class")) ?? "").lowercased()
+        let accepted = hasClassToken("accepted", in: classAttr)
+            || ((try? element.attr("data-policy-accepted")) ?? "").lowercased() == "true"
+        let body = (try? element.select(".policy-body").first()).map {
+            extract(from: $0, options: options)
+        } ?? extract(from: element, options: options)
+        return PolicyBlock(
+            acceptLabel: accept,
+            revokeLabel: revoke,
+            version: version,
+            groups: groups,
+            accepted: accepted,
+            content: body
+        )
+    }
+
+    private static func extractAudio(from element: Element, options: ParseOptions) -> ContentBlock? {
+        let wrap = ((try? element.attr("data-wrap")) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let isVoice = wrap == "voice" || hasClassToken("d-wrap", in: (try? element.attr("class")) ?? "") && wrap == "voice"
+        let audioElement: Element?
+        if element.tagName().lowercased() == "audio" {
+            audioElement = element
+        } else {
+            audioElement = try? element.select("audio").first()
+        }
+        guard let audioElement else { return nil }
+        let src = ((try? audioElement.attr("src")) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceSrc = (try? audioElement.select("source").first()?.attr("src")) ?? ""
+        let raw = src.isEmpty ? sourceSrc : src
+        let resolved = URLResolver.resolve(raw, baseURL: options.baseURL)
+        guard !resolved.isEmpty else { return nil }
+        return .video(
+            url: resolved,
+            thumbnailURL: nil,
+            title: isVoice ? "voice" : nil,
+            width: nil,
+            height: nil,
+            videoId: nil,
+            provider: isVoice ? "voice" : "audio"
+        )
     }
 
     private static func extractPoll(from element: Element) -> PollBlock? {
@@ -920,6 +981,15 @@ enum BlockExtractor {
                 headers: headers.map { continueOrderedListNumbering($0) },
                 rows: rows.map { row in row.map { continueOrderedListNumbering($0) } }
             )
+        case .policy(let policy):
+            return .policy(PolicyBlock(
+                acceptLabel: policy.acceptLabel,
+                revokeLabel: policy.revokeLabel,
+                version: policy.version,
+                groups: policy.groups,
+                accepted: policy.accepted,
+                content: continueOrderedListNumbering(policy.content)
+            ))
         default:
             return block
         }
@@ -935,7 +1005,7 @@ enum BlockExtractor {
         case .details, .spoiler, .divider:
             return false
         case .paragraph, .heading, .codeBlock, .blockquote, .discourseQuote,
-             .image, .imageGrid, .onebox, .video, .poll, .table, .rawHTML:
+             .image, .imageGrid, .onebox, .video, .poll, .policy, .table, .rawHTML:
             return true
         }
     }

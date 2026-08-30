@@ -829,4 +829,35 @@ final class BlockExtractorTests: XCTestCase {
         XCTAssertEqual(height, 423)
         XCTAssertEqual(parsedHref, href)
     }
+
+    func testPolicyDivExtractsAcceptLabels() {
+        let html = """
+        <div class="policy" data-accept="我已阅读" data-revoke="撤销" data-version="2">
+          <div class="policy-body"><p>条款正文</p></div>
+        </div>
+        """
+        let blocks = CookedHTMLParser.parse(html: html)
+        XCTAssertEqual(blocks.count, 1)
+        guard case .policy(let policy) = blocks[0] else {
+            return XCTFail("Expected policy, got \(blocks[0])")
+        }
+        XCTAssertEqual(policy.acceptLabel, "我已阅读")
+        XCTAssertEqual(policy.revokeLabel, "撤销")
+        XCTAssertEqual(policy.version, "2")
+        XCTAssertFalse(policy.accepted)
+    }
+
+    func testVoiceWrapExtractsAudioVideoBlock() {
+        let html = """
+        <div class="d-wrap" data-wrap="voice">
+          <audio controls><source src="/uploads/short-url/abc.xz" type="audio/mpeg"></audio>
+        </div>
+        """
+        let blocks = CookedHTMLParser.parse(html: html, baseURL: "https://linux.do")
+        guard case .video(let url, _, _, _, _, _, let provider) = blocks[0] else {
+            return XCTFail("Expected video/audio, got \(blocks[0])")
+        }
+        XCTAssertEqual(provider, "voice")
+        XCTAssertTrue(url.contains("abc.xz"))
+    }
 }
