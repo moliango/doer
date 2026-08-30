@@ -129,6 +129,6 @@ final class SignatureImageView: UIView {
 
     @objc private func handleTap() {
         guard didLoadSuccessfully else { return }
-        delegate?.postCell(didTapImageURL: imageURL, imageURLs: [imageURL])
+        delegate?.postCell(didTapImageURL: imageURL, imageURLs: [imageURL], sourceView: imageView)
     }
 }

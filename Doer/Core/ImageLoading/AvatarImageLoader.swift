@@ -55,11 +55,14 @@ enum AvatarImageLoader {
     /// No `.retryFailed` here: a CF challenge HTML response must not be hammered by every
     /// avatar cell. Topic body images use `contentOptions` / user tap uses `forceRetryOptions`.
     /// Memory hits stay sync so scrolling does not flash a placeholder; disk stays async.
+    /// `.delayPlaceholder` keeps the current bitmap (or empty theme fill) until the
+    /// decode finishes — never stamp a gray glyph for one frame.
     static let options: SDWebImageOptions = [
         .continueInBackground,
         .scaleDownLargeImages,
         .highPriority,
         .queryMemoryDataSync,
+        .delayPlaceholder,
     ]
 
     /// Topic cooked images (visible content). Allow one automatic retry after a transient
@@ -71,6 +74,7 @@ enum AvatarImageLoader {
         .scaleDownLargeImages,
         .highPriority,
         .queryMemoryDataSync,
+        .delayPlaceholder,
     ]
 
     /// Explicit user tap-to-retry: clear failed-URL blacklist + skip stale cache entry.
@@ -80,6 +84,7 @@ enum AvatarImageLoader {
         .continueInBackground,
         .scaleDownLargeImages,
         .highPriority,
+        .delayPlaceholder,
     ]
 
     /// Prefetch options: cache-first, lower priority so visible cells win the downloader slots.
@@ -211,6 +216,7 @@ enum AvatarImageLoader {
         imageView.tintColor = .tertiaryLabel
         guard let url else {
             imageView.sd_cancelCurrentImageLoad()
+            ImagePaintPolicy.prepareForLoad(on: imageView)
             if let cached = cachedUserAvatar(baseURL: avatarBaseURL ?? cloudflareBaseURL, userId: userId) {
                 imageView.image = cached.image
             } else {
@@ -222,7 +228,7 @@ enum AvatarImageLoader {
         let cacheKey = url as NSURL
         if let cachedImage = cachedImage(for: url) {
             imageView.sd_cancelCurrentImageLoad()
-            imageView.image = cachedImage
+            ImagePaintPolicy.paint(cachedImage, on: imageView, source: .memory)
             storeUserAvatarIfPossible(
                 cachedImage,
                 url: url,
@@ -232,35 +238,47 @@ enum AvatarImageLoader {
             return
         }
 
+        ImagePaintPolicy.prepareForLoad(on: imageView)
+
         let cachedUserAvatar = cachedUserAvatar(baseURL: avatarBaseURL ?? cloudflareBaseURL, userId: userId)
         if let cachedUserAvatar {
             imageView.image = cachedUserAvatar.image
         }
+        ImagePaintPolicy.applyWaitingFillIfNeeded(on: imageView)
 
         // CF recovery in flight: memory/disk only; don't hammer main-domain images.
         // Disk query is async (no `.queryDiskDataSync`) so the main thread is not blocked.
-        let loadOptions: SDWebImageOptions
+        var loadOptions: SDWebImageOptions
         if CloudflareImageGate.shouldBlockNetworkLoad(url: url, cloudflareBaseURL: cloudflareBaseURL) {
             loadOptions = options.union(.fromCacheOnly)
         } else {
             loadOptions = options
         }
+        loadOptions.insert(.avoidAutoSetImage)
 
         imageView.sd_setImage(
             with: url,
-            placeholderImage: cachedUserAvatar?.image ?? placeholder,
+            placeholderImage: ImagePaintPolicy.placeholderForAsyncLoad(
+                currentImage: imageView.image,
+                memoryHit: false
+            ),
             options: loadOptions,
             context: context(for: url, cloudflareBaseURL: cloudflareBaseURL),
             progress: nil,
-            completed: { image, _, _, _ in
-                guard let image else { return }
-                inMemoryCache.setObject(image, forKey: cacheKey, cost: image.avatarCacheCost)
-                storeUserAvatarIfPossible(
-                    image,
-                    url: url,
-                    baseURL: avatarBaseURL ?? cloudflareBaseURL,
-                    userId: userId
-                )
+            completed: { image, _, cacheType, _ in
+                if let image {
+                    ImagePaintPolicy.paint(image, on: imageView, source: ImagePaintCacheSource(cacheType))
+                    inMemoryCache.setObject(image, forKey: cacheKey, cost: image.avatarCacheCost)
+                    storeUserAvatarIfPossible(
+                        image,
+                        url: url,
+                        baseURL: avatarBaseURL ?? cloudflareBaseURL,
+                        userId: userId
+                    )
+                } else if imageView.image == nil {
+                    imageView.image = placeholder
+                    imageView.tintColor = .tertiaryLabel
+                }
             }
         )
     }
@@ -590,6 +608,12 @@ enum AvatarImageLoader {
             && prefetchOptions.contains(.queryMemoryDataSync)
     }
 
+    static func delaysPlaceholderUntilLoadFinishesForTesting() -> Bool {
+        options.contains(.delayPlaceholder)
+            && contentOptions.contains(.delayPlaceholder)
+            && forceRetryOptions.contains(.delayPlaceholder)
+    }
+
     nonisolated private static func originString(for url: URL) -> String? {
         guard let scheme = url.scheme, let host = url.host else { return nil }
         if let port = url.port {
@@ -744,21 +768,26 @@ enum ForumImageLoader {
     ) {
         guard let url else {
             imageView.sd_cancelCurrentImageLoad()
+            ImagePaintPolicy.prepareForLoad(on: imageView)
             imageView.image = placeholder
             return
         }
 
         if !forceRetry, let cached = AvatarImageLoader.cachedImageIfAvailable(for: url) {
             imageView.sd_cancelCurrentImageLoad()
-            imageView.image = cached
-            completed?(cached, nil, .none, url)
+            ImagePaintPolicy.paint(cached, on: imageView, source: .memory)
+            completed?(cached, nil, .memory, url)
             return
         }
+
+        ImagePaintPolicy.prepareForLoad(on: imageView)
 
         if forceRetry {
             imageView.sd_cancelCurrentImageLoad()
             AvatarImageLoader.clearFailedLoad(for: url)
         }
+
+        ImagePaintPolicy.applyWaitingFillIfNeeded(on: imageView)
 
         var options = forceRetry ? AvatarImageLoader.forceRetryOptions : AvatarImageLoader.contentOptions
         if !forceRetry,
@@ -766,16 +795,25 @@ enum ForumImageLoader {
             // Disk may still have the image; query it off the main thread via SD.
             options.insert(.fromCacheOnly)
         }
+        options.insert(.avoidAutoSetImage)
 
         imageView.sd_setImage(
             with: url,
-            placeholderImage: placeholder,
+            placeholderImage: ImagePaintPolicy.placeholderForAsyncLoad(
+                currentImage: imageView.image,
+                memoryHit: false
+            ),
             options: options,
             context: AvatarImageLoader.context(for: url, cloudflareBaseURL: cloudflareBaseURL),
             progress: nil,
             completed: { image, error, cacheType, imageURL in
-                if let image, let imageURL {
-                    AvatarImageLoader.storeProcessCache(image, for: imageURL)
+                if let image {
+                    ImagePaintPolicy.paint(image, on: imageView, source: ImagePaintCacheSource(cacheType))
+                    if let imageURL {
+                        AvatarImageLoader.storeProcessCache(image, for: imageURL)
+                    }
+                } else if imageView.image == nil {
+                    imageView.image = placeholder
                 }
                 completed?(image, error, cacheType, imageURL)
             }

@@ -282,8 +282,8 @@ private final class ImageCarouselView: UIView, UIScrollViewDelegate {
 
         slides = images.enumerated().map { index, item in
             let slide = ImageCarouselSlideView()
-            slide.configure(item: item, refererBaseURL: config.baseURL) { [weak self] in
-                self?.openViewer(at: index)
+            slide.configure(item: item, refererBaseURL: config.baseURL) { [weak self, weak slide] in
+                self?.openViewer(at: index, sourceView: slide?.heroSourceView)
             }
             pageStack.addArrangedSubview(slide)
             return slide
@@ -415,10 +415,10 @@ private final class ImageCarouselView: UIView, UIScrollViewDelegate {
         scrollView.contentOffset = CGPoint(x: width * CGFloat(currentIndex), y: 0)
     }
 
-    private func openViewer(at index: Int) {
+    private func openViewer(at index: Int, sourceView: UIView?) {
         let item = images[index]
         guard let url = URL(string: item.lightboxURL) else { return }
-        delegate?.postCell(didTapImageURL: url, imageURLs: galleryURLs)
+        delegate?.postCell(didTapImageURL: url, imageURLs: galleryURLs, sourceView: sourceView)
     }
 
     private func updateChrome() {
@@ -463,14 +463,18 @@ private final class ImageCarouselSlideView: UIView {
         return view
     }()
 
+    var heroSourceView: UIView { imageView }
+
     private var tapHandler: (() -> Void)?
     private var loadGeneration = 0
     private var pendingImage: UIImage?
+    private var pendingSource: ImagePaintCacheSource = .memory
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         clipsToBounds = true
         addSubview(imageView)
+        backgroundColor = ImagePaintPolicy.waitingFillColor
         NSLayoutConstraint.activate([
             imageView.topAnchor.constraint(equalTo: topAnchor),
             imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -503,14 +507,28 @@ private final class ImageCarouselSlideView: UIView {
         loadGeneration += 1
         let generation = loadGeneration
         pendingImage = nil
-        imageView.image = nil
+        pendingSource = .memory
         imageView.contentMode = .scaleAspectFit
+        ImagePaintPolicy.prepareForLoad(on: imageView)
         let raw = item.lightboxURL.isEmpty ? item.src : item.lightboxURL
-        guard let url = URL(string: raw) else { return }
+        guard let url = URL(string: raw) else {
+            imageView.image = nil
+            return
+        }
+        if let cached = AvatarImageLoader.cachedImageIfAvailable(for: url) {
+            pendingImage = cached
+            pendingSource = .memory
+            paintIfNeeded()
+            return
+        }
+        if imageView.image == nil {
+            imageView.backgroundColor = ImagePaintPolicy.waitingFillColor
+        }
         ExternalImageFetcher.fetch(url: url, refererBaseURL: refererBaseURL, forceRetry: false) { [weak self] image in
             guard let self, generation == self.loadGeneration else { return }
             self.imageView.contentMode = .scaleAspectFit
             self.pendingImage = image
+            self.pendingSource = .network
             self.paintIfNeeded()
         }
     }
@@ -518,11 +536,17 @@ private final class ImageCarouselSlideView: UIView {
     func paintIfNeeded() {
         guard bounds.width > 1, bounds.height > 1, let image = pendingImage else { return }
         pendingImage = nil
-        // Re-assign so SDAnimatedImageView / iOS 14+ UIImageView actually
-        // displayLayer: after growing from a zero frame (cache hits during init).
-        imageView.image = nil
-        imageView.image = image
-        imageView.layer.setNeedsDisplay()
+        if pendingSource == .memory {
+            // Re-assign so SDAnimatedImageView / iOS 14+ UIImageView actually
+            // displayLayer: after growing from a zero frame (cache hits during init).
+            imageView.image = nil
+            imageView.image = image
+            imageView.layer.setNeedsDisplay()
+            imageView.backgroundColor = .clear
+            imageView.alpha = 1
+        } else {
+            ImagePaintPolicy.paint(image, on: imageView, source: pendingSource)
+        }
     }
 
     @objc private func tapped() {

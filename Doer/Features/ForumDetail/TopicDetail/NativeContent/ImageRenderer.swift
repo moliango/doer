@@ -128,7 +128,7 @@ final class TappableImageContainer: UIView {
         layer.cornerRadius = isFullWidth ? 10 : 0
         layer.cornerCurve = .continuous
         clipsToBounds = isFullWidth
-        imageView.backgroundColor = .secondarySystemFill
+        imageView.backgroundColor = ImagePaintPolicy.waitingFillColor
         imageView.layer.cornerRadius = 10
         imageView.layer.cornerCurve = .continuous
         imageView.clipsToBounds = true
@@ -169,13 +169,27 @@ final class TappableImageContainer: UIView {
         loadGeneration += 1
         let generation = loadGeneration
 
-        didFailLoad = false
-        hasDisplayedImage = false
-        imageView.backgroundColor = .secondarySystemFill
-        imageView.contentMode = .scaleAspectFill
-        imageView.tintColor = nil
         imageView.sd_cancelCurrentImageLoad()
-        imageView.image = nil
+        ImagePaintPolicy.prepareForLoad(on: imageView)
+
+        if !forceRetry, let cached = AvatarImageLoader.cachedImageIfAvailable(for: url) {
+            applyLoadResult(
+                cached,
+                generation: generation,
+                containerWidth: containerWidth,
+                hasOriginalSize: hasOriginalSize,
+                source: .memory
+            )
+            return
+        }
+
+        didFailLoad = false
+        if imageView.image == nil {
+            imageView.backgroundColor = ImagePaintPolicy.waitingFillColor
+            imageView.contentMode = .scaleAspectFill
+            imageView.tintColor = nil
+        }
+        hasDisplayedImage = hasDisplayedImage && imageView.image != nil
 
         // If nothing arrives in time, flip to tap-to-retry instead of an endless gray tile
         // (which made taps open the gallery / do nothing).
@@ -185,7 +199,8 @@ final class TappableImageContainer: UIView {
                 nil,
                 generation: generation,
                 containerWidth: containerWidth,
-                hasOriginalSize: hasOriginalSize
+                hasOriginalSize: hasOriginalSize,
+                source: .network
             )
         }
         loadTimeoutWorkItem = timeout
@@ -207,7 +222,8 @@ final class TappableImageContainer: UIView {
                 image,
                 generation: generation,
                 containerWidth: containerWidth,
-                hasOriginalSize: hasOriginalSize
+                hasOriginalSize: hasOriginalSize,
+                source: .network
             )
         }
     }
@@ -216,7 +232,8 @@ final class TappableImageContainer: UIView {
         _ image: UIImage?,
         generation: Int,
         containerWidth: CGFloat,
-        hasOriginalSize: Bool
+        hasOriginalSize: Bool,
+        source: ImagePaintCacheSource
     ) {
         guard generation == loadGeneration else { return }
         loadTimeoutWorkItem?.cancel()
@@ -249,10 +266,8 @@ final class TappableImageContainer: UIView {
         didFailLoad = false
         hasDisplayedImage = true
         accessibilityLabel = nil
-        imageView.backgroundColor = .clear
         imageView.contentMode = .scaleAspectFit
-        imageView.tintColor = nil
-        imageView.image = image
+        ImagePaintPolicy.paint(image, on: imageView, source: source)
         if image.size.width > 1, image.size.height > 1 {
             let targetWidth = max(
                 imageWidthConstraint.isActive ? imageWidthConstraint.constant : containerWidth,
@@ -292,7 +307,7 @@ final class TappableImageContainer: UIView {
         }
         guard let imageURL else { return }
         let imageURLs = galleryImageURLs.isEmpty ? [imageURL] : galleryImageURLs
-        delegate?.postCell(didTapImageURL: imageURL, imageURLs: imageURLs)
+        delegate?.postCell(didTapImageURL: imageURL, imageURLs: imageURLs, sourceView: imageView)
     }
 
     func cancelImageLoad() {

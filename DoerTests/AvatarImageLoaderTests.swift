@@ -51,4 +51,8 @@ final class AvatarImageLoaderTests: XCTestCase {
     func testImageLoadOptionsQueryMemorySynchronously() {
         XCTAssertTrue(AvatarImageLoader.usesSynchronousMemoryCacheQueryForTesting())
     }
+
+    func testImageLoadOptionsDelayPlaceholderUntilFinished() {
+        XCTAssertTrue(AvatarImageLoader.delaysPlaceholderUntilLoadFinishesForTesting())
+    }
 }

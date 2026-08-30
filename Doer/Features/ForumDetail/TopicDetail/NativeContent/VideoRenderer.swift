@@ -10,8 +10,11 @@ enum VideoRenderer: BlockRenderer {
     }
 
     static func render(_ block: ContentBlock, config: NativeRenderConfig, delegate: PostCellDelegate?) -> UIView {
-        guard case .video(let url, let thumbnailURL, let title, let width, let height, _, _) = block else {
+        guard case .video(let url, let thumbnailURL, let title, let width, let height, _, let provider) = block else {
             return UIView()
+        }
+        if provider == "voice" || provider == "audio" {
+            return VoiceMessageView(url: url, isVoice: provider == "voice")
         }
 
         let container = VideoCardView(
@@ -272,6 +275,61 @@ final class VideoPlaybackPositionStore {
 
     private func normalized(_ url: String) -> String {
         url.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+}
+
+final class VoiceMessageView: UIView {
+    private let url: String
+    private var player: AVPlayer?
+    private let playButton = UIButton(type: .system)
+
+    init(url: String, isVoice: Bool) {
+        self.url = url
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        backgroundColor = AppSettings.shared.themeStyle.accentColor.withAlphaComponent(0.12)
+        layer.cornerRadius = 18
+        layer.cornerCurve = .continuous
+        playButton.translatesAutoresizingMaskIntoConstraints = false
+        playButton.setImage(UIImage(systemName: "play.fill"), for: .normal)
+        playButton.tintColor = AppSettings.shared.themeStyle.accentColor
+        playButton.addTarget(self, action: #selector(togglePlay), for: .touchUpInside)
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.text = isVoice
+            ? String(localized: "post.voice.message", defaultValue: "语音")
+            : String(localized: "post.audio.message", defaultValue: "音频")
+        label.font = .systemFont(ofSize: 15, weight: .medium)
+        addSubview(playButton)
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 44),
+            playButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            playButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            playButton.widthAnchor.constraint(equalToConstant: 28),
+            label.leadingAnchor.constraint(equalTo: playButton.trailingAnchor, constant: 8),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    @objc private func togglePlay() {
+        if player == nil, let resolved = URL(string: url) {
+            player = AVPlayer(url: resolved)
+        }
+        guard let player else { return }
+        if player.rate > 0 {
+            player.pause()
+            playButton.setImage(UIImage(systemName: "play.fill"), for: .normal)
+        } else {
+            player.play()
+            playButton.setImage(UIImage(systemName: "pause.fill"), for: .normal)
+        }
     }
 }
 
