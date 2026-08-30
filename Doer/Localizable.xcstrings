@@ -2811,6 +2811,17 @@
         }
       }
     },
+    "common.add" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "添加"
+          }
+        }
+      }
+    },
     "common.all" : {
       "localizations" : {
         "en" : {
@@ -5639,6 +5650,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜索話題..."
+          }
+        }
+      }
+    },
+    "home.split.placeholder" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "选择一个话题"
           }
         }
       }
@@ -8860,6 +8882,17 @@
         }
       }
     },
+    "me.quick.following" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "我关注的人"
+          }
+        }
+      }
+    },
     "me.quick.history" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
@@ -11002,6 +11035,149 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "了解 Doer"
+          }
+        }
+      }
+    },
+    "network.health.concurrency" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "并发窗口"
+          }
+        }
+      }
+    },
+    "network.health.concurrency.format %d %d" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "下载 %1$d · 预取 %2$d（头像档位：%3$@）"
+          }
+        }
+      }
+    },
+    "network.health.csrf" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "CSRF"
+          }
+        }
+      }
+    },
+    "network.health.csrf.missing" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "尚未缓存令牌（写操作时会现取）"
+          }
+        }
+      }
+    },
+    "network.health.csrf.present" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "当前会话已缓存令牌"
+          }
+        }
+      }
+    },
+    "network.health.engine.doh" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "DoH 引擎"
+          }
+        }
+      }
+    },
+    "network.health.engine.system" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "系统 DNS"
+          }
+        }
+      }
+    },
+    "network.health.engine.system.detail" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "未开启 App 内 DoH"
+          }
+        }
+      }
+    },
+    "network.health.readonly" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "只读快照，不会改 Cookie 登录或自动修复通道。"
+          }
+        }
+      }
+    },
+    "network.health.shield" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Cloudflare 盾"
+          }
+        }
+      }
+    },
+    "network.health.shield.cooling" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "验证冷却中，暂不自动弹出"
+          }
+        }
+      }
+    },
+    "network.health.subtitle" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "只读查看当前通道、盾态、CSRF 与并发"
+          }
+        }
+      }
+    },
+    "network.health.title" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "网络健康"
           }
         }
       }
@@ -15082,6 +15258,17 @@
         }
       }
     },
+    "post.audio.message" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "音频"
+          }
+        }
+      }
+    },
     "post.boost" : {
       "localizations" : {
         "en" : {
@@ -15362,6 +15549,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "還有 %lld 條鏈接"
+          }
+        }
+      }
+    },
+    "post.policy.accepted" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "已接受"
+          }
+        }
+      }
+    },
+    "post.policy.pending" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "尚未接受"
           }
         }
       }
@@ -15809,6 +16018,17 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "未解决"
+          }
+        }
+      }
+    },
+    "post.voice.message" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "语音"
           }
         }
       }
@@ -16472,6 +16692,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "更多工具"
+          }
+        }
+      }
+    },
+    "reply.paste.image.invalid" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "无法读取剪贴板图片"
           }
         }
       }
@@ -17381,13 +17612,46 @@
         }
       }
     },
-    "reply.tool.poll.message" : {
+    "reply.tool.poll.chart" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "每行一个选项，至少两个"
+            "value" : "图表"
+          }
+        }
+      }
+    },
+    "reply.tool.poll.chart.bar" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "柱状"
+          }
+        }
+      }
+    },
+    "reply.tool.poll.chart.pie" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "饼图"
+          }
+        }
+      }
+    },
+    "reply.tool.poll.close" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "定时关闭"
           }
         }
       }
@@ -17399,6 +17663,17 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "多选"
+          }
+        }
+      }
+    },
+    "reply.tool.poll.number" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "数字"
           }
         }
       }
@@ -17431,7 +17706,62 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "选项 A\n选项 B"
+            "value" : "每行一个选项，至少两个"
+          }
+        }
+      }
+    },
+    "reply.tool.poll.public" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "公开投票人"
+          }
+        }
+      }
+    },
+    "reply.tool.poll.results" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "结果可见性"
+          }
+        }
+      }
+    },
+    "reply.tool.poll.results.always" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "始终"
+          }
+        }
+      }
+    },
+    "reply.tool.poll.results.close" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "关闭后"
+          }
+        }
+      }
+    },
+    "reply.tool.poll.results.vote" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "投票后"
           }
         }
       }
@@ -17443,6 +17773,17 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "单选"
+          }
+        }
+      }
+    },
+    "reply.tool.poll.type" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "类型"
           }
         }
       }
@@ -17745,6 +18086,61 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "上传中 %1$lld/%2$lld"
+          }
+        }
+      }
+    },
+    "reply.voice.cancelled" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "已取消"
+          }
+        }
+      }
+    },
+    "reply.voice.hint" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "按住录音，松手上传"
+          }
+        }
+      }
+    },
+    "reply.voice.hold" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "按住说话"
+          }
+        }
+      }
+    },
+    "reply.voice.mic_denied" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "没有麦克风权限，无法录音"
+          }
+        }
+      }
+    },
+    "reply.voice.recording" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "正在录音…"
           }
         }
       }
@@ -18582,6 +18978,72 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "无标题"
+          }
+        }
+      }
+    },
+    "seeking.add" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "添加用户"
+          }
+        }
+      }
+    },
+    "seeking.add.hint" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "输入用户名"
+          }
+        }
+      }
+    },
+    "seeking.empty.feed" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "暂无动态"
+          }
+        }
+      }
+    },
+    "seeking.empty.users" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "添加要关注的用户，查看他们的发帖和回复"
+          }
+        }
+      }
+    },
+    "seeking.remove" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "取消监控"
+          }
+        }
+      }
+    },
+    "seeking.title" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "追觅"
           }
         }
       }
@@ -19924,6 +20386,72 @@
         }
       }
     },
+    "settings.appearance.wallpaper" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "自定义背景"
+          }
+        }
+      }
+    },
+    "settings.appearance.wallpaper.choose" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "选择图片"
+          }
+        }
+      }
+    },
+    "settings.appearance.wallpaper.clear" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "清除背景"
+          }
+        }
+      }
+    },
+    "settings.appearance.wallpaper.encode_failed" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "无法保存背景图"
+          }
+        }
+      }
+    },
+    "settings.appearance.wallpaper.off" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "选择一张本地图片铺在列表和详情背后"
+          }
+        }
+      }
+    },
+    "settings.appearance.wallpaper.on" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "已设置本地壁纸，点按可更换或清除"
+          }
+        }
+      }
+    },
     "settings.appearance.xiaohongshu_staggered_cards" : {
       "localizations" : {
         "en" : {
@@ -20670,6 +21198,50 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "列表卡片是否显示标签"
+          }
+        }
+      }
+    },
+    "settings.composer.auto_pangu" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "中英文自动空格"
+          }
+        }
+      }
+    },
+    "settings.composer.auto_pangu.subtitle" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "发送和预览时在中文与英文、数字之间插入空格，代码和链接不受影响"
+          }
+        }
+      }
+    },
+    "settings.composer.experimental_wysiwyg" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "实验性所见即所得"
+          }
+        }
+      }
+    },
+    "settings.composer.experimental_wysiwyg.subtitle" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "回复时使用块级编辑器；默认关闭。现有 Aa/MD 编辑器不受影响"
           }
         }
       }
@@ -28080,6 +28652,61 @@
         }
       }
     },
+    "topic.filter_user" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "只看 %@"
+          }
+        }
+      }
+    },
+    "topic.find" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "帖内查找"
+          }
+        }
+      }
+    },
+    "topic.find.close" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "关闭查找"
+          }
+        }
+      }
+    },
+    "topic.find.next" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "下一条"
+          }
+        }
+      }
+    },
+    "topic.find.previous" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "上一条"
+          }
+        }
+      }
+    },
     "topic.image.load_failed" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
@@ -29117,6 +29744,50 @@
         }
       }
     },
+    "update.github_proxy" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "GitHub 镜像"
+          }
+        }
+      }
+    },
+    "update.github_proxy.direct" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "直连 GitHub"
+          }
+        }
+      }
+    },
+    "update.github_proxy.hint" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "填写反代前缀，例如 https://ghproxy.com/ ，空则直连。"
+          }
+        }
+      }
+    },
+    "update.github_proxy.invalid" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "GitHub 镜像前缀不是合法的 http(s) 地址"
+          }
+        }
+      }
+    },
     "update.later" : {
       "localizations" : {
         "en" : {
@@ -29394,6 +30065,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "次點擊"
+          }
+        }
+      }
+    },
+    "user.profile.filter_posts" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "只看此人"
+          }
+        }
+      }
+    },
+    "user.profile.filter_posts.cancel" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "取消只看此人"
           }
         }
       }
