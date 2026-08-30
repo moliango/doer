@@ -583,6 +583,18 @@ final class MeViewController: ObservableViewController {
                 tintColor: .systemPurple,
                 action: { [weak self] in self?.openDiscourseHistory() }
             ),
+            MeQuickActionItem(
+                title: String(localized: "me.quick.following", defaultValue: "我关注的人"),
+                symbolName: "person.2.fill",
+                tintColor: .systemPink,
+                action: { [weak self] in self?.openFollowing() }
+            ),
+            MeQuickActionItem(
+                title: String(localized: "seeking.title", defaultValue: "追觅"),
+                symbolName: "binoculars.fill",
+                tintColor: .systemCyan,
+                action: { [weak self] in self?.openSeeking() }
+            ),
         ])
         quickActionsCard.alpha = isLoggedIn ? 1 : 0.55
         quickActionsCard.isUserInteractionEnabled = true
@@ -756,6 +768,27 @@ final class MeViewController: ObservableViewController {
         case .cdk:
             return String(localized: "extensions.connecting.cdk", defaultValue: "正在连接 CDK…")
         }
+    }
+
+    private func openFollowing() {
+        guard authGate?.isAuthenticated() == true,
+              let username = viewModel.currentUser?.username ?? authGate?.currentUsername()
+        else {
+            loginTapped()
+            return
+        }
+        navigationController?.pushViewController(
+            UserSocialListViewController(api: api, username: username, mode: .following),
+            animated: true
+        )
+    }
+
+    private func openSeeking() {
+        guard authGate?.isAuthenticated() == true else {
+            loginTapped()
+            return
+        }
+        navigationController?.pushViewController(SeekingViewController(api: api), animated: true)
     }
 
     private func openMyTopics() {

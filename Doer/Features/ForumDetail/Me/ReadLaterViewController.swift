@@ -376,12 +376,28 @@ extension ReadLaterViewController: UITableViewDataSource, UITableViewDelegate {
         ) { [weak self] _ in
             self?.openReadLaterEntry(at: indexPath)
         }
+        let previewTarget = tableView.cellForRow(at: indexPath).map { TopicPreviewMenu.targetView(in: $0) }
         return TopicPreviewMenu.configuration(
             topic: topic,
             api: api,
             categoryName: topic.categoryId.flatMap { categoriesById[$0]?.name },
-            actions: [open]
+            actions: [open],
+            previewTargetView: previewTarget
         )
+    }
+
+    func tableView(
+        _ tableView: UITableView,
+        previewForHighlightingContextMenuWithConfiguration configuration: UIContextMenuConfiguration
+    ) -> UITargetedPreview? {
+        TopicPreviewMenu.targetedPreview(for: configuration)
+    }
+
+    func tableView(
+        _ tableView: UITableView,
+        previewForDismissingContextMenuWithConfiguration configuration: UIContextMenuConfiguration
+    ) -> UITargetedPreview? {
+        TopicPreviewMenu.targetedPreview(for: configuration)
     }
 
     func tableView(
@@ -389,6 +405,7 @@ extension ReadLaterViewController: UITableViewDataSource, UITableViewDelegate {
         willPerformPreviewActionForMenuWith configuration: UIContextMenuConfiguration,
         animator: UIContextMenuInteractionCommitAnimating
     ) {
+        TopicPreviewMenu.applyCommitPopIfAllowed(to: animator)
         guard let number = configuration.identifier as? NSNumber,
               let index = entries.firstIndex(where: { $0.topicId == number.intValue })
         else { return }
@@ -414,7 +431,7 @@ extension ReadLaterViewController: UITableViewDataSource, UITableViewDelegate {
             username: username
         )
         let resume: Int? = {
-            guard merged > 0 else { return nil }
+            guard merged > 1 else { return nil }
             let highest = topic?.highestPostNumber ?? topic?.postsCount ?? 0
             if highest > 0, merged >= highest { return nil }
             return merged + 1

@@ -12,6 +12,9 @@ private final class ProfilePreviewButton: UIButton {
 
 final class UserProfilePreviewViewController: ObservableViewController {
     var onViewProfile: ((String) -> Void)?
+    /// Topic-detail only: filter the current thread to this user.
+    var onFilterPostsByUsername: ((String) -> Void)?
+    var isFilteringThisUser = false
 
     private let api: DiscourseAPI
     private let viewModel: UserProfileViewModel
@@ -70,6 +73,25 @@ final class UserProfilePreviewViewController: ObservableViewController {
         button.layer.cornerRadius = 12
         button.layer.cornerCurve = .continuous
         button.addTarget(self, action: #selector(viewProfileTapped), for: .touchUpInside)
+        return button
+    }()
+
+    private lazy var filterPostsButton: UIButton = {
+        var config = UIButton.Configuration.tinted()
+        config.title = String(localized: "user.profile.filter_posts", defaultValue: "只看此人")
+        config.image = UIImage(systemName: "line.3.horizontal.decrease.circle")
+        config.imagePadding = 6
+        config.cornerStyle = .large
+        config.baseForegroundColor = AppSettings.shared.themeStyle.accentColor
+        config.baseBackgroundColor = AppSettings.shared.themeStyle.accentColor
+        config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12)
+        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+        config.titleTextAttributesTransformer = compactButtonTextAttributes(size: 14)
+        let button = ProfilePreviewButton(type: .system)
+        button.configuration = config
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.addTarget(self, action: #selector(filterPostsTapped), for: .touchUpInside)
+        button.isHidden = true
         return button
     }()
 
@@ -389,11 +411,14 @@ final class UserProfilePreviewViewController: ObservableViewController {
 
         cardStack.addArrangedSubview(primaryRow)
         cardStack.setCustomSpacing(8, after: primaryRow)
+        cardStack.addArrangedSubview(filterPostsButton)
+        cardStack.setCustomSpacing(8, after: filterPostsButton)
         cardStack.addArrangedSubview(bottomRow)
 
         NSLayoutConstraint.activate([
             messageButton.heightAnchor.constraint(equalToConstant: UserProfileCardLayout.actionHeight),
             followButton.heightAnchor.constraint(equalToConstant: UserProfileCardLayout.actionHeight),
+            filterPostsButton.heightAnchor.constraint(equalToConstant: UserProfileCardLayout.actionHeight),
             viewProfileButton.heightAnchor.constraint(equalToConstant: UserProfileCardLayout.actionHeight),
             moreButton.widthAnchor.constraint(equalToConstant: UserProfileCardLayout.actionHeight),
             moreButton.heightAnchor.constraint(equalToConstant: UserProfileCardLayout.actionHeight),
@@ -681,11 +706,44 @@ final class UserProfilePreviewViewController: ObservableViewController {
         followButton.configuration = followConfig
 
         moreButton.menu = makeMoreMenu(isCurrentUser: isCurrentUser)
+        configureFilterPostsButton()
+    }
+
+    private func configureFilterPostsButton() {
+        let canFilter = onFilterPostsByUsername != nil
+        filterPostsButton.isHidden = !canFilter
+        guard canFilter else { return }
+        var config = filterPostsButton.configuration
+        config?.title = isFilteringThisUser
+            ? String(localized: "user.profile.filter_posts.cancel", defaultValue: "取消只看此人")
+            : String(localized: "user.profile.filter_posts", defaultValue: "只看此人")
+        config?.image = UIImage(
+            systemName: isFilteringThisUser
+                ? "line.3.horizontal.decrease.circle.fill"
+                : "line.3.horizontal.decrease.circle"
+        )
+        filterPostsButton.configuration = config
+        filterPostsButton.accessibilityLabel = config?.title
     }
 
     private func makeMoreMenu(isCurrentUser: Bool) -> UIMenu {
         let state = viewModel.relationshipController.state
         var children: [UIMenuElement] = []
+
+        if onFilterPostsByUsername != nil {
+            children.append(UIAction(
+                title: isFilteringThisUser
+                    ? String(localized: "user.profile.filter_posts.cancel", defaultValue: "取消只看此人")
+                    : String(localized: "user.profile.filter_posts", defaultValue: "只看此人"),
+                image: UIImage(
+                    systemName: isFilteringThisUser
+                        ? "line.3.horizontal.decrease.circle.fill"
+                        : "line.3.horizontal.decrease.circle"
+                )
+            ) { [weak self] _ in
+                self?.filterPostsTapped()
+            })
+        }
 
         if !isCurrentUser {
             if state.isMuted || state.isIgnored {
@@ -945,6 +1003,11 @@ final class UserProfilePreviewViewController: ObservableViewController {
         var profileConfig = viewProfileButton.configuration
         profileConfig?.baseForegroundColor = .label
         viewProfileButton.configuration = profileConfig
+
+        var filterConfig = filterPostsButton.configuration
+        filterConfig?.baseBackgroundColor = theme.accentColor.withAlphaComponent(0.16)
+        filterConfig?.baseForegroundColor = theme.accentColor
+        filterPostsButton.configuration = filterConfig
     }
 
     private func resolvedFlairURL(_ flairUrl: String?) -> URL? {
@@ -987,6 +1050,15 @@ final class UserProfilePreviewViewController: ObservableViewController {
 
     @objc private func backgroundTapped() {
         dismiss(animated: true)
+    }
+
+    @objc private func filterPostsTapped() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let username = viewModel.userCard?.username ?? viewModel.userProfile?.username ?? viewModel.username
+        let handler = onFilterPostsByUsername
+        dismiss(animated: true) {
+            handler?(username)
+        }
     }
 
     @objc private func viewProfileTapped() {

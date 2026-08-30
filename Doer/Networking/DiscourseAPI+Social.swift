@@ -397,4 +397,20 @@ extension DiscourseAPI {
             throw DiscourseAPIError(messages: ["Failed to mark notifications read"], errorType: nil)
         }
     }
+
+    func acceptPolicy(postId: Int) async throws {
+        try await requestVoid(
+            route: .acceptPolicy,
+            parameters: ["post_id": postId],
+            encoding: URLEncoding.httpBody
+        )
+    }
+
+    func unacceptPolicy(postId: Int) async throws {
+        try await requestVoid(
+            route: .unacceptPolicy,
+            parameters: ["post_id": postId],
+            encoding: URLEncoding.httpBody
+        )
+    }
 }

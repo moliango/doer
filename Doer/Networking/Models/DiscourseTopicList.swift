@@ -210,7 +210,8 @@ nonisolated struct DiscourseTopicList: Decodable {
             categoryId: Int?,
             createdAt: String,
             lastPostedAt: String?,
-            tags: [String]
+            tags: [String],
+            excerpt: String? = nil
         ) -> Topic {
             let fancy = fancyTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return Topic(
@@ -225,7 +226,7 @@ nonisolated struct DiscourseTopicList: Decodable {
                 lastPostedAt: lastPostedAt,
                 pinned: nil,
                 unpinned: nil,
-                excerpt: nil,
+                excerpt: excerpt,
                 posters: nil,
                 tags: tags,
                 unseen: false,

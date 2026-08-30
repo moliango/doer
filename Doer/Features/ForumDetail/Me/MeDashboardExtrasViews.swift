@@ -381,7 +381,7 @@ final class MeQuickActionsCardView: UIView {
             stackView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 8),
             stackView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -8),
             stackView.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -14),
-            stackView.heightAnchor.constraint(equalToConstant: 78),
+            stackView.heightAnchor.constraint(greaterThanOrEqualToConstant: 78),
         ])
     }
 
@@ -393,8 +393,27 @@ final class MeQuickActionsCardView: UIView {
             stackView.removeArrangedSubview($0)
             $0.removeFromSuperview()
         }
-        for item in items {
-            stackView.addArrangedSubview(makeItemButton(item))
+        stackView.axis = .vertical
+        stackView.spacing = 8
+        let columns = min(4, max(items.count, 1))
+        var index = 0
+        while index < items.count {
+            let row = UIStackView()
+            row.axis = .horizontal
+            row.alignment = .fill
+            row.distribution = .fillEqually
+            row.spacing = 4
+            let slice = items[index..<min(index + columns, items.count)]
+            for item in slice {
+                row.addArrangedSubview(makeItemButton(item))
+            }
+            while row.arrangedSubviews.count < columns {
+                let spacer = UIView()
+                spacer.isUserInteractionEnabled = false
+                row.addArrangedSubview(spacer)
+            }
+            stackView.addArrangedSubview(row)
+            index += columns
         }
     }
 
