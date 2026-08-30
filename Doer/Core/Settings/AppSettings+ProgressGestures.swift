@@ -150,6 +150,40 @@ extension AppSettings {
         }
     }
 
+    /// Experimental block WYSIWYG in the reply composer. Default off; existing Aa/MD path stays unchanged.
+    var experimentalRichComposerEnabled: Bool {
+        get { bool(forKey: "experimentalRichComposerEnabled", defaultValue: false) }
+        set {
+            defaults.set(newValue, forKey: "experimentalRichComposerEnabled")
+            notifyChanged()
+        }
+    }
+
+    /// Insert spaces between CJK and Latin/digits on composer send and preview.
+    var autoPanguSpacing: Bool {
+        get { bool(forKey: "autoPanguSpacing", defaultValue: true) }
+        set {
+            defaults.set(newValue, forKey: "autoPanguSpacing")
+            notifyChanged()
+        }
+    }
+
+    var customListBackgroundEnabled: Bool {
+        get { defaults.bool(forKey: "customListBackgroundEnabled") }
+        set {
+            defaults.set(newValue, forKey: "customListBackgroundEnabled")
+            notifyChanged()
+        }
+    }
+
+    var githubProxyPrefix: String {
+        get { defaults.string(forKey: "githubProxyPrefix") ?? "" }
+        set {
+            defaults.set(GitHubProxy.normalize(newValue), forKey: "githubProxyPrefix")
+            notifyChanged()
+        }
+    }
+
     enum ContentFontSize: Int, CaseIterable {
         case small = 0
         case standard = 1

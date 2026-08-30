@@ -86,6 +86,8 @@ extension AppSettings {
                 defaultExpandRelatedLinks: defaultExpandRelatedLinks,
                 showSuggestedTopics: showSuggestedTopics,
                 composerInstantRender: composerInstantRender,
+                experimentalRichComposerEnabled: experimentalRichComposerEnabled,
+                autoPanguSpacing: autoPanguSpacing,
                 clipboardTopicLinkPromptEnabled: clipboardTopicLinkPromptEnabled,
                 showUserSignatures: showUserSignatures,
                 nestedReplyViewEnabled: nestedReplyViewEnabled,
@@ -241,6 +243,12 @@ extension AppSettings {
         }
         if let value = preferences.composerInstantRender {
             composerInstantRender = value
+        }
+        if let value = preferences.experimentalRichComposerEnabled {
+            experimentalRichComposerEnabled = value
+        }
+        if let value = preferences.autoPanguSpacing {
+            autoPanguSpacing = value
         }
         if let value = preferences.clipboardTopicLinkPromptEnabled {
             clipboardTopicLinkPromptEnabled = value
@@ -447,6 +455,8 @@ extension AppSettings {
         let defaultExpandRelatedLinks: Bool?
         let showSuggestedTopics: Bool?
         let composerInstantRender: Bool?
+        let experimentalRichComposerEnabled: Bool?
+        let autoPanguSpacing: Bool?
         let clipboardTopicLinkPromptEnabled: Bool?
         let showUserSignatures: Bool?
         let nestedReplyViewEnabled: Bool?

@@ -36,6 +36,85 @@ protocol ComposerTextSurface: AnyObject {
     func composerExitMarkdownPreviewIfNeeded()
 }
 
+// MARK: - Paste-capable body text view
+
+/// Shared composer body that uploads clipboard images instead of inserting a broken attachment.
+final class ComposerBodyTextView: UITextView, UITextPasteDelegate {
+    weak var pasteCoordinator: ComposerMarkdownCoordinator?
+
+    override init(frame: CGRect, textContainer: NSTextContainer?) {
+        super.init(frame: frame, textContainer: textContainer)
+        pasteDelegate = self
+        pasteConfiguration?.addTypeIdentifiers(forAccepting: UIImage.self)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(paste(_:)),
+           pasteCoordinator != nil,
+           UIPasteboard.general.hasImages,
+           UIPasteboard.general.image != nil {
+            return true
+        }
+        return super.canPerformAction(action, withSender: sender)
+    }
+
+    override func paste(_ sender: Any?) {
+        if interceptClipboardImage() { return }
+        super.paste(sender)
+    }
+
+    override func paste(itemProviders: [NSItemProvider]) {
+        if let provider = itemProviders.first(where: Self.isImageProvider) {
+            loadPastedImage(from: provider)
+            return
+        }
+        super.paste(itemProviders: itemProviders)
+    }
+
+    private static func isImageProvider(_ provider: NSItemProvider) -> Bool {
+        provider.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+            || provider.canLoadObject(ofClass: UIImage.self)
+    }
+
+    private func interceptClipboardImage() -> Bool {
+        guard let coordinator = pasteCoordinator else { return false }
+        let board = UIPasteboard.general
+        guard board.hasImages, let image = board.image else { return false }
+        coordinator.handlePastedImage(image)
+        return true
+    }
+
+    private func loadPastedImage(from provider: NSItemProvider) {
+        guard let coordinator = pasteCoordinator, coordinator.claimPastedImageHandling() else { return }
+        provider.loadObject(ofClass: UIImage.self) { object, _ in
+            Task { @MainActor in
+                guard let image = object as? UIImage else {
+                    coordinator.abortPastedImageHandling()
+                    return
+                }
+                coordinator.completePastedImageHandling(image)
+            }
+        }
+    }
+
+    func textPasteConfigurationSupporting(
+        _ textPasteConfigurationSupporting: UITextPasteConfigurationSupporting,
+        transform item: UITextPasteItem
+    ) {
+        if Self.isImageProvider(item.itemProvider) {
+            item.setNoResult()
+            loadPastedImage(from: item.itemProvider)
+            return
+        }
+        item.setDefaultResult()
+    }
+}
+
 // MARK: - Header icon button
 
 /// Own circle + glyph views so UIButton cannot stretch or offset the symbol.
@@ -382,6 +461,7 @@ final class ComposerMarkdownCoordinator: NSObject {
 
     weak var surface: ComposerTextSurface?
     private(set) var pendingMediaKind: MediaPickKind?
+    private var isHandlingPastedImage = false
 
     func handleTool(_ tool: ComposerMarkdownTool) {
         guard let surface, !surface.composerIsUploading else { return }
@@ -479,53 +559,22 @@ final class ComposerMarkdownCoordinator: NSObject {
 
     private func presentPollBuilder() {
         guard let surface else { return }
-        let alert = UIAlertController(
-            title: String(localized: "reply.tool.poll", defaultValue: "插入投票"),
-            message: String(localized: "reply.tool.poll.message", defaultValue: "每行一个选项，至少两个"),
-            preferredStyle: .alert
-        )
-        alert.addTextField { field in
-            field.placeholder = String(localized: "reply.tool.poll.options", defaultValue: "选项 A\n选项 B")
+        let selected = surface.composerSelectedRawText()
+        let spec = ComposerPollSpec.parse(from: selected) ?? ComposerPollSpec.blank()
+        let builder = PollBuilderViewController(spec: spec)
+        builder.onSave = { [weak self] spec in
+            guard let self, let surface = self.surface else { return }
+            let selected = surface.composerSelectedRawText()
+            if ComposerPollSpec.parse(from: selected) != nil {
+                let updated = ComposerPollSpec.replacingPoll(in: selected, with: spec)
+                surface.composerInsertRaw(updated)
+            } else {
+                surface.composerInsertRaw(spec.bbcode)
+            }
+            surface.composerCloseToolPanel(returnToKeyboard: true)
         }
-        let multi = UIAlertAction(
-            title: String(localized: "reply.tool.poll.multiple", defaultValue: "多选"),
-            style: .default
-        ) { [weak self] _ in
-            self?.insertPollBBCode(optionsText: alert.textFields?.first?.text, type: "multiple")
-        }
-        let single = UIAlertAction(
-            title: String(localized: "reply.tool.poll.single", defaultValue: "单选"),
-            style: .default
-        ) { [weak self] _ in
-            self?.insertPollBBCode(optionsText: alert.textFields?.first?.text, type: "regular")
-        }
-        alert.addAction(single)
-        alert.addAction(multi)
-        alert.addAction(UIAlertAction(title: String(localized: "common.cancel", defaultValue: "取消"), style: .cancel) { [weak surface] _ in
-            surface?.composerCloseToolPanel(returnToKeyboard: true)
-        })
-        surface.composerHostViewController.present(alert, animated: true)
-    }
-
-    private func insertPollBBCode(optionsText: String?, type: String) {
-        guard let surface else { return }
-        let lines = (optionsText ?? "")
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        let options = lines.count >= 2 ? lines : [
-            String(localized: "reply.tool.poll.option_a", defaultValue: "选项 A"),
-            String(localized: "reply.tool.poll.option_b", defaultValue: "选项 B"),
-        ]
-        let body = options.map { "- \($0)" }.joined(separator: "\n")
-        let bbcode = """
-        [poll type=\(type) results=always public=true chartType=bar]
-        \(body)
-        [/poll]
-
-        """
-        surface.composerInsertRaw(bbcode)
-        surface.composerCloseToolPanel(returnToKeyboard: true)
+        let navigation = UINavigationController(rootViewController: builder)
+        surface.composerHostViewController.present(navigation, animated: true)
     }
 
     // MARK: Menus
@@ -716,7 +765,7 @@ final class ComposerMarkdownCoordinator: NSObject {
             title: String(localized: "reply.tool.media.voice", defaultValue: "语音消息"),
             style: .default
         ) { [weak self] _ in
-            self?.presentMediaPicker(kind: .voice)
+            self?.presentVoiceRecorder()
         })
         alert.addAction(UIAlertAction(title: String(localized: "common.cancel"), style: .cancel))
         configurePopover(alert, on: surface)
@@ -736,6 +785,24 @@ final class ComposerMarkdownCoordinator: NSObject {
     private func presentAttachmentPicker() {
         pendingMediaKind = nil
         presentDocumentPicker(types: [.item])
+    }
+
+    private func presentVoiceRecorder() {
+        guard let surface else { return }
+        let recorder = ComposerVoiceRecorderViewController()
+        recorder.onRecorded = { [weak self] url in
+            self?.pendingMediaKind = .voice
+            Task { await self?.uploadMediaFile(url: url, kind: .voice) }
+        }
+        recorder.onFailed = { [weak self] error in
+            self?.presentUploadError(error)
+        }
+        let navigation = UINavigationController(rootViewController: recorder)
+        if let sheet = navigation.sheetPresentationController {
+            sheet.detents = [.medium()]
+            sheet.prefersGrabberVisible = true
+        }
+        surface.composerHostViewController.present(navigation, animated: true)
     }
 
     private func presentMediaPicker(kind: MediaPickKind) {
@@ -893,6 +960,34 @@ final class ComposerMarkdownCoordinator: NSObject {
     private var pendingFailedUploads: [(url: URL, filename: String)] = []
     private var pendingMediaForRetry: (url: URL, kind: MediaPickKind)?
 
+    func handlePastedImage(_ image: UIImage) {
+        guard claimPastedImageHandling() else { return }
+        completePastedImageHandling(image)
+    }
+
+    func claimPastedImageHandling() -> Bool {
+        guard let surface, !surface.composerIsUploading, !isHandlingPastedImage else { return false }
+        isHandlingPastedImage = true
+        surface.composerExitMarkdownPreviewIfNeeded()
+        return true
+    }
+
+    func abortPastedImageHandling() {
+        isHandlingPastedImage = false
+    }
+
+    func completePastedImageHandling(_ image: UIImage) {
+        Task { @MainActor [weak self] in
+            defer { self?.isHandlingPastedImage = false }
+            do {
+                let file = try Self.temporaryImageFile(from: image)
+                await self?.uploadPickedFiles([file])
+            } catch {
+                self?.presentUploadError(error, canRetry: false)
+            }
+        }
+    }
+
     func uploadPickedFiles(_ files: [(url: URL, filename: String)]) async {
         guard let surface, !files.isEmpty else { return }
         surface.composerSetUploading(true, statusText: String(localized: "reply.uploading"))
@@ -1034,6 +1129,32 @@ final class ComposerMarkdownCoordinator: NSObject {
         pendingFailedUploads = []
         guard !files.isEmpty else { return }
         Task { await uploadPickedFiles(files) }
+    }
+
+    private static func temporaryImageFile(from image: UIImage) throws -> (url: URL, filename: String) {
+        let png = image.pngData()
+        let jpeg = png == nil ? image.jpegData(compressionQuality: 0.92) : nil
+        guard let data = png ?? jpeg else {
+            throw NSError(
+                domain: "ComposerMarkdownCoordinator",
+                code: -2,
+                userInfo: [
+                    NSLocalizedDescriptionKey: String(
+                        localized: "reply.paste.image.invalid",
+                        defaultValue: "无法读取剪贴板图片"
+                    )
+                ]
+            )
+        }
+        let ext = png != nil ? "png" : "jpg"
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(ext)
+        if FileManager.default.fileExists(atPath: temp.path) {
+            try FileManager.default.removeItem(at: temp)
+        }
+        try data.write(to: temp, options: .atomic)
+        return (temp, temp.lastPathComponent)
     }
 
     private func temporaryImageFile(from result: PHPickerResult) async throws -> (url: URL, filename: String) {

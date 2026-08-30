@@ -115,8 +115,8 @@ final class NewTopicComposerViewController: UIViewController {
         return label
     }()
 
-    private let textView: UITextView = {
-        let view = UITextView()
+    private let textView: ComposerBodyTextView = {
+        let view = ComposerBodyTextView()
         view.translatesAutoresizingMaskIntoConstraints = false
         ComposerTypography.applyBody(to: view)
         return view
@@ -295,6 +295,7 @@ final class NewTopicComposerViewController: UIViewController {
         titleField.addTarget(self, action: #selector(textInputsChanged), for: .editingChanged)
         textView.delegate = self
         markdownCoordinator.surface = self
+        textView.pasteCoordinator = markdownCoordinator
         categoryButton.addTarget(self, action: #selector(categoryButtonPressed), for: .touchDown)
         emojiToggleButton.addTarget(self, action: #selector(toggleEmojiPicker), for: .touchUpInside)
         encryptToolbarButton.addTarget(self, action: #selector(encryptToolbarTapped), for: .touchUpInside)
@@ -567,7 +568,7 @@ final class NewTopicComposerViewController: UIViewController {
         publishButton.isEnabled = submission != nil && !isUploading && !isSubmitting
         publishButton.alpha = 1
         if isPreviewingMarkdown {
-            previewView.update(markdown: bodyRaw)
+            previewView.update(markdown: ComposerPangu.applyToOutgoing(bodyRaw))
         }
     }
 
@@ -588,7 +589,7 @@ final class NewTopicComposerViewController: UIViewController {
         if isPreviewingMarkdown {
             closePanel(returnToKeyboard: false)
             textView.resignFirstResponder()
-            previewView.update(markdown: bodyRaw)
+            previewView.update(markdown: ComposerPangu.applyToOutgoing(bodyRaw))
         } else {
             textView.becomeFirstResponder()
         }
@@ -826,7 +827,7 @@ final class NewTopicComposerViewController: UIViewController {
             do {
                 let response = try await api.createTopic(
                     title: submission.title,
-                    raw: submission.raw,
+                    raw: ComposerPangu.applyToOutgoing(submission.raw),
                     categoryId: submission.categoryId,
                     tags: submission.tags
                 )

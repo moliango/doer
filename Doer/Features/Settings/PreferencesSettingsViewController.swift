@@ -5,6 +5,8 @@ final class PreferencesSettingsViewController: ObservableViewController {
 
     private let clipboardRow = ReadingToggleRowView()
     private let autoOpenRow = ReadingToggleRowView()
+    private let panguRow = ReadingToggleRowView()
+    private let experimentalWysiwygRow = ReadingToggleRowView()
     private let cryptoRememberRow = ReadingToggleRowView()
     private let cryptoClearButton: UIButton = {
         var config = UIButton.Configuration.filled()
@@ -76,6 +78,14 @@ final class PreferencesSettingsViewController: ObservableViewController {
             self?.settings.autoOpenLastForum = isOn
             self?.refreshDataViews()
         }
+        panguRow.onValueChanged = { [weak self] isOn in
+            self?.settings.autoPanguSpacing = isOn
+            self?.refreshDataViews()
+        }
+        experimentalWysiwygRow.onValueChanged = { [weak self] isOn in
+            self?.settings.experimentalRichComposerEnabled = isOn
+            self?.refreshDataViews()
+        }
         notificationFilterButton.addTarget(self, action: #selector(notificationFilterTapped), for: .touchUpInside)
         cryptoRememberRow.onValueChanged = { [weak self] isOn in
             self?.settings.cryptoRememberPassword = isOn
@@ -105,7 +115,7 @@ final class PreferencesSettingsViewController: ObservableViewController {
             $0.removeFromSuperview()
         }
 
-        let basic = UIStackView(arrangedSubviews: [clipboardRow, autoOpenRow])
+        let basic = UIStackView(arrangedSubviews: [clipboardRow, autoOpenRow, panguRow, experimentalWysiwygRow])
         basic.axis = .vertical
         basic.spacing = 12
         contentStack.addArrangedSubview(makeSection(
@@ -215,6 +225,28 @@ final class PreferencesSettingsViewController: ObservableViewController {
             ),
             symbolName: "arrow.triangle.turn.up.right.circle",
             isOn: settings.autoOpenLastForum,
+            accentColor: accent,
+            backgroundColor: card
+        )
+        panguRow.configure(
+            title: String(localized: "settings.composer.auto_pangu", defaultValue: "中英文自动空格"),
+            subtitle: String(
+                localized: "settings.composer.auto_pangu.subtitle",
+                defaultValue: "发送和预览时在中文与英文、数字之间插入空格，代码和链接不受影响"
+            ),
+            symbolName: "textformat.abc",
+            isOn: settings.autoPanguSpacing,
+            accentColor: accent,
+            backgroundColor: card
+        )
+        experimentalWysiwygRow.configure(
+            title: String(localized: "settings.composer.experimental_wysiwyg", defaultValue: "实验性所见即所得"),
+            subtitle: String(
+                localized: "settings.composer.experimental_wysiwyg.subtitle",
+                defaultValue: "回复时使用块级编辑器；默认关闭。现有 Aa/MD 编辑器不受影响"
+            ),
+            symbolName: "text.justify.left",
+            isOn: settings.experimentalRichComposerEnabled,
             accentColor: accent,
             backgroundColor: card
         )

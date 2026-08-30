@@ -118,13 +118,16 @@ final class ReplyComposerViewController: UIViewController {
         return view
     }()
 
-    private let textView: UITextView = {
-        let tv = UITextView()
+    private let textView: ComposerBodyTextView = {
+        let tv = ComposerBodyTextView()
         tv.translatesAutoresizingMaskIntoConstraints = false
         ComposerTypography.applyBody(to: tv)
         tv.returnKeyType = .default
         return tv
     }()
+
+    /// Present only when the experimental WYSIWYG setting is on at load. Nil keeps the existing Aa/MD `textView`.
+    private var experimentalComposerView: ExperimentalComposerView?
 
     private let placeholderLabel: UILabel = {
         let label = UILabel()
@@ -278,6 +281,31 @@ final class ReplyComposerViewController: UIViewController {
         headerContainer.addSubview(headerActionsStack)
         headerContainer.addSubview(separatorView)
         view.addSubview(textView)
+        if AppSettings.shared.experimentalRichComposerEnabled {
+            let experimental = ExperimentalComposerView()
+            experimental.translatesAutoresizingMaskIntoConstraints = false
+            experimental.pasteCoordinator = markdownCoordinator
+            experimental.onDocumentChanged = { [weak self] in
+                guard let self else { return }
+                self.updatePlaceholder()
+                self.updateSendButton()
+                self.scheduleDraftSave()
+            }
+            experimental.onEditingBegan = { [weak self] in
+                guard let self, self.currentPanel != .none else { return }
+                self.closePanel(returnToKeyboard: false)
+            }
+            experimental.onSelectionChanged = { [weak self] in
+                self?.refreshMentionSuggestions()
+            }
+            experimental.onScroll = { [weak self] in
+                self?.repositionMentionPicker()
+            }
+            view.addSubview(experimental)
+            experimentalComposerView = experimental
+            textView.isHidden = true
+            modeToggleButton.isHidden = true
+        }
         view.addSubview(previewView)
         view.addSubview(placeholderLabel)
         view.addSubview(bottomStackView)
@@ -347,6 +375,15 @@ final class ReplyComposerViewController: UIViewController {
             mentionPickerView.trailingAnchor.constraint(lessThanOrEqualTo: textView.trailingAnchor, constant: -22),
         ])
 
+        if let experimental = experimentalComposerView {
+            NSLayoutConstraint.activate([
+                experimental.topAnchor.constraint(equalTo: headerContainer.bottomAnchor),
+                experimental.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                experimental.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                experimental.bottomAnchor.constraint(equalTo: bottomStackView.topAnchor),
+            ])
+        }
+
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         sendButton.addTarget(self, action: #selector(sendTapped), for: .touchUpInside)
         emojiToggleButton.addTarget(self, action: #selector(toggleEmojiPicker), for: .touchUpInside)
@@ -357,6 +394,7 @@ final class ReplyComposerViewController: UIViewController {
 
         textView.delegate = self
         markdownCoordinator.surface = self
+        textView.pasteCoordinator = markdownCoordinator
 
         // Prefer explicit initial text from a cloud draft or quote.
         if let initialText, !initialText.isEmpty {
@@ -397,7 +435,7 @@ final class ReplyComposerViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         PresenceService.shared.enter(topicId: topicId)
-        textView.becomeFirstResponder()
+        focusComposer()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -409,6 +447,32 @@ final class ReplyComposerViewController: UIViewController {
     }
 
     private func scheduleDraftSave() {}
+
+    private var usesExperimentalComposer: Bool { experimentalComposerView != nil }
+
+    private var mentionSourceTextView: UITextView {
+        experimentalComposerView?.activeTextView ?? textView
+    }
+
+    private var activeEditorView: UIView {
+        experimentalComposerView ?? textView
+    }
+
+    private func focusComposer() {
+        if let experimentalComposerView {
+            experimentalComposerView.becomeFirstResponder()
+        } else {
+            textView.becomeFirstResponder()
+        }
+    }
+
+    private func blurComposer() {
+        if let experimentalComposerView {
+            experimentalComposerView.resignFirstResponder()
+        } else {
+            textView.resignFirstResponder()
+        }
+    }
 
 
     private func setupToolbar() {
@@ -449,6 +513,7 @@ final class ReplyComposerViewController: UIViewController {
     }
 
     @objc private func toggleEditingMode() {
+        guard !usesExperimentalComposer else { return }
         hideMentionPicker()
         let raw = composerRawText
         editingMode = editingMode.toggled
@@ -458,7 +523,7 @@ final class ReplyComposerViewController: UIViewController {
             updatePreviewState()
         }
         applyFullRawText(raw)
-        textView.becomeFirstResponder()
+        focusComposer()
         updateToolbarState()
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
@@ -468,10 +533,10 @@ final class ReplyComposerViewController: UIViewController {
         isPreviewingMarkdown.toggle()
         if isPreviewingMarkdown {
             closePanel(returnToKeyboard: false)
-            textView.resignFirstResponder()
-            previewView.update(markdown: composerRawText)
+            blurComposer()
+            previewView.update(markdown: ComposerPangu.applyToOutgoing(composerRawText))
         } else {
-            textView.becomeFirstResponder()
+            focusComposer()
         }
         updatePreviewState()
     }
@@ -488,15 +553,15 @@ final class ReplyComposerViewController: UIViewController {
             emojiPickerView.isHidden = true
             toolsPanelView.isHidden = true
             panelHeightConstraint?.constant = 0
-            textView.becomeFirstResponder()
+            focusComposer()
         case .emoji:
-            textView.resignFirstResponder()
+            blurComposer()
             emojiPickerView.isHidden = false
             toolsPanelView.isHidden = true
             panelHeightConstraint?.constant = ComposerToolbarFactory.customPanelHeight
             loadForumEmojis()
         case .tools:
-            textView.resignFirstResponder()
+            blurComposer()
             emojiPickerView.isHidden = true
             toolsPanelView.isHidden = false
             panelHeightConstraint?.constant = ComposerToolbarFactory.customPanelHeight
@@ -510,7 +575,7 @@ final class ReplyComposerViewController: UIViewController {
     private func closePanel(returnToKeyboard: Bool) {
         guard currentPanel != .none else {
             if returnToKeyboard {
-                textView.becomeFirstResponder()
+                focusComposer()
             }
             return
         }
@@ -521,7 +586,7 @@ final class ReplyComposerViewController: UIViewController {
         panelHeightConstraint?.constant = 0
         updateToolbarState()
         if returnToKeyboard {
-            textView.becomeFirstResponder()
+            focusComposer()
         }
         UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut, .allowUserInteraction]) {
             self.view.layoutIfNeeded()
@@ -548,11 +613,14 @@ final class ReplyComposerViewController: UIViewController {
 
     /// Raw markdown for the body (ComposerTextSurface uses the same extraction).
     private var bodyRawText: String {
-        rawText(from: textView.attributedText ?? NSAttributedString(string: textView.text ?? ""))
+        if let experimentalComposerView {
+            return experimentalComposerView.markdown
+        }
+        return rawText(from: textView.attributedText ?? NSAttributedString(string: textView.text ?? ""))
     }
 
     private var composerDisplayText: String {
-        textView.attributedText?.string ?? textView.text ?? ""
+        mentionSourceTextView.attributedText?.string ?? mentionSourceTextView.text ?? ""
     }
 
     private var composerTextAttributes: [NSAttributedString.Key: Any] {
@@ -560,6 +628,12 @@ final class ReplyComposerViewController: UIViewController {
     }
 
     private func setRawComposerText(_ raw: String) {
+        if let experimentalComposerView {
+            experimentalComposerView.load(markdown: raw)
+            updatePlaceholder()
+            updateSendButton()
+            return
+        }
         let attributed = makeComposerAttributedString(raw)
         applyComposerAttributedText(attributed, selectedRange: NSRange(location: attributed.length, length: 0))
     }
@@ -687,6 +761,12 @@ final class ReplyComposerViewController: UIViewController {
         withRawText raw: String,
         selectedRangeInInsertedText: NSRange? = nil
     ) {
+        if let experimentalComposerView {
+            experimentalComposerView.replaceActiveDisplayRange(range, withRaw: raw)
+            updatePlaceholder()
+            updateSendButton()
+            return
+        }
         let current = NSMutableAttributedString(attributedString: textView.attributedText ?? NSAttributedString(string: textView.text ?? "", attributes: composerTextAttributes))
         let validRange = clampedRange(range, length: current.length)
         let inserted = makeComposerSnippet(raw)
@@ -700,6 +780,12 @@ final class ReplyComposerViewController: UIViewController {
     }
 
     private func replaceSelection(withRawText raw: String, selectedRangeInInsertedText: NSRange? = nil) {
+        if let experimentalComposerView {
+            experimentalComposerView.insertRaw(raw)
+            updatePlaceholder()
+            updateSendButton()
+            return
+        }
         replaceDisplayRange(textView.selectedRange, withRawText: raw, selectedRangeInInsertedText: selectedRangeInInsertedText)
     }
 
@@ -720,7 +806,7 @@ final class ReplyComposerViewController: UIViewController {
         updatePlaceholder()
         updateSendButton()
         if isPreviewingMarkdown {
-            previewView.update(markdown: composerRawText)
+            previewView.update(markdown: ComposerPangu.applyToOutgoing(composerRawText))
         } else {
             refreshMentionSuggestions()
         }
@@ -766,7 +852,7 @@ final class ReplyComposerViewController: UIViewController {
             return
         }
         let display = composerDisplayText
-        let cursor = textView.selectedRange.location
+        let cursor = mentionSourceTextView.selectedRange.location
         guard let query = Self.activeMentionQuery(in: display, cursor: cursor) else {
             hideMentionPicker()
             return
@@ -881,22 +967,22 @@ final class ReplyComposerViewController: UIViewController {
         // Keep the card near the caret so it matches FluxDO-style placement.
         guard let range = activeMentionRange,
               range.location != NSNotFound,
-              textView.bounds.height > 0
+              mentionSourceTextView.bounds.height > 0
         else { return }
 
-        let caretRange = NSRange(location: min(range.location, max(textView.attributedText.length - 1, 0)), length: 0)
-        var caretRect = textView.caretRect(for: textView.position(
-            from: textView.beginningOfDocument,
+        let caretRange = NSRange(location: min(range.location, max((mentionSourceTextView.attributedText?.length ?? 0) - 1, 0)), length: 0)
+        var caretRect = mentionSourceTextView.caretRect(for: mentionSourceTextView.position(
+            from: mentionSourceTextView.beginningOfDocument,
             offset: caretRange.location
-        ) ?? textView.endOfDocument)
+        ) ?? mentionSourceTextView.endOfDocument)
 
         if caretRect.isNull || caretRect.origin.x.isInfinite || caretRect.origin.y.isInfinite {
             caretRect = CGRect(x: 22, y: 22, width: 2, height: 28)
         }
 
-        // Convert caret into textView coordinates already; offset from textView top/leading.
-        let top = max(12, min(caretRect.maxY + 8 - textView.contentOffset.y, textView.bounds.height - 80))
-        let leading = max(16, min(caretRect.minX - textView.contentOffset.x, textView.bounds.width - 220))
+        let converted = mentionSourceTextView.convert(caretRect, to: activeEditorView)
+        let top = max(12, min(converted.maxY + 8, activeEditorView.bounds.height - 80))
+        let leading = max(16, min(converted.minX, activeEditorView.bounds.width - 220))
         mentionPickerBottomConstraint?.constant = top
         mentionPickerLeadingConstraint?.constant = leading
     }
@@ -934,13 +1020,22 @@ final class ReplyComposerViewController: UIViewController {
     }
 
     private func applyFullRawText(_ raw: String) {
+        if let experimentalComposerView {
+            experimentalComposerView.replaceFullRaw(raw)
+            updatePlaceholder()
+            updateSendButton()
+            if isPreviewingMarkdown {
+                previewView.update(markdown: ComposerPangu.applyToOutgoing(raw))
+            }
+            return
+        }
         isApplyingAttributedText = true
         textView.attributedText = makeComposerAttributedString(raw)
         isApplyingAttributedText = false
         updatePlaceholder()
         updateSendButton()
         if isPreviewingMarkdown {
-            previewView.update(markdown: raw)
+            previewView.update(markdown: ComposerPangu.applyToOutgoing(raw))
         }
     }
 
@@ -993,10 +1088,11 @@ final class ReplyComposerViewController: UIViewController {
 
     private func updatePreviewState() {
         let showPreview = isPreviewingMarkdown
+        let editor = activeEditorView
         let needsSwitch = previewView.isHidden == showPreview
         if view.window != nil, needsSwitch {
-            let shown = showPreview ? previewView : textView
-            let hidden = showPreview ? textView : previewView
+            let shown = showPreview ? previewView : editor
+            let hidden = showPreview ? editor : previewView
             shown.alpha = 0
             shown.isHidden = false
             AnimationOptimizer.animateAlpha(shown, to: 1, duration: 0.18)
@@ -1005,10 +1101,13 @@ final class ReplyComposerViewController: UIViewController {
                 hidden.alpha = 1
             }
         } else {
-            textView.isHidden = showPreview
+            editor.isHidden = showPreview
             previewView.isHidden = !showPreview
-            textView.alpha = 1
+            editor.alpha = 1
             previewView.alpha = 1
+        }
+        if usesExperimentalComposer {
+            textView.isHidden = true
         }
         placeholderLabel.isHidden = showPreview || !composerRawText.isEmpty
         updateToolbarState()
@@ -1061,7 +1160,9 @@ final class ReplyComposerViewController: UIViewController {
 
     @objc private func sendTapped() {
         hideMentionPicker()
-        let raw = composerRawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = ComposerPangu.applyToOutgoing(
+            composerRawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
         guard !raw.isEmpty, !isSubmitting else { return }
 
         isSubmitting = true
@@ -1071,6 +1172,7 @@ final class ReplyComposerViewController: UIViewController {
         sourceRestyleTask?.cancel()
         sendButton.isEnabled = false
         textView.isEditable = false
+        experimentalComposerView?.isEditable = false
         closePanel(returnToKeyboard: false)
 
         Task {
@@ -1104,6 +1206,7 @@ final class ReplyComposerViewController: UIViewController {
                 isSubmitting = false
                 sendButton.isEnabled = true
                 textView.isEditable = true
+                experimentalComposerView?.isEditable = true
                 let alert = UIAlertController(
                     title: String(localized: "reply.send.failed"),
                     message: error.localizedDescription,
@@ -1134,6 +1237,10 @@ final class ReplyComposerViewController: UIViewController {
     }
 
     private func applyRichLinePrefix(_ prefix: String) {
+        if let experimentalComposerView {
+            experimentalComposerView.applyLinePrefix(prefix)
+            return
+        }
         let attributed = textView.attributedText ?? NSAttributedString(string: "", attributes: composerTextAttributes)
         guard attributed.length > 0 else {
             replaceDisplayRange(NSRange(location: 0, length: 0), withRawText: prefix)
@@ -1192,13 +1299,16 @@ final class ReplyComposerViewController: UIViewController {
 extension ReplyComposerViewController: ComposerTextSurface {
     var composerHostViewController: UIViewController { self }
     var composerAPI: DiscourseAPI { api }
-    var composerTextView: UITextView { textView }
+    var composerTextView: UITextView { mentionSourceTextView }
     var composerToolsAnchorView: UIView { toolsToggleButton }
     var composerIsUploading: Bool { isUploading }
 
     var composerRawText: String { bodyRawText }
 
     func composerSelectedRawText() -> String {
+        if let experimentalComposerView {
+            return experimentalComposerView.selectedRawText()
+        }
         let selection = textView.selectedRange
         guard selection.length > 0 else { return "" }
         return rawText(inDisplayRange: selection)
@@ -1212,6 +1322,13 @@ extension ReplyComposerViewController: ComposerTextSurface {
     }
 
     func composerWrapSelection(start: String, end: String, placeholder: String) {
+        if let experimentalComposerView {
+            experimentalComposerView.wrapSelection(start: start, end: end, placeholder: placeholder)
+            updatePlaceholder()
+            updateSendButton()
+            scheduleDraftSave()
+            return
+        }
         let selection = textView.selectedRange
         let selected = selection.length > 0 ? rawText(inDisplayRange: selection) : placeholder
         let replacement = "\(start)\(selected)\(end)"
@@ -1236,6 +1353,13 @@ extension ReplyComposerViewController: ComposerTextSurface {
     }
 
     func composerApplyLinePrefix(_ prefix: String) {
+        if usesExperimentalComposer {
+            applyRichLinePrefix(prefix)
+            updatePlaceholder()
+            updateSendButton()
+            scheduleDraftSave()
+            return
+        }
         if editingMode == .rich {
             applyRichLinePrefix(prefix)
             updatePlaceholder()
@@ -1283,6 +1407,7 @@ extension ReplyComposerViewController: ComposerTextSurface {
         uploadStatusLabel.text = statusText
         uploadStatusLabel.isHidden = !uploading
         textView.isEditable = !uploading
+        experimentalComposerView?.isEditable = !uploading
         updateSendButton()
         toolsPanelView.isUploading = uploading
     }
@@ -1307,7 +1432,7 @@ extension ReplyComposerViewController: UITextViewDelegate {
         updateSendButton()
         scheduleDraftSave()
         if isPreviewingMarkdown {
-            previewView.update(markdown: composerRawText)
+            previewView.update(markdown: ComposerPangu.applyToOutgoing(composerRawText))
             hideMentionPicker()
         } else {
             scheduleSourceRestyle()

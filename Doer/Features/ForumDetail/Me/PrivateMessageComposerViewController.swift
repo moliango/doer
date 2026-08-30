@@ -16,12 +16,23 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
     private let recipientLabel = UILabel()
     private let recipientField = UITextField()
     private let titleField = UITextField()
-    private let textView = UITextView()
+    private let textView = ComposerBodyTextView()
     private let placeholderLabel = UILabel()
     private var editingMode = ComposerEditingMode.stored
     private var isSending = false
+    private var isUploading = false
     private let initialRaw: String
     private var modeBarItem: UIBarButtonItem?
+    private var previewBarItem: UIBarButtonItem?
+    private var isPreviewingMarkdown = false
+    private let previewView: ComposerMarkdownPreviewView = {
+        let view = ComposerMarkdownPreviewView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.isHidden = true
+        return view
+    }()
+    private let markdownCoordinator = ComposerMarkdownCoordinator()
+    private let uploadStatusLabel = ComposerToolbarFactory.makeUploadStatusLabel()
 
     private lazy var closeButton: UIButton = {
         let button = ComposerToolbarFactory.makeCloseIconButton()
@@ -67,6 +78,7 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         view.backgroundColor = ComposerTypography.backgroundColor
         setupNavigation()
         setupUI()
+        markdownCoordinator.surface = self
         applyBodyMarkdown(initialRaw)
         updateSendState()
         Task { await hydrateServerDraftIfNeeded() }
@@ -86,11 +98,20 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
             action: #selector(toggleEditingMode)
         )
         modeBarItem = modeItem
+        let previewItem = UIBarButtonItem(
+            image: UIImage(systemName: "eye"),
+            style: .plain,
+            target: self,
+            action: #selector(toggleMarkdownPreview)
+        )
+        previewBarItem = previewItem
+        previewItem.tintColor = ComposerTypography.accentColor
         modeItem.tintColor = ComposerTypography.accentColor
         navigationItem.leftBarButtonItem = nil
         navigationItem.rightBarButtonItems = [
             UIBarButtonItem(customView: sendButton),
             UIBarButtonItem(customView: closeButton),
+            previewItem,
             modeItem,
         ]
     }
@@ -142,6 +163,7 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         textView.layer.borderWidth = 1
         textView.layer.borderColor = UIColor.separator.withAlphaComponent(0.35).cgColor
         textView.delegate = self
+        textView.pasteCoordinator = markdownCoordinator
 
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
         ComposerTypography.applyBody(to: placeholderLabel)
@@ -152,7 +174,9 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         view.addSubview(recipientField)
         view.addSubview(titleField)
         view.addSubview(textView)
+        view.addSubview(previewView)
         textView.addSubview(placeholderLabel)
+        textView.addSubview(uploadStatusLabel)
 
         let titleTop = allowsEditingRecipient
             ? titleField.topAnchor.constraint(equalTo: recipientField.bottomAnchor, constant: 10)
@@ -178,9 +202,17 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
             textView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             textView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -12),
 
+            previewView.topAnchor.constraint(equalTo: textView.topAnchor),
+            previewView.leadingAnchor.constraint(equalTo: textView.leadingAnchor),
+            previewView.trailingAnchor.constraint(equalTo: textView.trailingAnchor),
+            previewView.bottomAnchor.constraint(equalTo: textView.bottomAnchor),
+
             placeholderLabel.topAnchor.constraint(equalTo: textView.topAnchor, constant: 14),
             placeholderLabel.leadingAnchor.constraint(equalTo: textView.leadingAnchor, constant: 16),
             placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: textView.trailingAnchor, constant: -16),
+
+            uploadStatusLabel.topAnchor.constraint(equalTo: textView.topAnchor, constant: 10),
+            uploadStatusLabel.centerXAnchor.constraint(equalTo: textView.centerXAnchor),
         ])
     }
 
@@ -216,6 +248,28 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         placeholderLabel.isHidden = raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
+    private func insertRichSnippet(_ markdown: String) {
+        let snippet = NSMutableAttributedString(
+            attributedString: ComposerMarkdownCodec.richAttributedString(from: markdown)
+        )
+        if snippet.string.hasSuffix("\n"), snippet.length > 0 {
+            snippet.deleteCharacters(in: NSRange(location: snippet.length - 1, length: 1))
+        }
+        let current = NSMutableAttributedString(
+            attributedString: textView.attributedText ?? NSAttributedString(
+                string: "",
+                attributes: ComposerTypography.typingAttributes
+            )
+        )
+        let selection = textView.selectedRange
+        let location = min(max(selection.location, 0), current.length)
+        let length = min(max(selection.length, 0), current.length - location)
+        current.replaceCharacters(in: NSRange(location: location, length: length), with: snippet)
+        textView.attributedText = current
+        textView.selectedRange = NSRange(location: location + snippet.length, length: 0)
+        textView.typingAttributes = ComposerTypography.typingAttributes
+    }
+
     @objc private func toggleEditingMode() {
         let raw = bodyRaw
         editingMode = editingMode.toggled
@@ -223,6 +277,20 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         applyBodyMarkdown(raw)
         modeBarItem?.title = editingMode == .rich ? "Aa" : "MD"
         textView.becomeFirstResponder()
+    }
+
+    @objc private func toggleMarkdownPreview() {
+        isPreviewingMarkdown.toggle()
+        previewView.isHidden = !isPreviewingMarkdown
+        textView.isHidden = isPreviewingMarkdown
+        placeholderLabel.isHidden = isPreviewingMarkdown || !bodyRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        previewBarItem?.image = UIImage(systemName: isPreviewingMarkdown ? "eye.slash" : "eye")
+        if isPreviewingMarkdown {
+            textView.resignFirstResponder()
+            previewView.update(markdown: ComposerPangu.applyToOutgoing(bodyRaw))
+        } else {
+            textView.becomeFirstResponder()
+        }
     }
 
     private func hydrateServerDraftIfNeeded() async {
@@ -269,12 +337,12 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         let title = titleField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let raw = bodyRaw.trimmingCharacters(in: .whitespacesAndNewlines)
         let to = resolvedRecipient
-        sendButton.isEnabled = !isSending && !title.isEmpty && !raw.isEmpty && !to.isEmpty
-        closeButton.isEnabled = !isSending
-        modeBarItem?.isEnabled = !isSending
-        titleField.isEnabled = !isSending
-        recipientField.isEnabled = !isSending
-        textView.isEditable = !isSending
+        sendButton.isEnabled = !isSending && !isUploading && !title.isEmpty && !raw.isEmpty && !to.isEmpty
+        closeButton.isEnabled = !isSending && !isUploading
+        modeBarItem?.isEnabled = !isSending && !isUploading
+        titleField.isEnabled = !isSending && !isUploading
+        recipientField.isEnabled = !isSending && !isUploading
+        textView.isEditable = !isSending && !isUploading
     }
 
     private func showError(_ error: Error) {
@@ -325,9 +393,9 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
 
     @objc private func sendTapped() {
         let messageTitle = titleField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let raw = bodyRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = ComposerPangu.applyToOutgoing(bodyRaw.trimmingCharacters(in: .whitespacesAndNewlines))
         let to = resolvedRecipient
-        guard !messageTitle.isEmpty, !raw.isEmpty, !to.isEmpty, !isSending else { return }
+        guard !messageTitle.isEmpty, !raw.isEmpty, !to.isEmpty, !isSending, !isUploading else { return }
         recipient = to
 
         isSending = true
@@ -363,4 +431,87 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         textView.becomeFirstResponder()
         return false
     }
+}
+
+// MARK: - ComposerTextSurface
+
+extension PrivateMessageComposerViewController: ComposerTextSurface {
+    var composerHostViewController: UIViewController { self }
+    var composerAPI: DiscourseAPI { api }
+    var composerTextView: UITextView { textView }
+    var composerToolsAnchorView: UIView { sendButton }
+    var composerIsUploading: Bool { isUploading }
+    var composerRawText: String { bodyRaw }
+
+    func composerSelectedRawText() -> String {
+        let selection = textView.selectedRange
+        guard selection.length > 0, let attributed = textView.attributedText else { return "" }
+        if editingMode == .rich {
+            return ComposerMarkdownCodec.markdown(from: attributed.attributedSubstring(from: selection))
+        }
+        return ComposerPlainTextEditing.selectedText(in: textView)
+    }
+
+    func composerInsertRaw(_ text: String) {
+        if editingMode == .rich {
+            insertRichSnippet(text)
+        } else {
+            ComposerPlainTextEditing.replaceSelection(in: textView, with: text)
+        }
+        placeholderLabel.isHidden = !bodyRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        updateSendState()
+        scheduleDraftSave()
+    }
+
+    func composerWrapSelection(start: String, end: String, placeholder: String) {
+        if editingMode == .rich {
+            let selected = composerSelectedRawText()
+            let body = selected.isEmpty ? placeholder : selected
+            insertRichSnippet("\(start)\(body)\(end)")
+        } else {
+            ComposerPlainTextEditing.wrapSelection(in: textView, start: start, end: end, placeholder: placeholder)
+        }
+        placeholderLabel.isHidden = !bodyRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        updateSendState()
+        scheduleDraftSave()
+    }
+
+    func composerApplyLinePrefix(_ prefix: String) {
+        if editingMode == .rich {
+            insertRichSnippet(prefix)
+        } else {
+            ComposerPlainTextEditing.applyLinePrefix(in: textView, prefix: prefix)
+        }
+        placeholderLabel.isHidden = !bodyRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        updateSendState()
+        scheduleDraftSave()
+    }
+
+    func composerReplaceFullRaw(_ raw: String) {
+        applyBodyMarkdown(raw)
+        placeholderLabel.isHidden = !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        updateSendState()
+        scheduleDraftSave()
+    }
+
+    func composerDidEditContent() {
+        placeholderLabel.isHidden = !bodyRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        updateSendState()
+        scheduleDraftSave()
+    }
+
+    func composerSetUploading(_ uploading: Bool, statusText: String?) {
+        isUploading = uploading
+        uploadStatusLabel.text = statusText
+        uploadStatusLabel.isHidden = !uploading
+        updateSendState()
+    }
+
+    func composerCloseToolPanel(returnToKeyboard: Bool) {
+        if returnToKeyboard {
+            textView.becomeFirstResponder()
+        }
+    }
+
+    func composerExitMarkdownPreviewIfNeeded() {}
 }
