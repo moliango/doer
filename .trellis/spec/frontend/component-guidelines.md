@@ -30,6 +30,7 @@ Questions to answer:
 - Displayed progress is the 1-based stream index over `stream.count`, matching FluxDo's `TopicProgress` behavior.
 - Timeline selection should return the selected post id from `stream`; the view controller may map that id back to the existing native floor-jump loader.
 - Do not derive timeline position from visible table rows, loaded batch size, or filtered post arrays except as a temporary fallback for finding the current visible stream index.
+- In-topic find and author filter: jump by post id / `post_number` (see [Topic Find Filter](./topic-find-filter.md)). Do not treat `post_number` as a stream index. Do not derive the filtered list from an unfiltered empty-snapshot fallback.
 - The progress entry should remain a compact centered capsule (`current / total`) that opens the timeline on tap and keeps gesture actions attached to the same control.
 - Custom-drawn timeline track views must be explicitly transparent (`isOpaque = false`, clear background) and must keep a fixed/natural visual height inside sheet layouts. Do not pin the track stack to both the sheet title and bottom buttons in a way that stretches the track into a full-height rectangle.
 

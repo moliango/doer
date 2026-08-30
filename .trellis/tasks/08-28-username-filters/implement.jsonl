@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend quality gate"}
+{"file": ".trellis/spec/frontend/topic-find-filter.md", "reason": "Existing client filterUsername contract; do not fight first-paint"}
+{"file": ".trellis/spec/frontend/fluxdo-porting.md", "reason": "Port username_filters behavior, not Flutter"}
+{"file": ".trellis/spec/frontend/build-and-dependencies.md", "reason": "make generate + compile-only"}

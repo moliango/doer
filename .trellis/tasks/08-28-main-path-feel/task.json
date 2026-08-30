@@ -1,0 +1,32 @@
+{
+  "id": "main-path-feel",
+  "name": "main-path-feel",
+  "title": "主路径体感这一轮",
+  "description": "打开、刷、进、回：闪屏、进帖首屏、图片不闪、粘贴出图/盘古、帖内查找。不扩功能。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "Naine",
+  "assignee": "Naine",
+  "createdAt": "2026-08-28",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "develop",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-28-launch-splash",
+    "08-28-topic-first-paint",
+    "08-28-image-no-flash",
+    "08-28-composer-paste-pangu",
+    "08-28-topic-find-filter"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

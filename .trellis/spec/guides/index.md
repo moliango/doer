@@ -49,8 +49,13 @@ These guides help you **ask the right questions before coding**.
 - [ ] **You're creating a new utility/helper function** ← Search first!
 - [ ] Two files read the same untyped payload field with local casts
 - [ ] Multiple branches update the same derived state from `kind` / `action`
+- [ ] Painting an image from cache or network into a `UIImageView`
+- [ ] Composer paste, poll BBCode, hold-to-talk, CJK/latin spacing on send, or experimental reply WYSIWYG
+- [ ] Filtering topic posts by author or jumping in-topic search hits
+- [ ] Adding a `ContentBlock` enum case (policy, voice wrap, gallery URLs, share card)
+- [ ] GitHub update URLs or a reverse-proxy prefix
 
-→ Read [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md)
+→ Read [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md). Image paint: [Image Loading](../frontend/image-loading.md). Composer: [Composer](../frontend/composer.md). Find/filter: [Topic Find Filter](../frontend/topic-find-filter.md). Policy/voice: [Cooked Blocks](../frontend/cooked-blocks.md). Preview morph: [Topic Preview](../frontend/topic-preview.md). Updates: [GitHub Proxy](../frontend/github-proxy.md).
 
 ### When Verifying AI Cross-Review Results
 

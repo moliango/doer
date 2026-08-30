@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/composer.md", "reason": "Paste, pangu, and composer host contracts must stay on raw markdown"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend quality gate"}
+{"file": "Doer/Features/ForumDetail/TopicDetail/ComposerSharedCore.swift", "reason": "Toolbar insert/wrap still targets composer raw"}
+{"file": "Doer/Features/ForumDetail/TopicDetail/ReplyComposerViewController.swift", "reason": "Only host that swaps the body in phase 1"}

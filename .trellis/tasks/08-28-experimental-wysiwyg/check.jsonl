@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/composer.md", "reason": "Do not break paste/pangu when experimental flag is off"}
+{"file": "DoerTests/ExperimentalComposerDocumentTests.swift", "reason": "Parse/serialize and poll literal round-trip"}
+{"file": "Doer/Features/ForumDetail/TopicDetail/ReplyComposerViewController.swift", "reason": "Flag off must keep existing UITextView path"}

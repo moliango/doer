@@ -23,6 +23,12 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [Build & Dependencies](./build-and-dependencies.md) | Tuist regeneration, SPM dedupe, verification norm | Filled |
 | [App Extensions](./app-extensions.md) | Widget App Group snapshot, APNs silent wake, Home connectivity, quote-reply | Filled |
 | [FluxDo Porting](./fluxdo-porting.md) | Reference repo, porting rules, Discourse endpoint contracts | Filled |
+| [Image Loading](./image-loading.md) | Memory/disk/network paint, gallery hero flight | Filled |
+| [Composer](./composer.md) | Image paste upload, Pangu, poll builder, hold-to-talk, PM preview, experimental reply WYSIWYG | Filled |
+| [Topic Find Filter](./topic-find-filter.md) | In-topic find bar, `filterUsername` / 只看此人 | Filled |
+| [Cooked Blocks](./cooked-blocks.md) | `ContentBlock.policy`, voice wrap, exhaustive switch | Filled |
+| [Topic Preview](./topic-preview.md) | Long-press morph, search + Home targets | Filled |
+| [GitHub Proxy](./github-proxy.md) | Update check mirror prefix | Filled |
 
 ---
 
