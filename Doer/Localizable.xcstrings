@@ -29156,6 +29156,17 @@
         }
       }
     },
+    "topic.quote" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "引用"
+          }
+        }
+      }
+    },
     "topic.read_later.add" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {

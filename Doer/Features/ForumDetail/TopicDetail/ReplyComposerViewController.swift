@@ -281,26 +281,26 @@ final class ReplyComposerViewController: UIViewController {
         headerContainer.addSubview(headerActionsStack)
         headerContainer.addSubview(separatorView)
         view.addSubview(textView)
-        if AppSettings.shared.experimentalRichComposerEnabled {
-            let experimental = ExperimentalComposerView()
-            experimental.translatesAutoresizingMaskIntoConstraints = false
-            experimental.pasteCoordinator = markdownCoordinator
-            experimental.onDocumentChanged = { [weak self] in
+        if let experimental = ExperimentalComposerHosting.makeViewIfEnabled(
+            pasteCoordinator: markdownCoordinator,
+            imageBaseURL: baseURL,
+            onDocumentChanged: { [weak self] in
                 guard let self else { return }
                 self.updatePlaceholder()
                 self.updateSendButton()
                 self.scheduleDraftSave()
-            }
-            experimental.onEditingBegan = { [weak self] in
+            },
+            onEditingBegan: { [weak self] in
                 guard let self, self.currentPanel != .none else { return }
                 self.closePanel(returnToKeyboard: false)
-            }
-            experimental.onSelectionChanged = { [weak self] in
+            },
+            onSelectionChanged: { [weak self] in
                 self?.refreshMentionSuggestions()
-            }
-            experimental.onScroll = { [weak self] in
+            },
+            onScroll: { [weak self] in
                 self?.repositionMentionPicker()
             }
+        ) {
             view.addSubview(experimental)
             experimentalComposerView = experimental
             textView.isHidden = true

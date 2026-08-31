@@ -94,10 +94,111 @@ final class ExperimentalComposerDocumentTests: XCTestCase {
         XCTAssertEqual(document.markdown, raw)
     }
 
-    func testQuoteTagStaysLiteral() {
+    func testQuoteTagBecomesQuoteCard() {
         let raw = "[quote=\"alice, post:1, topic:2\"]\nhello\n[/quote]"
         let document = ExperimentalComposerDocument.parse(raw)
-        XCTAssertEqual(document.blocks, [.literal(raw)])
+        XCTAssertEqual(
+            document.blocks,
+            [
+                .quoteCard(
+                    username: "alice",
+                    displayName: nil,
+                    postNumber: 1,
+                    topicId: 2,
+                    full: false,
+                    inner: "hello"
+                ),
+            ]
+        )
+        XCTAssertEqual(document.markdown, raw)
+    }
+
+    func testQuoteCardKeepsDisplayNameAndUsername() {
+        let raw = "[quote=\"Alice, post:7, topic:42, username:alice\"]\nhi\n[/quote]"
+        let document = ExperimentalComposerDocument.parse(raw)
+        XCTAssertEqual(
+            document.blocks,
+            [
+                .quoteCard(
+                    username: "alice",
+                    displayName: "Alice",
+                    postNumber: 7,
+                    topicId: 42,
+                    full: false,
+                    inner: "hi"
+                ),
+            ]
+        )
+        XCTAssertEqual(document.markdown, raw)
+    }
+
+    func testStandaloneImageBecomesIsland() {
+        let raw = "before\n\n![cat](https://example.com/cat.png)\n\nafter"
+        let document = ExperimentalComposerDocument.parse(raw)
+        XCTAssertEqual(document.blocks.count, 3)
+        XCTAssertEqual(document.blocks[0], .paragraph("before"))
+        XCTAssertEqual(
+            document.blocks[1],
+            .image(alt: "cat", url: "https://example.com/cat.png", title: nil)
+        )
+        XCTAssertEqual(document.blocks[2], .paragraph("after"))
+        XCTAssertEqual(document.markdown, raw)
+    }
+
+    func testImageWithTitleRoundTrips() {
+        let raw = "![logo](https://example.com/a.png \"Brand\")"
+        let document = ExperimentalComposerDocument.parse(raw)
+        XCTAssertEqual(
+            document.blocks,
+            [.image(alt: "logo", url: "https://example.com/a.png", title: "Brand")]
+        )
+        XCTAssertEqual(document.markdown, raw)
+    }
+
+    func testPreviewImageURLResolvesUploadAndRelative() {
+        XCTAssertEqual(
+            ExperimentalComposerDocument.previewImageURL(
+                from: "upload://abc123.png",
+                baseURL: "https://linux.do/"
+            )?.absoluteString,
+            "https://linux.do/uploads/short-url/abc123.png"
+        )
+        XCTAssertEqual(
+            ExperimentalComposerDocument.previewImageURL(
+                from: "/uploads/default/original/1X/a.png",
+                baseURL: "https://linux.do"
+            )?.absoluteString,
+            "https://linux.do/uploads/default/original/1X/a.png"
+        )
+        XCTAssertEqual(
+            ExperimentalComposerDocument.previewImageURL(
+                from: "//cdn.example.com/a.png",
+                baseURL: "https://linux.do"
+            )?.absoluteString,
+            "https://cdn.example.com/a.png"
+        )
+        XCTAssertEqual(
+            ExperimentalComposerDocument.previewImageURL(
+                from: "https://img.example.com/a.png",
+                baseURL: "https://linux.do"
+            )?.absoluteString,
+            "https://img.example.com/a.png"
+        )
+    }
+
+    func testPolicyAndGridStayLiteral() {
+        let policy = "[policy group=trust_level_0]\nbe nice\n[/policy]"
+        let grid = "[grid]\n![](https://example.com/a.png)\n[/grid]"
+        XCTAssertEqual(ExperimentalComposerDocument.parse(policy).blocks, [.literal(policy)])
+        XCTAssertEqual(ExperimentalComposerDocument.parse(policy).markdown, policy)
+        XCTAssertEqual(ExperimentalComposerDocument.parse(grid).blocks, [.literal(grid)])
+        XCTAssertEqual(ExperimentalComposerDocument.parse(grid).markdown, grid)
+    }
+
+    func testInlineBoldSurvivesParagraphExport() {
+        let raw = "hello **world**"
+        let document = ExperimentalComposerDocument.parse(raw)
+        XCTAssertEqual(document.blocks, [.paragraph(raw)])
         XCTAssertEqual(document.markdown, raw)
     }
 

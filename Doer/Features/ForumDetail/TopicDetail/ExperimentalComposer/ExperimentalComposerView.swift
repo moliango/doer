@@ -7,6 +7,7 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
     var pasteCoordinator: ComposerMarkdownCoordinator? {
         didSet { applyPasteCoordinator() }
     }
+    var imageBaseURL: String = ""
 
     var onDocumentChanged: (() -> Void)?
     var onEditingBegan: (() -> Void)?
@@ -111,7 +112,7 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
             switch parsed.blocks[0] {
             case .paragraph:
                 shouldInsertBlocks = false
-            case .code, .literal, .heading, .quote, .listItem:
+            case .code, .literal, .heading, .quote, .listItem, .image, .quoteCard:
                 shouldInsertBlocks = true
             }
         } else {
@@ -217,10 +218,17 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
         self.document.blocks = blocks
         for (index, block) in blocks.enumerated() {
             let ordinal = ExperimentalComposerDocument.orderedOrdinal(in: blocks, at: index)
-            let blockView = ExperimentalComposerBlockView(block: block, orderedIndex: ordinal ?? 1)
+            let blockView = ExperimentalComposerBlockView(
+                block: block,
+                orderedIndex: ordinal ?? 1,
+                imageBaseURL: imageBaseURL
+            )
             blockView.textView.delegate = self
             blockView.textView.pasteCoordinator = pasteCoordinator
-            blockView.textView.isEditable = isEditable
+            blockView.textView.isEditable = isEditable && {
+                if case .image = block { return false }
+                return true
+            }()
             blockView.textView.tag = index
             stackView.addArrangedSubview(blockView)
             blockViews.append(blockView)
@@ -272,8 +280,10 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
     ) -> Bool {
         guard !isRebuilding, let blockView = blockViews[safe: textView.tag] else { return true }
         switch blockView.block {
-        case .code, .literal:
+        case .code, .literal, .quoteCard:
             return true
+        case .image:
+            return false
         default:
             break
         }
@@ -349,6 +359,14 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
         syncDocumentFromViews()
         let previous = document.blocks[index - 1]
         let current = document.blocks[index]
+        if previous.isAtomicIsland {
+            document.blocks.remove(at: index - 1)
+            rebuild(from: document)
+            focusedIndex = index - 1
+            blockViews[safe: focusedIndex]?.textView.becomeFirstResponder()
+            onDocumentChanged?()
+            return
+        }
         let mergedInner: String
         if previous.innerMarkdown.isEmpty {
             mergedInner = current.innerMarkdown
@@ -380,6 +398,19 @@ private extension ExperimentalComposerBlock {
             return text
         case .code(_, let code):
             return code
+        case .image(let alt, _, _):
+            return alt
+        case .quoteCard(_, _, _, _, _, let inner):
+            return inner
+        }
+    }
+
+    var isAtomicIsland: Bool {
+        switch self {
+        case .image, .quoteCard:
+            return true
+        default:
+            return false
         }
     }
 
@@ -395,6 +426,17 @@ private extension ExperimentalComposerBlock {
             return .listItem(ordered: ordered, text: text)
         case .code(let language, _):
             return .code(language: language, code: text)
+        case .image(_, let url, let title):
+            return .image(alt: text, url: url, title: title)
+        case .quoteCard(let username, let displayName, let postNumber, let topicId, let full, _):
+            return .quoteCard(
+                username: username,
+                displayName: displayName,
+                postNumber: postNumber,
+                topicId: topicId,
+                full: full,
+                inner: text
+            )
         case .literal:
             return .literal(text)
         }
@@ -404,8 +446,12 @@ private extension ExperimentalComposerBlock {
 private final class ExperimentalComposerBlockView: UIView {
     private(set) var block: ExperimentalComposerBlock
     private let orderedIndex: Int
+    private let imageBaseURL: String
     let textView = ComposerBodyTextView()
     private let chrome = UIView()
+    private let quoteHeader = UILabel()
+    private let imageView = UIImageView()
+    private var imageHeightConstraint: NSLayoutConstraint!
     private let rowStack: UIStackView = {
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -418,15 +464,17 @@ private final class ExperimentalComposerBlockView: UIView {
     private let markerLabel = UILabel()
     private var isApplying = false
     private var markerWidthConstraint: NSLayoutConstraint!
-
-    init(block: ExperimentalComposerBlock, orderedIndex: Int = 1) {
+    init(block: ExperimentalComposerBlock, orderedIndex: Int = 1, imageBaseURL: String = "") {
         self.block = block
         self.orderedIndex = orderedIndex
+        self.imageBaseURL = imageBaseURL
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         chrome.translatesAutoresizingMaskIntoConstraints = false
         markerColumn.translatesAutoresizingMaskIntoConstraints = false
         markerLabel.translatesAutoresizingMaskIntoConstraints = false
+        quoteHeader.translatesAutoresizingMaskIntoConstraints = false
+        imageView.translatesAutoresizingMaskIntoConstraints = false
         textView.translatesAutoresizingMaskIntoConstraints = false
         textView.isScrollEnabled = false
         textView.backgroundColor = .clear
@@ -439,7 +487,23 @@ private final class ExperimentalComposerBlockView: UIView {
         textView.setContentCompressionResistancePriority(.required, for: .vertical)
         chrome.layer.cornerRadius = 10
         chrome.layer.cornerCurve = .continuous
-        chrome.clipsToBounds = false
+        chrome.clipsToBounds = true
+
+        quoteHeader.font = AppSettings.shared.appInterfaceFont(
+            ofSize: 13,
+            weight: .semibold,
+            fallback: .systemFont(ofSize: 13, weight: .semibold)
+        )
+        quoteHeader.textColor = .secondaryLabel
+        quoteHeader.adjustsFontForContentSizeCategory = true
+        quoteHeader.isHidden = true
+
+        imageView.contentMode = .scaleAspectFill
+        imageView.clipsToBounds = true
+        imageView.backgroundColor = UIColor.secondarySystemFill
+        imageView.layer.cornerRadius = 8
+        imageView.isHidden = true
+        imageView.isUserInteractionEnabled = false
 
         markerColumn.setContentHuggingPriority(.required, for: .horizontal)
         markerColumn.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -450,21 +514,28 @@ private final class ExperimentalComposerBlockView: UIView {
         markerLabel.setContentHuggingPriority(.required, for: .horizontal)
         markerLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
+        let contentStack = UIStackView(arrangedSubviews: [quoteHeader, imageView, rowStack])
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.axis = .vertical
+        contentStack.spacing = 6
+
         addSubview(chrome)
-        chrome.addSubview(rowStack)
+        chrome.addSubview(contentStack)
         markerColumn.addSubview(markerLabel)
         rowStack.addArrangedSubview(markerColumn)
         rowStack.addArrangedSubview(textView)
         markerWidthConstraint = markerColumn.widthAnchor.constraint(equalToConstant: 0)
+        imageHeightConstraint = imageView.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             chrome.topAnchor.constraint(equalTo: topAnchor),
             chrome.leadingAnchor.constraint(equalTo: leadingAnchor),
             chrome.trailingAnchor.constraint(equalTo: trailingAnchor),
             chrome.bottomAnchor.constraint(equalTo: bottomAnchor),
-            rowStack.topAnchor.constraint(equalTo: chrome.topAnchor),
-            rowStack.leadingAnchor.constraint(equalTo: chrome.leadingAnchor, constant: 4),
-            rowStack.trailingAnchor.constraint(equalTo: chrome.trailingAnchor, constant: -4),
-            rowStack.bottomAnchor.constraint(equalTo: chrome.bottomAnchor),
+            contentStack.topAnchor.constraint(equalTo: chrome.topAnchor, constant: 6),
+            contentStack.leadingAnchor.constraint(equalTo: chrome.leadingAnchor, constant: 6),
+            contentStack.trailingAnchor.constraint(equalTo: chrome.trailingAnchor, constant: -6),
+            contentStack.bottomAnchor.constraint(equalTo: chrome.bottomAnchor, constant: -6),
+            imageHeightConstraint,
             markerLabel.topAnchor.constraint(equalTo: markerColumn.topAnchor, constant: 4),
             markerLabel.leadingAnchor.constraint(equalTo: markerColumn.leadingAnchor),
             markerLabel.trailingAnchor.constraint(equalTo: markerColumn.trailingAnchor),
@@ -488,6 +559,18 @@ private final class ExperimentalComposerBlockView: UIView {
             block = .code(language: language, code: textView.text ?? "")
         case .literal:
             block = .literal(textView.text ?? "")
+        case .image:
+            break
+        case .quoteCard(let username, let displayName, let postNumber, let topicId, let full, _):
+            let raw = ComposerMarkdownCodec.markdown(from: textView.attributedText ?? NSAttributedString())
+            block = .quoteCard(
+                username: username,
+                displayName: displayName,
+                postNumber: postNumber,
+                topicId: topicId,
+                full: full,
+                inner: raw.trimmingCharacters(in: CharacterSet(charactersIn: "\n"))
+            )
         default:
             let raw = ComposerMarkdownCodec.markdown(from: textView.attributedText ?? NSAttributedString())
             block = block.replacingInner(raw.trimmingCharacters(in: CharacterSet(charactersIn: "\n")))
@@ -496,6 +579,8 @@ private final class ExperimentalComposerBlockView: UIView {
 
     func rawText(inDisplayRange range: NSRange) -> String {
         switch block {
+        case .image:
+            return ""
         case .code, .literal:
             let text = (textView.text ?? "") as NSString
             let length = text.length
@@ -515,6 +600,8 @@ private final class ExperimentalComposerBlockView: UIView {
 
     func replaceDisplayRange(_ range: NSRange, withRaw raw: String) {
         switch block {
+        case .image:
+            return
         case .code, .literal:
             let text = NSMutableString(string: textView.text ?? "")
             let length = text.length
@@ -558,6 +645,12 @@ private final class ExperimentalComposerBlockView: UIView {
         chrome.backgroundColor = .clear
         chrome.layer.borderWidth = 0
         markerWidthConstraint.constant = 0
+        quoteHeader.isHidden = true
+        quoteHeader.text = nil
+        imageView.isHidden = true
+        imageHeightConstraint.constant = 0
+        textView.isHidden = false
+        textView.isEditable = true
         switch block {
         case .paragraph:
             break
@@ -577,6 +670,22 @@ private final class ExperimentalComposerBlockView: UIView {
         case .literal:
             chrome.backgroundColor = ComposerTypography.mutedFill
             textView.font = ComposerTypography.codeFont
+        case .image:
+            chrome.backgroundColor = UIColor.secondarySystemFill.withAlphaComponent(0.4)
+            imageView.isHidden = false
+            imageHeightConstraint.constant = 180
+            textView.isHidden = true
+            textView.isEditable = false
+        case .quoteCard(let username, let displayName, let postNumber, _, _, _):
+            chrome.backgroundColor = UIColor.secondarySystemFill.withAlphaComponent(0.4)
+            chrome.layer.borderWidth = 0
+            quoteHeader.isHidden = false
+            var title = displayName?.isEmpty == false ? displayName! : username
+            if title.isEmpty { title = String(localized: "topic.quote", defaultValue: "引用") }
+            if let postNumber {
+                title += " · #\(postNumber)"
+            }
+            quoteHeader.text = title
         }
     }
 
@@ -595,6 +704,26 @@ private final class ExperimentalComposerBlockView: UIView {
                     .foregroundColor: UIColor.label,
                 ]
             )
+        case .image(_, let url, _):
+            imageView.image = UIImage(systemName: "photo")
+            imageView.tintColor = .tertiaryLabel
+            imageView.contentMode = .center
+            if let parsed = ExperimentalComposerDocument.previewImageURL(from: url, baseURL: imageBaseURL) {
+                ForumImageLoader.setImage(
+                    on: imageView,
+                    url: parsed,
+                    placeholder: UIImage(systemName: "photo"),
+                    cloudflareBaseURL: imageBaseURL
+                ) { [weak self] image, _, _, _ in
+                    guard let self, image != nil else { return }
+                    self.imageView.contentMode = .scaleAspectFill
+                    self.imageView.tintColor = nil
+                }
+            }
+        case .quoteCard:
+            let styled = displayedAttributedString(from: block.innerMarkdown)
+            textView.attributedText = styled
+            textView.typingAttributes = ComposerTypography.typingAttributes
         default:
             let styled = displayedAttributedString(from: block.innerMarkdown)
             textView.attributedText = styled

@@ -121,6 +121,7 @@ final class NewTopicComposerViewController: UIViewController {
         ComposerTypography.applyBody(to: view)
         return view
     }()
+    private var experimentalComposerView: ExperimentalComposerView?
 
     private let placeholderLabel: UILabel = {
         let label = UILabel()
@@ -296,6 +297,25 @@ final class NewTopicComposerViewController: UIViewController {
         textView.delegate = self
         markdownCoordinator.surface = self
         textView.pasteCoordinator = markdownCoordinator
+        if let experimental = ExperimentalComposerHosting.makeViewIfEnabled(
+            pasteCoordinator: markdownCoordinator,
+            imageBaseURL: api.baseURL,
+            onDocumentChanged: { [weak self] in
+                self?.updateEditorState()
+                self?.scheduleDraftSave()
+            },
+            onEditingBegan: { [weak self] in
+                guard let self, self.currentPanel != .none else { return }
+                self.closePanel(returnToKeyboard: false)
+            }
+        ) {
+            ExperimentalComposerHosting.pin(experimental, over: textView, in: view)
+            experimentalComposerView = experimental
+            modeToggleButton.isHidden = true
+            view.bringSubviewToFront(previewView)
+            view.bringSubviewToFront(placeholderLabel)
+            view.bringSubviewToFront(bottomStackView)
+        }
         categoryButton.addTarget(self, action: #selector(categoryButtonPressed), for: .touchDown)
         emojiToggleButton.addTarget(self, action: #selector(toggleEmojiPicker), for: .touchUpInside)
         encryptToolbarButton.addTarget(self, action: #selector(encryptToolbarTapped), for: .touchUpInside)
@@ -339,7 +359,7 @@ final class NewTopicComposerViewController: UIViewController {
         if titleField.text?.isEmpty != false {
             titleField.becomeFirstResponder()
         } else {
-            textView.becomeFirstResponder()
+            focusBody()
         }
     }
 
@@ -588,13 +608,14 @@ final class NewTopicComposerViewController: UIViewController {
         isPreviewingMarkdown.toggle()
         if isPreviewingMarkdown {
             closePanel(returnToKeyboard: false)
+            experimentalComposerView?.resignFirstResponder()
             textView.resignFirstResponder()
             previewView.update(markdown: ComposerPangu.applyToOutgoing(bodyRaw))
         } else {
-            textView.becomeFirstResponder()
+            focusBody()
         }
         let showPreview = isPreviewingMarkdown
-        if view.window != nil {
+        if view.window != nil, experimentalComposerView == nil {
             let shown = showPreview ? previewView : textView
             let hidden = showPreview ? textView : previewView
             shown.alpha = 0
@@ -605,8 +626,7 @@ final class NewTopicComposerViewController: UIViewController {
                 hidden.alpha = 1
             }
         } else {
-            textView.isHidden = showPreview
-            previewView.isHidden = !showPreview
+            setPreviewVisible(showPreview)
         }
         updateToolbarState()
         updateEditorState()
@@ -615,8 +635,7 @@ final class NewTopicComposerViewController: UIViewController {
     private func setPanel(_ panel: ComposerPanelKind) {
         if isPreviewingMarkdown {
             isPreviewingMarkdown = false
-            textView.isHidden = false
-            previewView.isHidden = true
+            setPreviewVisible(false)
         }
         currentPanel = panel
         switch panel {
@@ -624,14 +643,16 @@ final class NewTopicComposerViewController: UIViewController {
             emojiPickerView.isHidden = true
             toolsPanelView.isHidden = true
             panelHeightConstraint?.constant = 0
-            textView.becomeFirstResponder()
+            focusBody()
         case .emoji:
+            experimentalComposerView?.resignFirstResponder()
             textView.resignFirstResponder()
             emojiPickerView.isHidden = false
             toolsPanelView.isHidden = true
             panelHeightConstraint?.constant = ComposerToolbarFactory.customPanelHeight
             loadForumEmojis()
         case .tools:
+            experimentalComposerView?.resignFirstResponder()
             textView.resignFirstResponder()
             emojiPickerView.isHidden = true
             toolsPanelView.isHidden = false
@@ -648,7 +669,7 @@ final class NewTopicComposerViewController: UIViewController {
         toolsPanelView.isHidden = true
         panelHeightConstraint?.constant = 0
         updateToolbarState()
-        if returnToKeyboard { textView.becomeFirstResponder() }
+        if returnToKeyboard { focusBody() }
         DoerMotion.animate(duration: DoerMotion.quick) { self.view.layoutIfNeeded() }
     }
 
@@ -665,22 +686,25 @@ final class NewTopicComposerViewController: UIViewController {
     }
 
     @objc private func toggleEditingMode() {
+        guard experimentalComposerView == nil else { return }
         let raw = bodyRaw
         editingMode = editingMode.toggled
         ComposerEditingMode.stored = editingMode
         applyBodyMarkdown(raw)
         if isPreviewingMarkdown {
             isPreviewingMarkdown = false
-            textView.isHidden = false
-            previewView.isHidden = true
+            setPreviewVisible(false)
         }
         updateToolbarState()
         updateEditorState()
-        textView.becomeFirstResponder()
+        focusBody()
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     private var bodyRaw: String {
+        if let experimentalComposerView {
+            return experimentalComposerView.markdown
+        }
         guard let attributed = textView.attributedText, attributed.length > 0 else {
             return textView.text ?? ""
         }
@@ -691,6 +715,10 @@ final class NewTopicComposerViewController: UIViewController {
     }
 
     private func applyBodyMarkdown(_ raw: String) {
+        if let experimentalComposerView {
+            experimentalComposerView.load(markdown: raw)
+            return
+        }
         if editingMode == .rich {
             textView.attributedText = ComposerMarkdownCodec.richAttributedString(from: raw)
         } else {
@@ -700,6 +728,24 @@ final class NewTopicComposerViewController: UIViewController {
             )
         }
         textView.typingAttributes = ComposerTypography.typingAttributes
+    }
+
+    private func focusBody() {
+        if let experimentalComposerView {
+            experimentalComposerView.becomeFirstResponder()
+        } else {
+            textView.becomeFirstResponder()
+        }
+    }
+
+    private func setPreviewVisible(_ visible: Bool) {
+        previewView.isHidden = !visible
+        if experimentalComposerView != nil {
+            experimentalComposerView?.isHidden = visible
+            textView.isHidden = true
+        } else {
+            textView.isHidden = visible
+        }
     }
 
     private func insertRichSnippet(_ markdown: String) {
@@ -868,6 +914,7 @@ final class NewTopicComposerViewController: UIViewController {
     private func setSubmissionControlsEnabled(_ enabled: Bool) {
         titleField.isEnabled = enabled
         textView.isEditable = enabled
+        experimentalComposerView?.isEditable = enabled
         categoryButton.isEnabled = enabled
         tagsStack.isUserInteractionEnabled = enabled
         updateEditorState()
@@ -888,7 +935,7 @@ final class NewTopicComposerViewController: UIViewController {
 
 extension NewTopicComposerViewController: UITextFieldDelegate {
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-        textView.becomeFirstResponder()
+        focusBody()
         return true
     }
 }
@@ -910,12 +957,15 @@ extension NewTopicComposerViewController: UITextViewDelegate {
 extension NewTopicComposerViewController: ComposerTextSurface {
     var composerHostViewController: UIViewController { self }
     var composerAPI: DiscourseAPI { api }
-    var composerTextView: UITextView { textView }
+    var composerTextView: UITextView { experimentalComposerView?.activeTextView ?? textView }
     var composerToolsAnchorView: UIView { toolsToggleButton }
     var composerIsUploading: Bool { isUploading }
     var composerRawText: String { bodyRaw }
 
     func composerSelectedRawText() -> String {
+        if let experimentalComposerView {
+            return experimentalComposerView.selectedRawText()
+        }
         let selection = textView.selectedRange
         guard selection.length > 0, let attributed = textView.attributedText else { return "" }
         if editingMode == .rich {
@@ -925,7 +975,9 @@ extension NewTopicComposerViewController: ComposerTextSurface {
     }
 
     func composerInsertRaw(_ text: String) {
-        if editingMode == .rich {
+        if let experimentalComposerView {
+            experimentalComposerView.insertRaw(text)
+        } else if editingMode == .rich {
             insertRichSnippet(text)
         } else {
             ComposerPlainTextEditing.replaceSelection(in: textView, with: text)
@@ -935,7 +987,9 @@ extension NewTopicComposerViewController: ComposerTextSurface {
     }
 
     func composerWrapSelection(start: String, end: String, placeholder: String) {
-        if editingMode == .rich {
+        if let experimentalComposerView {
+            experimentalComposerView.wrapSelection(start: start, end: end, placeholder: placeholder)
+        } else if editingMode == .rich {
             let selected = composerSelectedRawText()
             let body = selected.isEmpty ? placeholder : selected
             insertRichSnippet("\(start)\(body)\(end)")
@@ -947,7 +1001,9 @@ extension NewTopicComposerViewController: ComposerTextSurface {
     }
 
     func composerApplyLinePrefix(_ prefix: String) {
-        if editingMode == .rich {
+        if let experimentalComposerView {
+            experimentalComposerView.applyLinePrefix(prefix)
+        } else if editingMode == .rich {
             insertRichSnippet(prefix)
         } else {
             ComposerPlainTextEditing.applyLinePrefix(in: textView, prefix: prefix)
@@ -972,6 +1028,7 @@ extension NewTopicComposerViewController: ComposerTextSurface {
         uploadStatusLabel.text = statusText
         uploadStatusLabel.isHidden = !uploading
         textView.isEditable = !uploading
+        experimentalComposerView?.isEditable = !uploading
         titleField.isEnabled = !uploading
         categoryButton.isEnabled = !uploading
         toolsPanelView.isUploading = uploading
@@ -985,8 +1042,7 @@ extension NewTopicComposerViewController: ComposerTextSurface {
     func composerExitMarkdownPreviewIfNeeded() {
         guard isPreviewingMarkdown else { return }
         isPreviewingMarkdown = false
-        textView.isHidden = false
-        previewView.isHidden = true
+        setPreviewVisible(false)
         updateToolbarState()
         updateEditorState()
     }

@@ -8,6 +8,15 @@ enum ExperimentalComposerBlock: Equatable {
     case quote(String)
     case listItem(ordered: Bool, text: String)
     case code(language: String, code: String)
+    case image(alt: String, url: String, title: String?)
+    case quoteCard(
+        username: String,
+        displayName: String?,
+        postNumber: Int?,
+        topicId: Int?,
+        full: Bool,
+        inner: String
+    )
     case literal(String)
 }
 
@@ -38,9 +47,21 @@ struct ExperimentalComposerDocument: Equatable {
                 continue
             }
 
+            if let card = consumeQuoteCard(lines: lines, start: index) {
+                blocks.append(card.block)
+                index = card.nextIndex
+                continue
+            }
+
             if let island = consumeTaggedIsland(lines: lines, start: index) {
                 blocks.append(.literal(island.raw))
                 index = island.nextIndex
+                continue
+            }
+
+            if let image = imageLineMatch(trimmed) {
+                blocks.append(.image(alt: image.alt, url: image.url, title: image.title))
+                index += 1
                 continue
             }
 
@@ -161,6 +182,25 @@ struct ExperimentalComposerDocument: Equatable {
         listItemMatch(line)
     }
 
+    /// Resolve Discourse `upload://`, site-relative, and protocol-relative URLs for preview.
+    static func previewImageURL(from raw: String, baseURL: String) -> URL? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let base = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if trimmed.hasPrefix("upload://") {
+            let token = String(trimmed.dropFirst("upload://".count))
+            guard !token.isEmpty else { return nil }
+            return URL(string: "\(base)/uploads/short-url/\(token)")
+        }
+        if trimmed.hasPrefix("//") {
+            return URL(string: "https:\(trimmed)")
+        }
+        if trimmed.hasPrefix("/"), !trimmed.hasPrefix("//") {
+            return URL(string: base + trimmed)
+        }
+        return URL(string: trimmed)
+    }
+
     private static func serializeBlock(_ block: ExperimentalComposerBlock) -> String {
         switch block {
         case .paragraph(let text):
@@ -181,6 +221,20 @@ struct ExperimentalComposerDocument: Equatable {
                 body += "\n"
             }
             return "```\(language)\n\(body)```"
+        case .image(let alt, let url, let title):
+            if let title, !title.isEmpty {
+                return "![\(alt)](\(url) \"\(title)\")"
+            }
+            return "![\(alt)](\(url))"
+        case .quoteCard(let username, let displayName, let postNumber, let topicId, let full, let inner):
+            return serializeQuoteCard(
+                username: username,
+                displayName: displayName,
+                postNumber: postNumber,
+                topicId: topicId,
+                full: full,
+                inner: inner
+            )
         case .literal(let raw):
             return raw
         }
@@ -193,6 +247,8 @@ struct ExperimentalComposerDocument: Equatable {
         if headingMatch(trimmed) != nil { return true }
         if listItemMatch(line) != nil { return true }
         if taggedIslandOpener(trimmed) != nil { return true }
+        if quoteCardOpener(trimmed) { return true }
+        if imageLineMatch(trimmed) != nil { return true }
         if looksLikeTableRow(trimmed) { return true }
         return false
     }
@@ -240,9 +296,161 @@ struct ExperimentalComposerDocument: Equatable {
     private static func taggedIslandOpener(_ trimmed: String) -> String? {
         let lower = trimmed.lowercased()
         if lower.hasPrefix("[poll") { return "[/poll]" }
-        if lower.hasPrefix("[quote") && !lower.hasPrefix("[/quote") { return "[/quote]" }
         if lower.hasPrefix("[wrap=") { return "[/wrap]" }
+        if lower.hasPrefix("[policy") { return "[/policy]" }
+        if lower.hasPrefix("[grid") { return "[/grid]" }
         return nil
+    }
+
+    private static func quoteCardOpener(_ trimmed: String) -> Bool {
+        let lower = trimmed.lowercased()
+        return lower.hasPrefix("[quote") && !lower.hasPrefix("[/quote")
+    }
+
+    private static func consumeQuoteCard(
+        lines: [String],
+        start: Int
+    ) -> (block: ExperimentalComposerBlock, nextIndex: Int)? {
+        let trimmed = lines[start].trimmingCharacters(in: .whitespaces)
+        guard quoteCardOpener(trimmed) else { return nil }
+        let header = parseQuoteHeader(trimmed)
+        var innerLines: [String] = []
+        var index = start + 1
+        var depth = 1
+        while index < lines.count {
+            let candidate = lines[index].trimmingCharacters(in: .whitespaces)
+            let lower = candidate.lowercased()
+            if quoteCardOpener(candidate) {
+                depth += 1
+                innerLines.append(lines[index])
+            } else if lower == "[/quote]" {
+                depth -= 1
+                if depth == 0 {
+                    index += 1
+                    break
+                }
+                innerLines.append(lines[index])
+            } else {
+                innerLines.append(lines[index])
+            }
+            index += 1
+        }
+        let inner = innerLines.joined(separator: "\n")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\n"))
+        return (
+            .quoteCard(
+                username: header.username,
+                displayName: header.displayName,
+                postNumber: header.postNumber,
+                topicId: header.topicId,
+                full: header.full,
+                inner: inner
+            ),
+            index
+        )
+    }
+
+    private static func parseQuoteHeader(_ opener: String) -> (
+        username: String,
+        displayName: String?,
+        postNumber: Int?,
+        topicId: Int?,
+        full: Bool
+    ) {
+        var username = ""
+        var displayName: String?
+        var postNumber: Int?
+        var topicId: Int?
+        var full = false
+        guard let start = opener.firstIndex(of: "\""),
+              let end = opener.lastIndex(of: "\""),
+              start < end
+        else {
+            return ("", nil, nil, nil, false)
+        }
+        let body = String(opener[opener.index(after: start)..<end])
+        let parts = body.split(separator: ",").map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        for (offset, part) in parts.enumerated() {
+            let lower = part.lowercased()
+            if lower.hasPrefix("post:") {
+                postNumber = Int(part.dropFirst(5).trimmingCharacters(in: .whitespaces))
+            } else if lower.hasPrefix("topic:") {
+                topicId = Int(part.dropFirst(6).trimmingCharacters(in: .whitespaces))
+            } else if lower.hasPrefix("username:") {
+                username = String(part.dropFirst(9).trimmingCharacters(in: .whitespaces))
+            } else if lower == "full:true" || lower == "full" {
+                full = true
+            } else if offset == 0 {
+                displayName = part
+            }
+        }
+        if username.isEmpty, let displayName, !displayName.isEmpty {
+            username = displayName
+        }
+        if displayName == username {
+            displayName = nil
+        }
+        return (username, displayName, postNumber, topicId, full)
+    }
+
+    private static func serializeQuoteCard(
+        username: String,
+        displayName: String?,
+        postNumber: Int?,
+        topicId: Int?,
+        full: Bool,
+        inner: String
+    ) -> String {
+        var parts: [String] = []
+        if let displayName, !displayName.isEmpty {
+            parts.append(displayName)
+        } else if !username.isEmpty {
+            parts.append(username)
+        }
+        if let postNumber {
+            parts.append("post:\(postNumber)")
+        }
+        if let topicId {
+            parts.append("topic:\(topicId)")
+        }
+        if let displayName, !displayName.isEmpty, !username.isEmpty, displayName != username {
+            parts.append("username:\(username)")
+        }
+        if full {
+            parts.append("full:true")
+        }
+        let open = parts.isEmpty ? "[quote]" : "[quote=\"\(parts.joined(separator: ", "))\"]"
+        if inner.isEmpty {
+            return "\(open)\n[/quote]"
+        }
+        return "\(open)\n\(inner)\n[/quote]"
+    }
+
+    private static func imageLineMatch(_ trimmed: String) -> (alt: String, url: String, title: String?)? {
+        guard let regex = try? NSRegularExpression(
+            pattern: #"^!\[(.*?)\]\((\S+?)(?:\s+\"([^\"]*)\")?\)$"#
+        ) else {
+            return nil
+        }
+        let range = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
+        guard let match = regex.firstMatch(in: trimmed, options: [], range: range),
+              match.numberOfRanges >= 3,
+              let altRange = Range(match.range(at: 1), in: trimmed),
+              let urlRange = Range(match.range(at: 2), in: trimmed)
+        else {
+            return nil
+        }
+        let alt = String(trimmed[altRange])
+        let url = String(trimmed[urlRange])
+        guard !url.isEmpty else { return nil }
+        var title: String?
+        if match.numberOfRanges >= 4, match.range(at: 3).location != NSNotFound,
+           let titleRange = Range(match.range(at: 3), in: trimmed) {
+            title = String(trimmed[titleRange])
+        }
+        return (alt, url, title)
     }
 
     private static func consumeTaggedIsland(

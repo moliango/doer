@@ -17,6 +17,7 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
     private let recipientField = UITextField()
     private let titleField = UITextField()
     private let textView = ComposerBodyTextView()
+    private var experimentalComposerView: ExperimentalComposerView?
     private let placeholderLabel = UILabel()
     private var editingMode = ComposerEditingMode.stored
     private var isSending = false
@@ -79,6 +80,24 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         setupNavigation()
         setupUI()
         markdownCoordinator.surface = self
+        if let experimental = ExperimentalComposerHosting.makeViewIfEnabled(
+            pasteCoordinator: markdownCoordinator,
+            imageBaseURL: api.baseURL,
+            onDocumentChanged: { [weak self] in
+                guard let self else { return }
+                self.placeholderLabel.isHidden = !self.bodyRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                self.updateSendState()
+                self.scheduleDraftSave()
+            },
+            onEditingBegan: {}
+        ) {
+            ExperimentalComposerHosting.pin(experimental, over: textView, in: view)
+            experimentalComposerView = experimental
+            navigationItem.rightBarButtonItems = navigationItem.rightBarButtonItems?.filter { $0 !== modeBarItem }
+            view.bringSubviewToFront(previewView)
+            view.bringSubviewToFront(placeholderLabel)
+            view.bringSubviewToFront(uploadStatusLabel)
+        }
         applyBodyMarkdown(initialRaw)
         updateSendState()
         Task { await hydrateServerDraftIfNeeded() }
@@ -226,6 +245,9 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
     }
 
     private var bodyRaw: String {
+        if let experimentalComposerView {
+            return experimentalComposerView.markdown
+        }
         guard let attributed = textView.attributedText, attributed.length > 0 else {
             return textView.text ?? ""
         }
@@ -236,6 +258,11 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
     }
 
     private func applyBodyMarkdown(_ raw: String) {
+        if let experimentalComposerView {
+            experimentalComposerView.load(markdown: raw)
+            placeholderLabel.isHidden = raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            return
+        }
         if editingMode == .rich {
             textView.attributedText = ComposerMarkdownCodec.richAttributedString(from: raw)
         } else {
@@ -246,6 +273,14 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         }
         textView.typingAttributes = ComposerTypography.typingAttributes
         placeholderLabel.isHidden = raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    private func focusBody() {
+        if let experimentalComposerView {
+            experimentalComposerView.becomeFirstResponder()
+        } else {
+            textView.becomeFirstResponder()
+        }
     }
 
     private func insertRichSnippet(_ markdown: String) {
@@ -271,25 +306,32 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
     }
 
     @objc private func toggleEditingMode() {
+        guard experimentalComposerView == nil else { return }
         let raw = bodyRaw
         editingMode = editingMode.toggled
         ComposerEditingMode.stored = editingMode
         applyBodyMarkdown(raw)
         modeBarItem?.title = editingMode == .rich ? "Aa" : "MD"
-        textView.becomeFirstResponder()
+        focusBody()
     }
 
     @objc private func toggleMarkdownPreview() {
         isPreviewingMarkdown.toggle()
         previewView.isHidden = !isPreviewingMarkdown
-        textView.isHidden = isPreviewingMarkdown
+        if experimentalComposerView != nil {
+            experimentalComposerView?.isHidden = isPreviewingMarkdown
+            textView.isHidden = true
+        } else {
+            textView.isHidden = isPreviewingMarkdown
+        }
         placeholderLabel.isHidden = isPreviewingMarkdown || !bodyRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         previewBarItem?.image = UIImage(systemName: isPreviewingMarkdown ? "eye.slash" : "eye")
         if isPreviewingMarkdown {
+            experimentalComposerView?.resignFirstResponder()
             textView.resignFirstResponder()
             previewView.update(markdown: ComposerPangu.applyToOutgoing(bodyRaw))
         } else {
-            textView.becomeFirstResponder()
+            focusBody()
         }
     }
 
@@ -428,7 +470,7 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
     }
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-        textView.becomeFirstResponder()
+        focusBody()
         return false
     }
 }
@@ -438,12 +480,15 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
 extension PrivateMessageComposerViewController: ComposerTextSurface {
     var composerHostViewController: UIViewController { self }
     var composerAPI: DiscourseAPI { api }
-    var composerTextView: UITextView { textView }
+    var composerTextView: UITextView { experimentalComposerView?.activeTextView ?? textView }
     var composerToolsAnchorView: UIView { sendButton }
     var composerIsUploading: Bool { isUploading }
     var composerRawText: String { bodyRaw }
 
     func composerSelectedRawText() -> String {
+        if let experimentalComposerView {
+            return experimentalComposerView.selectedRawText()
+        }
         let selection = textView.selectedRange
         guard selection.length > 0, let attributed = textView.attributedText else { return "" }
         if editingMode == .rich {
@@ -453,7 +498,9 @@ extension PrivateMessageComposerViewController: ComposerTextSurface {
     }
 
     func composerInsertRaw(_ text: String) {
-        if editingMode == .rich {
+        if let experimentalComposerView {
+            experimentalComposerView.insertRaw(text)
+        } else if editingMode == .rich {
             insertRichSnippet(text)
         } else {
             ComposerPlainTextEditing.replaceSelection(in: textView, with: text)
@@ -464,7 +511,9 @@ extension PrivateMessageComposerViewController: ComposerTextSurface {
     }
 
     func composerWrapSelection(start: String, end: String, placeholder: String) {
-        if editingMode == .rich {
+        if let experimentalComposerView {
+            experimentalComposerView.wrapSelection(start: start, end: end, placeholder: placeholder)
+        } else if editingMode == .rich {
             let selected = composerSelectedRawText()
             let body = selected.isEmpty ? placeholder : selected
             insertRichSnippet("\(start)\(body)\(end)")
@@ -477,7 +526,9 @@ extension PrivateMessageComposerViewController: ComposerTextSurface {
     }
 
     func composerApplyLinePrefix(_ prefix: String) {
-        if editingMode == .rich {
+        if let experimentalComposerView {
+            experimentalComposerView.applyLinePrefix(prefix)
+        } else if editingMode == .rich {
             insertRichSnippet(prefix)
         } else {
             ComposerPlainTextEditing.applyLinePrefix(in: textView, prefix: prefix)
@@ -504,12 +555,13 @@ extension PrivateMessageComposerViewController: ComposerTextSurface {
         isUploading = uploading
         uploadStatusLabel.text = statusText
         uploadStatusLabel.isHidden = !uploading
+        experimentalComposerView?.isEditable = !uploading
         updateSendState()
     }
 
     func composerCloseToolPanel(returnToKeyboard: Bool) {
         if returnToKeyboard {
-            textView.becomeFirstResponder()
+            focusBody()
         }
     }
 
