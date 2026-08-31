@@ -83,7 +83,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
     func sceneWillResignActive(_ scene: UIScene) {}
     func sceneWillEnterForeground(_ scene: UIScene) {
-//        ProxyManager.shared.start()
+        LightweightDohProxyService.shared.ensureProxyAlive()
+        ConnectivityService.shared.check()
         refreshWebSessionAfterForeground(reason: "scene_will_enter_foreground")
     }
 

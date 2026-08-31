@@ -15,8 +15,23 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     private(set) var configurationVersion: Int = 0
     private var lastSignature = ""
     private var applyGeneration = 0
+    private var consecutiveStartFailures = 0
 
     private init() {}
+
+    enum DohProxyLiveness {
+        /// Config changed, or DoH is on but the loopback listener is not ready.
+        /// Same-signature + live proxy is a no-op so an in-flight start is not
+        /// doubled by `sceneWillEnterForeground`.
+        static func shouldReapply(
+            enabled: Bool,
+            signatureChanged: Bool,
+            isLive: Bool
+        ) -> Bool {
+            if signatureChanged { return true }
+            return enabled && !isLive
+        }
+    }
 
     var currentSignature: String {
         AppSettings.dohProxyConfig(from: .standard).signature
@@ -65,21 +80,53 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
 
     func configureFromSettings() {
         lock.lock()
-        applyGeneration += 1
-        let generation = applyGeneration
         let signature = currentSignature
-        if signature == lastSignature {
+        let shouldEnable = UserDefaults.standard.bool(forKey: "dohEnabled")
+        let shouldApply = DohProxyLiveness.shouldReapply(
+            enabled: shouldEnable,
+            signatureChanged: signature != lastSignature,
+            isLive: proxy?.isRunning == true
+        )
+        if !shouldApply {
             lock.unlock()
             return
         }
+        applyGeneration += 1
+        let generation = applyGeneration
         lastSignature = signature
         configurationVersion += 1
-        let shouldEnable = UserDefaults.standard.bool(forKey: "dohEnabled")
         lock.unlock()
 
         startQueue.async { [weak self] in
             self?.applyConfiguration(shouldEnable: shouldEnable, generation: generation)
         }
+    }
+
+    /// FluxDo `ensureProxyAlive`. iOS can drop the loopback listener and
+    /// Encrypted DNS PrivacyContext while suspended; resume must restore
+    /// them without requiring a process kill.
+    func ensureProxyAlive() {
+        guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
+        lock.lock()
+        consecutiveStartFailures = 0
+        let isLive = proxy?.isRunning == true
+        lock.unlock()
+        reassertNameResolution()
+        if isLive {
+            publishAppClients()
+            return
+        }
+        DohDebugLog.record("DoH proxy not alive; restarting")
+        configureFromSettings()
+    }
+
+    /// Wi‑Fi ↔ cellular keeps the path `.satisfied`, so Encrypted DNS and
+    /// sticky bootstrap IPs from the previous interface must be rebuilt.
+    func recoverAfterPathChange() {
+        guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
+        DohDebugLog.record("DoH recovering after network path change")
+        clearCache()
+        ensureProxyAlive()
     }
 
     private func applyConfiguration(shouldEnable: Bool, generation: Int) {
@@ -184,6 +231,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         newProxy.onListening = { [weak self] _ in
             guard let self else { return }
             self.lock.lock()
+            self.consecutiveStartFailures = 0
             self.configurationVersion += 1
             self.lock.unlock()
             self.publishAppClients()
@@ -199,6 +247,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             self.lock.unlock()
             DohDebugLog.record("WebView DoH proxy failed: \(error.localizedDescription)")
             self.publishAppClients()
+            self.scheduleAliveRestartIfNeeded()
         }
         proxy = newProxy
         lock.unlock()
@@ -214,6 +263,36 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             lock.unlock()
             DohDebugLog.record("WebView DoH proxy start failed: \(error.localizedDescription)")
             publishAppClients()
+            scheduleAliveRestartIfNeeded()
+        }
+    }
+
+    private func reassertNameResolution() {
+        if LocalConnectProxy.originECHReady {
+            EncryptedDnsService.disable()
+        } else {
+            EncryptedDnsService.reassertFromDefaults()
+        }
+    }
+
+    private func scheduleAliveRestartIfNeeded() {
+        lock.lock()
+        consecutiveStartFailures += 1
+        let failures = consecutiveStartFailures
+        lock.unlock()
+        guard failures <= 3 else {
+            DohDebugLog.record("DoH proxy restart gave up after \(failures) failures")
+            return
+        }
+        startQueue.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            guard let self else { return }
+            guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
+            self.lock.lock()
+            let isLive = self.proxy?.isRunning == true
+            self.lock.unlock()
+            guard !isLive else { return }
+            DohDebugLog.record("DoH proxy retry \(failures)")
+            self.configureFromSettings()
         }
     }
 

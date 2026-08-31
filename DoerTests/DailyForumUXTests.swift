@@ -22,6 +22,20 @@ final class DailyForumUXTests: XCTestCase {
         )
     }
 
+    func testWiFiToCellularRecoversDoHWithoutTreatingAsOffline() {
+        let wifi = ConnectivityService.PathTransport(wifi: true, cellular: false)
+        let cellular = ConnectivityService.PathTransport(wifi: false, cellular: true)
+        let both = ConnectivityService.PathTransport(wifi: true, cellular: true)
+        XCTAssertFalse(ConnectivityService.shouldRecoverDoH(previous: nil, current: wifi))
+        XCTAssertFalse(ConnectivityService.shouldRecoverDoH(previous: wifi, current: wifi))
+        XCTAssertTrue(ConnectivityService.shouldRecoverDoH(previous: wifi, current: cellular))
+        XCTAssertTrue(ConnectivityService.shouldRecoverDoH(previous: wifi, current: both))
+        XCTAssertTrue(ConnectivityService.shouldRecoverDoH(previous: both, current: cellular))
+        XCTAssertFalse(
+            HomeConnectivityRecoveryPolicy.shouldReloadTopicList(topicsEmpty: false, hasError: false)
+        )
+    }
+
     func testQuoteMarkdownUsesDiscourseBBCode() {
         let markdown = DiscourseQuoteMarkdown.make(
             username: "alice",

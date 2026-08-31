@@ -78,6 +78,15 @@ nonisolated enum EncryptedDnsService {
         )
     }
 
+    /// Force-apply after foreground / path restore. `apply` skips flush when
+    /// the spec is unchanged, but iOS can drop PrivacyContext while suspended.
+    static func reassertFromDefaults() {
+        applyLock.lock()
+        lastApplied = nil
+        applyLock.unlock()
+        applyFromDefaults()
+    }
+
     static func disable() {
         applyLock.lock()
         lastApplied = nil

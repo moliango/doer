@@ -34,8 +34,38 @@ final class ConnectivityService {
 
     private(set) var isConnected = true
     private var lastPathStatus: NWPath.Status?
+    private var lastTransport: PathTransport?
 
     private init() {}
+
+    /// Wi‑Fi / 5G / Ethernet mix. Interface swaps often stay `.satisfied`.
+    nonisolated struct PathTransport: Equatable {
+        var wifi: Bool
+        var cellular: Bool
+        var wired: Bool
+
+        init(wifi: Bool, cellular: Bool, wired: Bool = false) {
+            self.wifi = wifi
+            self.cellular = cellular
+            self.wired = wired
+        }
+
+        init(path: NWPath) {
+            wifi = path.usesInterfaceType(.wifi)
+            cellular = path.usesInterfaceType(.cellular)
+            wired = path.usesInterfaceType(.wiredEthernet)
+        }
+    }
+
+    /// DoH Encrypted DNS sockets and cached bootstrap IPs are bound to the
+    /// previous interface. Recover when transport changes even if still online.
+    nonisolated static func shouldRecoverDoH(
+        previous: PathTransport?,
+        current: PathTransport
+    ) -> Bool {
+        guard let previous else { return false }
+        return previous != current
+    }
 
     // MARK: - Public
 
@@ -90,14 +120,23 @@ final class ConnectivityService {
         }
 
         cancelDisconnectDebounce()
+        let transport = PathTransport(path: path)
+        let recoverDoH = Self.shouldRecoverDoH(previous: lastTransport, current: transport)
+        lastTransport = transport
 
         if Self.enableServerPing {
             Task { @MainActor in
                 let reachable = await pingServerIfConfigured()
                 setConnected(reachable)
+                if recoverDoH, reachable {
+                    LightweightDohProxyService.shared.recoverAfterPathChange()
+                }
             }
         } else {
             setConnected(true)
+            if recoverDoH {
+                LightweightDohProxyService.shared.recoverAfterPathChange()
+            }
         }
     }
 
@@ -132,6 +171,7 @@ final class ConnectivityService {
 
         if connected {
             stopRetry()
+            LightweightDohProxyService.shared.ensureProxyAlive()
         } else {
             startRetry()
         }

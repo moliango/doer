@@ -32,6 +32,37 @@ final class LocalConnectProxyTests: XCTestCase {
         XCTAssertEqual(dict["ExceptionsList"] as? [String], ["127.0.0.1", "localhost", "::1"])
     }
 
+    func testDoHReappliesWhenProxyDiedWithSameSignature() {
+        XCTAssertTrue(
+            LightweightDohProxyService.DohProxyLiveness.shouldReapply(
+                enabled: true,
+                signatureChanged: false,
+                isLive: false
+            )
+        )
+        XCTAssertFalse(
+            LightweightDohProxyService.DohProxyLiveness.shouldReapply(
+                enabled: true,
+                signatureChanged: false,
+                isLive: true
+            )
+        )
+        XCTAssertTrue(
+            LightweightDohProxyService.DohProxyLiveness.shouldReapply(
+                enabled: true,
+                signatureChanged: true,
+                isLive: true
+            )
+        )
+        XCTAssertFalse(
+            LightweightDohProxyService.DohProxyLiveness.shouldReapply(
+                enabled: false,
+                signatureChanged: false,
+                isLive: false
+            )
+        )
+    }
+
     func testDoHProbeResultSubtitleIncludesLatencyAndIPs() {
         let ok = LightweightDohProxyService.ProbeResult(
             ok: true,
