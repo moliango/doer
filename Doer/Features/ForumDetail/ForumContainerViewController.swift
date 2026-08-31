@@ -29,7 +29,9 @@ final class ForumContainerViewController: UIViewController, AuthGating {
     private var isPresentingCloudflareVerification = false
     private var shouldShowCloudflareShieldButton = false
     private var cloudflareShieldSuppressedUntil: Date?
-    /// After the user closes a CF sheet without passing, don't auto-present again (CDK/LDC loops).
+    /// After the user closes a CF sheet without passing, don't auto-present again.
+    /// Keep this short so repeated challenges can be completed without a long wait.
+    private static let cloudflareAutoPresentBlockDuration: TimeInterval = 5
     private var cloudflareAutoPresentBlockedUntil: Date?
     private var pendingCloudflareBaseURL: URL?
     private var pendingCloudflareResponseURL: URL?
@@ -1018,7 +1020,7 @@ final class ForumContainerViewController: UIViewController, AuthGating {
             setCloudflareShieldButtonVisible(false, animated: true)
             return
         }
-        cloudflareAutoPresentBlockedUntil = Date().addingTimeInterval(60)
+        cloudflareAutoPresentBlockedUntil = Date().addingTimeInterval(Self.cloudflareAutoPresentBlockDuration)
         guard pendingCloudflareBaseURL != nil, !isCloudflareShieldSuppressed() else { return }
         setCloudflareShieldButtonVisible(true, animated: true)
     }
