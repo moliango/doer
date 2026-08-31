@@ -169,7 +169,7 @@ final class AppearanceSettingsViewController: ObservableViewController {
             title: String(localized: "settings.appearance.wallpaper", defaultValue: "自定义背景"),
             subtitle: settings.customListBackgroundEnabled
                 ? String(localized: "settings.appearance.wallpaper.on", defaultValue: "已设置本地壁纸，点按可更换或清除")
-                : String(localized: "settings.appearance.wallpaper.off", defaultValue: "选择一张本地图片铺在列表和详情背后"),
+                : String(localized: "settings.appearance.wallpaper.off", defaultValue: "选择一张本地图片铺在话题详情背后"),
             symbolName: "photo",
             tintColor: accentColor,
             backgroundColor: cardBackground

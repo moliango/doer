@@ -30,6 +30,10 @@ enum ForumWallpaper {
         AppSettings.shared.customListBackgroundEnabled = false
     }
 
+    static func remove(from host: UIView) {
+        host.viewWithTag(viewTag)?.removeFromSuperview()
+    }
+
     static func apply(to host: UIView, dim: CGFloat = 0.42) {
         let existing = host.viewWithTag(viewTag) as? ForumWallpaperView
         guard let image = storedImage else {

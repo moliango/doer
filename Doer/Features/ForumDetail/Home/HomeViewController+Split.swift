@@ -87,6 +87,5 @@ final class SplitTopicPlaceholderViewController: UIViewController {
             label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
         ])
-        ForumWallpaper.apply(to: view, dim: 0.5)
     }
 }
