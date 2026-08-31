@@ -100,6 +100,7 @@ class WeChatChatPostCell: UITableViewCell {
     weak var contentDelegate: PostCellDelegate?
 
     private var currentPost: DiscourseTopicDetail.Post?
+    private var currentTopicId = 0
     private var currentReplyQuote: ChatReplyQuote?
     private var imageBaseURL: String?
     private var isMine = false
@@ -213,6 +214,7 @@ class WeChatChatPostCell: UITableViewCell {
     private let likeButton = UIButton(type: .system)
     private let bookmarkButton = UIButton(type: .system)
     private let replyButton = UIButton(type: .system)
+    private let moreButton = UIButton(type: .system)
     private let boostActionButton = UIButton(type: .system)
     private let voteUpButton = UIButton(type: .system)
     private let voteDownButton = UIButton(type: .system)
@@ -547,6 +549,7 @@ class WeChatChatPostCell: UITableViewCell {
             (boostActionButton, PostNativeCell.boostIconImage, #selector(handleBoostTapped)),
             (bookmarkButton, UIImage(systemName: "bookmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .medium)), #selector(handleBookmarkTapped)),
             (replyButton, UIImage(systemName: "arrowshape.turn.up.left", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .medium)), #selector(handleReplyTapped)),
+            (moreButton, UIImage(systemName: "ellipsis", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .medium)), #selector(handleMoreTapped)),
             (voteUpButton, UIImage(systemName: "chevron.up", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .medium)), #selector(handleVoteUpTapped)),
             (voteDownButton, UIImage(systemName: "chevron.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .medium)), #selector(handleVoteDownTapped)),
         ]
@@ -576,7 +579,11 @@ class WeChatChatPostCell: UITableViewCell {
             config.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6)
             config.baseForegroundColor = .secondaryLabel
             button.configuration = config
-            button.addTarget(self, action: sel, for: .touchUpInside)
+            if button === moreButton {
+                button.showsMenuAsPrimaryAction = true
+            } else {
+                button.addTarget(self, action: sel, for: .touchUpInside)
+            }
             button.setContentHuggingPriority(.required, for: .horizontal)
             NSLayoutConstraint.activate([
                 button.heightAnchor.constraint(equalToConstant: Metrics.actionBarHeight),
@@ -598,12 +605,14 @@ class WeChatChatPostCell: UITableViewCell {
         config: NativeRenderConfig,
         floorNumber: Int,
         baseURL: String,
+        topicId: Int = 0,
         contentDelegate: PostCellDelegate?,
         dateSeparatorText: String? = nil,
         chatStyle: ChatTopicStyle,
         replyQuote: ChatReplyQuote? = nil
     ) {
         currentPost = post
+        currentTopicId = topicId
         currentReplyQuote = replyQuote
         self.contentDelegate = contentDelegate
         imageBaseURL = baseURL
@@ -839,7 +848,7 @@ class WeChatChatPostCell: UITableViewCell {
         )
         boostActionButton.isHidden = post.yours || !post.canBoost
         boostActionButton.isEnabled = post.canBoost
-
+        configureMoreMenu(isBookmarked: post.bookmarked)
         underBubbleRowHeightConstraint?.constant = Metrics.actionBarHeight
         underBubbleRowTopConstraint?.constant = 4
         underBubbleRow.isHidden = false
@@ -1371,6 +1380,70 @@ class WeChatChatPostCell: UITableViewCell {
         actionDelegate?.weChatChatPostCell(self, didRequestReply: post)
     }
 
+    @objc private func handleMoreTapped() {}
+
+    private func configureMoreMenu(isBookmarked: Bool) {
+        applyChromeButton(
+            moreButton,
+            systemName: "ellipsis",
+            title: nil,
+            color: .secondaryLabel,
+            symbol: UIImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+        )
+        moreButton.accessibilityLabel = String(localized: "topic.more", defaultValue: "更多")
+        var actions: [UIMenuElement] = []
+        if let post = currentPost, PostEditingPolicy.canShowEditAction(for: post) {
+            actions.append(UIAction(
+                title: String(localized: "post.edit.action", defaultValue: "编辑"),
+                image: UIImage(systemName: "pencil")
+            ) { [weak self] _ in
+                guard let self, let post = self.currentPost else { return }
+                self.contentDelegate?.postCell(didTapEditPost: post)
+            })
+        }
+        if currentPost?.showEditsIndicator == true {
+            actions.append(UIAction(
+                title: String(localized: "revision.title", defaultValue: "编辑历史"),
+                image: UIImage(systemName: "clock.arrow.circlepath")
+            ) { [weak self] _ in
+                guard let self, let post = self.currentPost else { return }
+                self.contentDelegate?.postCell(didTapShowRevisionForPost: post)
+            })
+        }
+        actions.append(UIAction(
+            title: String(localized: "topic.share_image", defaultValue: "生成分享图片"),
+            image: UIImage(systemName: "photo")
+        ) { [weak self] _ in
+            guard let self, let post = self.currentPost else { return }
+            self.contentDelegate?.postCell(didTapShareImageForPost: post)
+        })
+        actions.append(UIAction(
+            title: String(localized: "post.copy_link", defaultValue: "复制链接"),
+            image: UIImage(systemName: "link")
+        ) { [weak self] _ in
+            self?.copyPostLink()
+        })
+        moreButton.menu = UIMenu(title: "", children: actions)
+        moreButton.showsMenuAsPrimaryAction = true
+    }
+
+    private func copyPostLink() {
+        guard let post = currentPost, currentTopicId > 0 else { return }
+        let trimmed = (imageBaseURL ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        UIPasteboard.general.string = "\(trimmed)/t/\(currentTopicId)/\(post.postNumber)"
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let host = current as? UIViewController {
+                DoerFeedback.presentToast(
+                    String(localized: "post.link_copied", defaultValue: "已复制链接"),
+                    on: host
+                )
+                return
+            }
+            responder = current.next
+        }
+    }
+
     @objc private func handleBoostTapped() {
         guard let post = currentPost, !post.yours, post.canBoost else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -1443,6 +1516,7 @@ class WeChatChatPostCell: UITableViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         currentPost = nil
+        currentTopicId = 0
         currentReplyQuote = nil
         imageBaseURL = nil
         heightReconcileGeneration += 1

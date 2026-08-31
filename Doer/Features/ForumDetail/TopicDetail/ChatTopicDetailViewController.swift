@@ -51,6 +51,8 @@ class ChatTopicDetailViewController: ObservableViewController {
     private var postRowHeightCache: [Int: CGFloat] = [:]
     lazy var readingTracker = TopicReadingTracker(api: api)
     let findController = TopicFindBarController()
+    let tocController = TopicTocController()
+    private let holdToTalk = ChatHoldToTalkCoordinator()
 
     private lazy var tableView: UITableView = {
         let tv = TopicDetailPopAwareTableView(frame: .zero, style: .plain)
@@ -138,6 +140,7 @@ class ChatTopicDetailViewController: ObservableViewController {
                 config: config,
                 floorNumber: floorNumber,
                 baseURL: self.baseURL,
+                topicId: self.topicId,
                 contentDelegate: self,
                 dateSeparatorText: dateSeparator,
                 chatStyle: style,
@@ -195,6 +198,14 @@ class ChatTopicDetailViewController: ObservableViewController {
         bar.onBeginEditing = { [weak self] in
             self?.performAuthenticated {
                 // Auth gate only; keep first responder if already logged in.
+            }
+        }
+        bar.onHoldToTalk = { [weak self] gesture in
+            guard let self else { return }
+            if gesture.state == .began {
+                self.performAuthenticated { self.holdToTalk.handle(gesture) }
+            } else {
+                self.holdToTalk.handle(gesture)
             }
         }
         return bar
@@ -323,7 +334,20 @@ class ChatTopicDetailViewController: ObservableViewController {
             errorLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
             errorLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
         ])
-
+        holdToTalk.installOverlay(in: self)
+        holdToTalk.onTranscribed = { [weak self] text in
+            self?.chatInputBar.insertTranscribedText(text)
+        }
+        holdToTalk.onActiveChange = { [weak self] active in
+            self?.chatInputBar.setHoldToTalkActive(active)
+        }
+        holdToTalk.onError = { [weak self] error in
+            guard let self else { return }
+            DoerFeedback.presentToast(
+                ComposerSpeechTranscriber.userFacingMessage(for: error),
+                on: self
+            )
+        }
         // Tap blank chat area to dismiss keyboard.
         let tap = UITapGestureRecognizer(target: self, action: #selector(dismissChatKeyboard))
         tap.cancelsTouchesInView = false
@@ -586,6 +610,7 @@ class ChatTopicDetailViewController: ObservableViewController {
     }
 
     func applySnapshot() {
+        tocController.update(from: viewModel)
         // Only show posts that finished HTML parse — same gate as classic Topic Detail.
         // (Cell still has plain-text fallback if blocks are empty.)
         _ = viewModel.abandonNestedIfUnrenderable(notify: false)
@@ -935,7 +960,11 @@ class ChatTopicDetailViewController: ObservableViewController {
         }
     }
 
-    private func presentReplyComposer(for post: DiscourseTopicDetail.Post?, initialText: String? = nil) {
+    func presentReplyComposer(
+        for post: DiscourseTopicDetail.Post?,
+        initialText: String? = nil,
+        submissionMode: ReplyComposerSubmissionMode = .reply
+    ) {
         chatInputBar.resign()
         let composer = ReplyComposerViewController(
             api: api,
@@ -943,6 +972,7 @@ class ChatTopicDetailViewController: ObservableViewController {
             replyToPost: post,
             baseURL: baseURL,
             initialText: initialText,
+            submissionMode: submissionMode,
             mentionSeedUsers: mentionSeedUsers()
         )
         composer.onPostCreated = { [weak self] in
@@ -950,6 +980,17 @@ class ChatTopicDetailViewController: ObservableViewController {
             self.chatInputBar.clearAfterSend()
             Task {
                 await self.viewModel.loadTopic(id: self.topicId, containerWidth: self.view.bounds.width)
+            }
+        }
+        composer.onPostUpdated = { [weak self] updatedPostId in
+            guard let self else { return }
+            Task {
+                do {
+                    try await self.viewModel.reloadPost(postId: updatedPostId)
+                    self.reloadPostCell(postId: updatedPostId)
+                } catch {
+                    self.showPostActionError(error)
+                }
             }
         }
         composer.modalPresentationStyle = .pageSheet
@@ -960,6 +1001,41 @@ class ChatTopicDetailViewController: ObservableViewController {
         present(composer, animated: true)
     }
 
+    func loadAndPresentPostEditor(postId: Int) {
+        Task {
+            do {
+                let editablePost = try await api.fetchPost(id: postId)
+                guard editablePost.canEdit, let raw = editablePost.raw else {
+                    throw DiscourseAPIError(
+                        messages: [String(localized: "post.edit.unavailable", defaultValue: "这条评论当前无法编辑。")],
+                        errorType: "post_not_editable"
+                    )
+                }
+                presentReplyComposer(
+                    for: nil,
+                    initialText: raw,
+                    submissionMode: .edit(postId: postId)
+                )
+            } catch {
+                showPostActionError(error)
+            }
+        }
+    }
+
+    func presentTopicToc() {
+        tocController.update(from: viewModel)
+        guard let data = tocController.tocData, !data.isEmpty else { return }
+        let panel = TopicTocPanelViewController(
+            data: data,
+            activeHeadingId: tocController.activeHeadingId,
+            activeAncestorIds: tocController.activeAncestorIds
+        )
+        panel.onSelect = { [weak self] entry in
+            Task { await self?.jumpToFloor(1) }
+            _ = entry
+        }
+        present(panel, animated: true)
+    }
     /// Focus bottom bar for a quick text reply (WeChat style), optional reply-to target.
     private func beginQuickReply(to post: DiscourseTopicDetail.Post?) {
         chatInputBar.setReplyTarget(post)
@@ -1536,12 +1612,21 @@ extension ChatTopicDetailViewController: PostCellDelegate {
         )
     }
 
-    func postCell(didTapEditPost post: DiscourseTopicDetail.Post) {}
+    func postCell(didTapEditPost post: DiscourseTopicDetail.Post) {
+        performAuthenticated { [weak self] in
+            self?.loadAndPresentPostEditor(postId: post.id)
+        }
+    }
 
-    func postCell(didTapShareImageForPost post: DiscourseTopicDetail.Post) {}
+    func postCell(didTapShareImageForPost post: DiscourseTopicDetail.Post) {
+        shareTopicImage(post: post)
+    }
 
-    func postCell(didTapShowRevisionForPost post: DiscourseTopicDetail.Post) {}
-
+    func postCell(didTapShowRevisionForPost post: DiscourseTopicDetail.Post) {
+        let vc = PostRevisionViewController(api: api, postId: post.id)
+        let nav = UINavigationController(rootViewController: vc)
+        present(nav, animated: true)
+    }
     func postCell(didToggleBookmarkForPost post: DiscourseTopicDetail.Post, isBookmarked: Bool) {
         // Route through the same bookmark action used by long-press.
         performAuthenticated { [weak self] in
@@ -1672,4 +1757,5 @@ extension ChatTopicDetailViewController: PostCellDelegate {
             }
         }
     }
+
 }

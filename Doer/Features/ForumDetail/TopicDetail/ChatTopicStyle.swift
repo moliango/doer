@@ -212,8 +212,8 @@ enum ChatTopicStyle: Equatable {
 
     var inputFieldCornerRadius: CGFloat {
         switch self {
-        case .weChat: return 6
-        case .telegram: return 22
+        case .weChat: return 10
+        case .telegram: return 20
         }
     }
 

@@ -209,6 +209,7 @@ final class ChatRoomViewController: ObservableViewController, UITableViewDataSou
     }()
 
     private let chatInputBar: WeChatChatInputBar = WeChatChatInputBar()
+    private let holdToTalk = ChatHoldToTalkCoordinator()
     private var chatInputBarBottomConstraint: NSLayoutConstraint?
     private var emojiStoreObserver: NSObjectProtocol?
     private var composerController: ChatRoomComposerController?
@@ -269,6 +270,9 @@ final class ChatRoomViewController: ObservableViewController, UITableViewDataSou
         }
         chatInputBar.onEmoji = { [weak self] in
             self?.presentEmojiPicker()
+        }
+        chatInputBar.onHoldToTalk = { [weak self] gesture in
+            self?.holdToTalk.handle(gesture)
         }
         chatInputBar.onBeginEditing = { [weak self] in
             guard let self else { return }
@@ -366,6 +370,20 @@ final class ChatRoomViewController: ObservableViewController, UITableViewDataSou
             chatInputBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bottom,
         ])
+        holdToTalk.installOverlay(in: self)
+        holdToTalk.onTranscribed = { [weak self] text in
+            self?.chatInputBar.insertTranscribedText(text)
+        }
+        holdToTalk.onActiveChange = { [weak self] active in
+            self?.chatInputBar.setHoldToTalkActive(active)
+        }
+        holdToTalk.onError = { [weak self] error in
+            guard let self else { return }
+            DoerFeedback.presentToast(
+                ComposerSpeechTranscriber.userFacingMessage(for: error),
+                on: self
+            )
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(chatKeyboardWillChangeFrame(_:)),

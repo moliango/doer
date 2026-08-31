@@ -53,7 +53,8 @@ extension ChatTopicDetailViewController {
             canAssign: topic?.canAssign == true || topic?.assignedToUsername != nil,
             assignedToUsername: topic?.assignedToUsername,
             currentFloor: currentVisibleFloor(),
-            totalFloors: max(viewModel.totalFloors, 1)
+            totalFloors: max(viewModel.totalFloors, 1),
+            hasTableOfContents: tocController.hasToc
         )
         TopicMoreMenuPresenter.present(
             from: self,
@@ -107,7 +108,7 @@ extension ChatTopicDetailViewController {
         case .readingSettings:
             navigationController?.pushViewController(ReadingSettingsViewController(), animated: true)
         case .tableOfContents:
-            break
+            presentTopicToc()
         case .markUnreadStepBack:
             markTopicUnread(mode: .stepBack)
         case .markUnreadClear:
@@ -448,11 +449,12 @@ extension ChatTopicDetailViewController {
         present(alert, animated: true)
     }
 
-    private func shareTopicImage() {
+    func shareTopicImage(post: DiscourseTopicDetail.Post? = nil) {
         guard let topic = viewModel.topic else { return }
-        let post = viewModel.posts.first(where: { $0.postNumber == 1 && $0.actionCode == nil })
+        let resolved = post
+            ?? viewModel.posts.first(where: { $0.postNumber == 1 && $0.actionCode == nil })
             ?? viewModel.posts.first(where: { $0.actionCode == nil })
-        guard let post else {
+        guard let post = resolved else {
             showPostActionError(NSError(
                 domain: "ShareImage",
                 code: 1,

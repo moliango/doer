@@ -15419,6 +15419,17 @@
         }
       }
     },
+    "post.copy_link" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "复制链接"
+          }
+        }
+      }
+    },
     "post.edit.action" : {
       "localizations" : {
         "en" : {
@@ -15521,6 +15532,17 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "通知版主"
+          }
+        }
+      }
+    },
+    "post.link_copied" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "已复制链接"
           }
         }
       }
@@ -20436,7 +20458,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "选择一张本地图片铺在列表和详情背后"
+            "value" : "选择一张本地图片铺在话题详情背后"
           }
         }
       }
@@ -26071,6 +26093,83 @@
         }
       }
     },
+    "speech.empty" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "没有听清，请按住再说一次"
+          }
+        }
+      }
+    },
+    "speech.not_authorized" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "没有语音识别权限"
+          }
+        }
+      }
+    },
+    "speech.release_cancel" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "松开 取消"
+          }
+        }
+      }
+    },
+    "speech.release_transcribe" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "松开 转成文字"
+          }
+        }
+      }
+    },
+    "speech.retry" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "识别失败，请再试一次"
+          }
+        }
+      }
+    },
+    "speech.transcribing" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "正在识别…"
+          }
+        }
+      }
+    },
+    "speech.unavailable" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "当前无法使用语音识别"
+          }
+        }
+      }
+    },
     "spoiler.tapToReveal" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -28845,7 +28944,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "更多操作"
+            "value" : "更多"
           }
         }
       }
@@ -31450,6 +31549,17 @@
         }
       }
     },
+    "wechat_chat.hold_to_talk" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "按住 说话"
+          }
+        }
+      }
+    },
     "wechat_chat.input_placeholder" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
@@ -31457,6 +31567,17 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "回复…"
+          }
+        }
+      }
+    },
+    "wechat_chat.keyboard" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "键盘"
           }
         }
       }
@@ -31479,6 +31600,17 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "回复 %1$@：%2$@"
+          }
+        }
+      }
+    },
+    "wechat_chat.voice" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "语音"
           }
         }
       }

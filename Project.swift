@@ -72,6 +72,7 @@ let project = Project(
                     "INFOPLIST_KEY_CFBundleDisplayName": "Doer",
                     "INFOPLIST_KEY_NSCameraUsageDescription": "用于在站内聊天中拍照并发送图片",
                     "INFOPLIST_KEY_NSMicrophoneUsageDescription": "用于在回复中录制语音消息",
+                    "INFOPLIST_KEY_NSSpeechRecognitionUsageDescription": "用于将按住说话的录音转成中文文字",
                     "INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription": "用于保存话题分享图片到相册",
                     "INFOPLIST_KEY_LSApplicationCategoryType": "public.app-category.utilities",
                     "INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents": "YES",
