@@ -123,7 +123,19 @@ final class UserProfileModelsTests: XCTestCase {
 
         XCTAssertEqual(users.first?.username, "alice")
         XCTAssertEqual(users.first?.name, "Alice")
+        XCTAssertEqual(users.first?.avatarTemplate, "/user_avatar/linux.do/alice/{size}/1.png")
+
+        let avatarURL = AvatarImageLoader.url(
+            from: users.first?.avatarTemplate,
+            baseURL: "https://linux.do",
+            size: AvatarImageLoader.primaryAvatarPixelSize
+        )
+        XCTAssertEqual(
+            avatarURL?.absoluteString,
+            "https://linux.do/user_avatar/linux.do/alice/\(AvatarImageLoader.primaryAvatarPixelSize)/1.png"
+        )
     }
+
 
     func testDraftDecodesJSONStringDataAndReplyKey() throws {
         let data = Data(#"{"drafts":[{"draft_key":"topic_17_post_3","draft_sequence":7,"title":"Topic","data":"{\"reply\":\"saved reply\",\"action\":\"reply\"}"}],"has_more":false}"#.utf8)
