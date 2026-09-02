@@ -421,14 +421,14 @@ final class WeChatChatInputBar: UIView, UITextViewDelegate {
             emojiWidthConstraint!,
             emojiHeightConstraint!,
             micButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            micButton.bottomAnchor.constraint(equalTo: textBackground.bottomAnchor),
-            micButton.widthAnchor.constraint(equalToConstant: 34),
-            micButton.heightAnchor.constraint(equalToConstant: 34),
+            micButton.centerYAnchor.constraint(equalTo: textBackground.centerYAnchor),
+            micButton.widthAnchor.constraint(equalToConstant: 40),
+            micButton.heightAnchor.constraint(equalToConstant: 40),
 
             sendButton.centerXAnchor.constraint(equalTo: micButton.centerXAnchor),
             sendButton.centerYAnchor.constraint(equalTo: micButton.centerYAnchor),
-            sendButton.widthAnchor.constraint(equalToConstant: 34),
-            sendButton.heightAnchor.constraint(equalToConstant: 34),
+            sendButton.widthAnchor.constraint(equalToConstant: 40),
+            sendButton.heightAnchor.constraint(equalToConstant: 40),
         ])
     }
 
@@ -592,8 +592,10 @@ final class WeChatChatInputBar: UIView, UITextViewDelegate {
         button.setImage(UIImage(systemName: systemName, withConfiguration: config), for: .normal)
         button.backgroundColor = chatStyle.accentColor
         button.tintColor = .white
-        button.layer.cornerRadius = 17
+        button.layer.cornerRadius = 20
         button.layer.cornerCurve = .circular
+        button.contentVerticalAlignment = .center
+        button.contentHorizontalAlignment = .center
         button.layer.borderWidth = 0
         button.clipsToBounds = true
     }
