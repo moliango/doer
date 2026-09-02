@@ -16,6 +16,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     private var lastSignature = ""
     private var applyGeneration = 0
     private var consecutiveStartFailures = 0
+    private var recoverWorkItem: DispatchWorkItem?
 
     private init() {}
 
@@ -30,6 +31,13 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         ) -> Bool {
             if signatureChanged { return true }
             return enabled && !isLive
+        }
+
+        /// Offline→online must rebuild Encrypted DNS even if the loopback
+        /// listener still reports running. Toggle off/on works because it
+        /// changes the signature; path restore must force the same rebuild.
+        static func shouldForceRebuildOnReconnect(wasDisconnected: Bool) -> Bool {
+            wasDisconnected
         }
     }
 
@@ -120,13 +128,21 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         configureFromSettings()
     }
 
-    /// Wi‑Fi ↔ cellular keeps the path `.satisfied`, so Encrypted DNS and
-    /// sticky bootstrap IPs from the previous interface must be rebuilt.
+    /// Wi‑Fi ↔ cellular and offline→online keep a live loopback listener.
+    /// Clear sticky IPs and reassert Encrypted DNS after the radio settles.
+    /// Do not stop the proxy or disable PrivacyContext.
     func recoverAfterPathChange() {
         guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
-        DohDebugLog.record("DoH recovering after network path change")
-        clearCache()
-        ensureProxyAlive()
+        recoverWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
+            DohDebugLog.record("DoH recovering after network path change")
+            self.clearCache()
+            self.ensureProxyAlive()
+        }
+        recoverWorkItem = work
+        startQueue.asyncAfter(deadline: .now() + 0.8, execute: work)
     }
 
     private func applyConfiguration(shouldEnable: Bool, generation: Int) {

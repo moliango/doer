@@ -32,6 +32,33 @@ final class DailyForumUXTests: XCTestCase {
         XCTAssertTrue(ConnectivityService.shouldRecoverDoH(previous: wifi, current: both))
         XCTAssertTrue(ConnectivityService.shouldRecoverDoH(previous: both, current: cellular))
         XCTAssertFalse(
+            ConnectivityService.shouldRecoverDoHOnSatisfiedPath(
+                previous: wifi,
+                current: wifi,
+                cancelledPendingDisconnect: false
+            )
+        )
+        XCTAssertTrue(
+            ConnectivityService.shouldRecoverDoHOnSatisfiedPath(
+                previous: wifi,
+                current: wifi,
+                cancelledPendingDisconnect: true
+            )
+        )
+        XCTAssertFalse(
+            ConnectivityService.shouldRecoverDoHOnSatisfiedPath(
+                previous: nil,
+                current: wifi,
+                cancelledPendingDisconnect: true
+            )
+        )
+        XCTAssertTrue(
+            LightweightDohProxyService.DohProxyLiveness.shouldForceRebuildOnReconnect(wasDisconnected: true)
+        )
+        XCTAssertFalse(
+            LightweightDohProxyService.DohProxyLiveness.shouldForceRebuildOnReconnect(wasDisconnected: false)
+        )
+        XCTAssertFalse(
             HomeConnectivityRecoveryPolicy.shouldReloadTopicList(topicsEmpty: false, hasError: false)
         )
     }
