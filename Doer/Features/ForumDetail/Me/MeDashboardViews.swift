@@ -394,11 +394,8 @@ final class MeStatsCardView: UIView {
     private let cardView = MeCardSurfaceView()
     private let titleLabel = UILabel()
     private let customizeButton = UIButton(type: .system)
-    private let statsScrollView = MeHorizontalStatsScrollView()
-    private let gridStackView = UIStackView()
+    private let layoutCanvas = MeStatsLayoutCanvas()
     private let emptyLabel = UILabel()
-    private var gridWidthConstraint: NSLayoutConstraint?
-    private var statsHeightConstraint: NSLayoutConstraint?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -415,8 +412,16 @@ final class MeStatsCardView: UIView {
         titleLabel.text = String(localized: "me.stats.title")
         titleLabel.font = .systemFont(ofSize: 16, weight: .semibold)
 
-        customizeButton.setTitle(String(localized: "me.stats.customize"), for: .normal)
-        customizeButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
+        var customizeConfiguration = UIButton.Configuration.plain()
+        customizeConfiguration.title = String(localized: "me.stats.customize")
+        customizeConfiguration.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 0)
+        customizeConfiguration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = .systemFont(ofSize: 13, weight: .medium)
+            return outgoing
+        }
+        customizeButton.configuration = customizeConfiguration
+        customizeButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         customizeButton.addTarget(self, action: #selector(customizeTapped), for: .touchUpInside)
 
         let headerStack = UIStackView(arrangedSubviews: [titleLabel, UIView(), customizeButton])
@@ -424,16 +429,7 @@ final class MeStatsCardView: UIView {
         headerStack.alignment = .center
         headerStack.translatesAutoresizingMaskIntoConstraints = false
 
-        gridStackView.axis = .vertical
-        gridStackView.spacing = 14
-        gridStackView.translatesAutoresizingMaskIntoConstraints = false
-
-        statsScrollView.translatesAutoresizingMaskIntoConstraints = false
-        statsScrollView.showsHorizontalScrollIndicator = false
-        statsScrollView.showsVerticalScrollIndicator = false
-        statsScrollView.alwaysBounceVertical = false
-        statsScrollView.isDirectionalLockEnabled = true
-        statsScrollView.addSubview(gridStackView)
+        layoutCanvas.translatesAutoresizingMaskIntoConstraints = false
 
         emptyLabel.text = String(localized: "me.stats.login_required")
         emptyLabel.textColor = .secondaryLabel
@@ -443,14 +439,9 @@ final class MeStatsCardView: UIView {
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(cardView)
-        cardView.addSubview(headerStack)
-        cardView.addSubview(statsScrollView)
+        cardView.addSubview(layoutCanvas)
         cardView.addSubview(emptyLabel)
-
-        let widthConstraint = gridStackView.widthAnchor.constraint(equalTo: statsScrollView.frameLayoutGuide.widthAnchor)
-        let heightConstraint = statsScrollView.heightAnchor.constraint(equalToConstant: 84)
-        gridWidthConstraint = widthConstraint
-        statsHeightConstraint = heightConstraint
+        cardView.addSubview(headerStack)
 
         NSLayoutConstraint.activate([
             cardView.topAnchor.constraint(equalTo: topAnchor),
@@ -462,18 +453,10 @@ final class MeStatsCardView: UIView {
             headerStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 16),
             headerStack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
 
-            statsScrollView.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 16),
-            statsScrollView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 14),
-            statsScrollView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -14),
-            statsScrollView.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -16),
-            heightConstraint,
-
-            gridStackView.topAnchor.constraint(equalTo: statsScrollView.contentLayoutGuide.topAnchor),
-            gridStackView.leadingAnchor.constraint(equalTo: statsScrollView.contentLayoutGuide.leadingAnchor),
-            gridStackView.trailingAnchor.constraint(equalTo: statsScrollView.contentLayoutGuide.trailingAnchor),
-            gridStackView.bottomAnchor.constraint(equalTo: statsScrollView.contentLayoutGuide.bottomAnchor),
-            gridStackView.heightAnchor.constraint(equalTo: statsScrollView.frameLayoutGuide.heightAnchor),
-            widthConstraint,
+            layoutCanvas.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 14),
+            layoutCanvas.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 14),
+            layoutCanvas.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -14),
+            layoutCanvas.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -14),
 
             emptyLabel.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 18),
             emptyLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 16),
@@ -483,57 +466,14 @@ final class MeStatsCardView: UIView {
     }
 
     func configure(items: [MeStatItem], isLoggedIn: Bool, layout: MeStatsLayout) {
-        gridStackView.arrangedSubviews.forEach { view in
-            gridStackView.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-
         customizeButton.isHidden = !isLoggedIn
         emptyLabel.isHidden = isLoggedIn
-        statsScrollView.isHidden = !isLoggedIn
-        guard isLoggedIn else { return }
-
-        switch layout {
-        case .grid:
-            statsScrollView.isScrollEnabled = false
-            gridStackView.axis = .vertical
-            gridStackView.alignment = .fill
-            gridStackView.distribution = .fill
-            gridStackView.spacing = 14
-            gridWidthConstraint?.isActive = true
-
-            let rows = stride(from: 0, to: items.count, by: 4).map {
-                Array(items[$0..<min($0 + 4, items.count)])
-            }
-            for rowItems in rows {
-                let rowStack = UIStackView()
-                rowStack.axis = .horizontal
-                rowStack.distribution = .fillEqually
-                rowStack.spacing = 8
-                rowItems.forEach { rowStack.addArrangedSubview(MeStatView(item: $0)) }
-                if rowItems.count < 4 {
-                    for _ in rowItems.count..<4 {
-                        rowStack.addArrangedSubview(UIView())
-                    }
-                }
-                gridStackView.addArrangedSubview(rowStack)
-            }
-            let rowCount = max(rows.count, 1)
-            statsHeightConstraint?.constant = CGFloat(rowCount * 84 + max(rowCount - 1, 0) * 14)
-        case .horizontal:
-            statsScrollView.isScrollEnabled = true
-            gridStackView.axis = .horizontal
-            gridStackView.alignment = .fill
-            gridStackView.distribution = .fill
-            gridStackView.spacing = 12
-            gridWidthConstraint?.isActive = false
-            for item in items {
-                let statView = MeStatView(item: item)
-                statView.widthAnchor.constraint(equalToConstant: 78).isActive = true
-                gridStackView.addArrangedSubview(statView)
-            }
-            statsHeightConstraint?.constant = 84
+        layoutCanvas.isHidden = !isLoggedIn
+        guard isLoggedIn else {
+            layoutCanvas.configure(items: [], layout: .grid)
+            return
         }
+        layoutCanvas.configure(items: items, layout: layout)
     }
 
     @objc private func customizeTapped() {
@@ -541,10 +481,47 @@ final class MeStatsCardView: UIView {
     }
 }
 
-final class MeStatView: UIView {
-    init(item: MeStatItem) {
-        super.init(frame: .zero)
-        setup(item: item)
+final class MeStatsLayoutCanvas: UIView {
+    private let scrollView = MeHorizontalStatsScrollView()
+    private let stackView = UIStackView()
+    private var stackWidthToFrame: NSLayoutConstraint?
+    private var canvasHeight: NSLayoutConstraint?
+    private var horizontalWidthConstraints: [NSLayoutConstraint] = []
+    private var items: [MeStatItem] = []
+    private var layout: MeStatsLayout = .grid
+    private var lastAppliedWidth: CGFloat = 0
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.alwaysBounceVertical = false
+        scrollView.isDirectionalLockEnabled = true
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(scrollView)
+        scrollView.addSubview(stackView)
+
+        let widthConstraint = stackView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor)
+        stackWidthToFrame = widthConstraint
+        let heightConstraint = heightAnchor.constraint(equalToConstant: MeStatsLayoutGeometry.horizontalItemHeight)
+        canvasHeight = heightConstraint
+
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            heightConstraint,
+
+            stackView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            stackView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            stackView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            stackView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            stackView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor),
+            widthConstraint,
+        ])
     }
 
     @available(*, unavailable)
@@ -552,7 +529,104 @@ final class MeStatView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    private func setup(item: MeStatItem) {
+    func configure(items: [MeStatItem], layout: MeStatsLayout) {
+        self.items = items
+        self.layout = layout
+        lastAppliedWidth = 0
+        rebuild()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        applyHorizontalWidthsIfNeeded()
+    }
+
+    private func rebuild() {
+        stackView.arrangedSubviews.forEach { view in
+            stackView.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        horizontalWidthConstraints.removeAll()
+        canvasHeight?.constant = MeStatsLayoutGeometry.contentHeight(for: items.count, layout: layout)
+
+        switch layout {
+        case .grid:
+            scrollView.isScrollEnabled = false
+            scrollView.alwaysBounceHorizontal = false
+            stackView.axis = .vertical
+            stackView.alignment = .fill
+            stackView.distribution = .fill
+            stackView.spacing = MeStatsLayoutGeometry.gridSpacing
+            stackWidthToFrame?.isActive = true
+
+            let columns = MeStatsLayoutGeometry.gridColumns
+            let rows = stride(from: 0, to: items.count, by: columns).map {
+                Array(items[$0..<min($0 + columns, items.count)])
+            }
+            for rowItems in rows {
+                let rowStack = UIStackView()
+                rowStack.axis = .horizontal
+                rowStack.distribution = .fillEqually
+                rowStack.spacing = MeStatsLayoutGeometry.gridSpacing
+                rowItems.forEach { rowStack.addArrangedSubview(MeStatView(item: $0, layout: .grid)) }
+                if rowItems.count < columns {
+                    for _ in rowItems.count..<columns {
+                        rowStack.addArrangedSubview(UIView())
+                    }
+                }
+                rowStack.heightAnchor.constraint(equalToConstant: MeStatsLayoutGeometry.gridItemHeight).isActive = true
+                stackView.addArrangedSubview(rowStack)
+            }
+        case .horizontal:
+            let canScroll = items.count > Int(MeStatsLayoutGeometry.horizontalVisibleCount)
+            scrollView.isScrollEnabled = canScroll
+            scrollView.alwaysBounceHorizontal = canScroll
+            stackView.axis = .horizontal
+            stackView.alignment = .fill
+            stackView.distribution = .fill
+            stackView.spacing = MeStatsLayoutGeometry.horizontalSpacing
+            stackWidthToFrame?.isActive = false
+            let tileWidth = MeStatsLayoutGeometry.horizontalItemWidth(in: max(scrollView.bounds.width, 240))
+            for item in items {
+                let statView = MeStatView(item: item, layout: .horizontal)
+                let width = statView.widthAnchor.constraint(equalToConstant: tileWidth)
+                width.isActive = true
+                horizontalWidthConstraints.append(width)
+                stackView.addArrangedSubview(statView)
+            }
+        }
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
+    }
+
+    private func applyHorizontalWidthsIfNeeded() {
+        guard layout == .horizontal else { return }
+        let width = scrollView.bounds.width
+        guard width > 1, abs(width - lastAppliedWidth) > 0.5 else { return }
+        lastAppliedWidth = width
+        let tileWidth = MeStatsLayoutGeometry.horizontalItemWidth(in: width)
+        horizontalWidthConstraints.forEach { $0.constant = tileWidth }
+    }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: canvasHeight?.constant ?? MeStatsLayoutGeometry.horizontalItemHeight)
+    }
+}
+
+final class MeStatView: UIView {
+    init(item: MeStatItem, layout: MeStatsLayout = .grid) {
+        super.init(frame: .zero)
+        setup(item: item, layout: layout)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func setup(item: MeStatItem, layout _: MeStatsLayout) {
+        translatesAutoresizingMaskIntoConstraints = false
+
         let iconView = UIImageView(image: UIImage(systemName: item.type.symbolName))
         iconView.tintColor = item.type.tintColor
         iconView.contentMode = .scaleAspectFit

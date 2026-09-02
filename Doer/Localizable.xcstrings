@@ -456,6 +456,7 @@
       }
     },
     "action.reset" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -6530,6 +6531,17 @@
         }
       }
     },
+    "me.account_functions.hero.help" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "隐藏的入口不会出现在「我的」页；长按拖动调整显示顺序。"
+          }
+        }
+      }
+    },
     "me.account_functions.hidden" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
@@ -6552,17 +6564,6 @@
         }
       }
     },
-    "me.account_functions.hidden_help" : {
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "点加号恢复到显示列表末尾。"
-          }
-        }
-      }
-    },
     "me.account_functions.item_hidden" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
@@ -6574,17 +6575,6 @@
         }
       }
     },
-    "me.account_functions.item_visible" : {
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "显示在账号功能列表"
-          }
-        }
-      }
-    },
     "me.account_functions.visible" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
@@ -6592,17 +6582,6 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "显示"
-          }
-        }
-      }
-    },
-    "me.account_functions.visible_help" : {
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "拖动右侧排序；点减号隐藏入口。"
           }
         }
       }
@@ -8009,6 +7988,83 @@
         }
       }
     },
+    "me.customize.drag" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "拖动排序"
+          }
+        }
+      }
+    },
+    "me.customize.hide" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "隐藏"
+          }
+        }
+      }
+    },
+    "me.customize.move_down" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "下移"
+          }
+        }
+      }
+    },
+    "me.customize.move_up" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "上移"
+          }
+        }
+      }
+    },
+    "me.customize.show" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "显示"
+          }
+        }
+      }
+    },
+    "me.customize.shown_count_format" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "已显示 %d 项"
+          }
+        }
+      }
+    },
+    "me.customize.visible" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "显示"
+          }
+        }
+      }
+    },
     "me.discourse_history" : {
       "localizations" : {
         "en" : {
@@ -9071,6 +9127,61 @@
         }
       }
     },
+    "me.stats.hero.help" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "长按拖动调整顺序，至少保留两个项目。布局会立刻作用到统计卡片。"
+          }
+        }
+      }
+    },
+    "me.stats.hidden" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "未显示"
+          }
+        }
+      }
+    },
+    "me.stats.hidden_empty" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "全部统计项目都已显示。"
+          }
+        }
+      }
+    },
+    "me.stats.item.hidden" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "点加号加回卡片"
+          }
+        }
+      }
+    },
+    "me.stats.item.visible" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "显示在统计卡片"
+          }
+        }
+      }
+    },
     "me.stats.layout" : {
       "localizations" : {
         "en" : {
@@ -9127,6 +9238,17 @@
         }
       }
     },
+    "me.stats.layout.grid.subtitle" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "每行四个，适合一眼扫完"
+          }
+        }
+      }
+    },
     "me.stats.layout.horizontal" : {
       "localizations" : {
         "en" : {
@@ -9151,6 +9273,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "橫向"
+          }
+        }
+      }
+    },
+    "me.stats.layout.horizontal.subtitle" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "单行滑动，卡片更紧凑"
           }
         }
       }
@@ -9403,6 +9536,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "話題"
+          }
+        }
+      }
+    },
+    "me.stats.visible" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "显示在卡片"
           }
         }
       }

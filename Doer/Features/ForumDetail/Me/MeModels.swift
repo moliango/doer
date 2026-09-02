@@ -66,6 +66,49 @@ enum MeAccountFunction: String, CaseIterable, Codable, Hashable {
         case .settings: return "gearshape.fill"
         }
     }
+
+    var tintColor: UIColor {
+        switch self {
+        case .messages: return .systemIndigo
+        case .chat: return .systemPurple
+        case .browser: return .systemCyan
+        case .aiModelService: return .systemTeal
+        case .badges: return .systemYellow
+        case .trustRequirements: return .systemGreen
+        case .inviteLinks: return .systemCyan
+        case .exportHistory: return .systemGreen
+        case .pendingPosts: return .systemOrange
+        case .notionSync: return .systemGray
+        case .settings: return .systemBlue
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .messages:
+            return String(localized: "me.action.messages.subtitle")
+        case .chat:
+            return String(localized: "me.action.chat.subtitle", defaultValue: "频道与私聊")
+        case .browser:
+            return String(localized: "me.action.browser.subtitle", defaultValue: "收藏、历史与内置浏览器")
+        case .aiModelService:
+            return String(localized: "me.action.ai.subtitle", defaultValue: "管理 AI 供应商与模型")
+        case .badges:
+            return String(localized: "me.action.badges.subtitle")
+        case .trustRequirements:
+            return String(localized: "me.action.trust.subtitle")
+        case .inviteLinks:
+            return String(localized: "me.action.invites.subtitle")
+        case .exportHistory:
+            return String(localized: "me.action.export_history.subtitle", defaultValue: "查看并再次分享话题导出文件")
+        case .pendingPosts:
+            return String(localized: "pending.subtitle", defaultValue: "查看送审中的主题与回复")
+        case .notionSync:
+            return String(localized: "notion.settings.subtitle", defaultValue: "配置 Token 并把话题同步到 Notion")
+        case .settings:
+            return String(localized: "me.action.settings.subtitle")
+        }
+    }
 }
 
 struct MeAccountFunctionConfiguration: Codable, Equatable {
@@ -135,11 +178,89 @@ enum MeStatsLayout: String, Codable, CaseIterable {
             return String(localized: "me.stats.layout.horizontal", defaultValue: "横向")
         }
     }
+
+    var subtitle: String {
+        switch self {
+        case .grid:
+            return String(localized: "me.stats.layout.grid.subtitle", defaultValue: "每行四个，适合一眼扫完")
+        case .horizontal:
+            return String(localized: "me.stats.layout.horizontal.subtitle", defaultValue: "单行滑动，卡片更紧凑")
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .grid: return "square.grid.2x2.fill"
+        case .horizontal: return "rectangle.split.2x1.fill"
+        }
+    }
+}
+
+enum MeStatsLayoutGeometry {
+    static let gridColumns = 4
+    static let gridItemHeight: CGFloat = 84
+    static let gridSpacing: CGFloat = 8
+    static let horizontalItemHeight: CGFloat = 84
+    static let horizontalSpacing: CGFloat = 12
+    static let horizontalVisibleCount: CGFloat = 3
+    static let horizontalPeek: CGFloat = 28
+    static let horizontalItemWidth: CGFloat = 78
+
+    static func gridRowCount(for itemCount: Int) -> Int {
+        guard itemCount > 0 else { return 0 }
+        return Int(ceil(Double(itemCount) / Double(gridColumns)))
+    }
+
+    static func contentHeight(for itemCount: Int, layout: MeStatsLayout) -> CGFloat {
+        switch layout {
+        case .grid:
+            let rows = max(gridRowCount(for: itemCount), 1)
+            return CGFloat(rows) * gridItemHeight + CGFloat(max(rows - 1, 0)) * gridSpacing
+        case .horizontal:
+            return horizontalItemHeight
+        }
+    }
+
+    /// Three full tiles plus a peek of the next, so horizontal never fills like a 4-up grid.
+    static func horizontalItemWidth(in containerWidth: CGFloat) -> CGFloat {
+        let width = max(containerWidth, 1)
+        let spacers = horizontalSpacing * horizontalVisibleCount
+        let available = width - horizontalPeek - spacers
+        return max(64, floor(available / horizontalVisibleCount))
+    }
 }
 
 struct MeStatsConfiguration: Codable, Equatable {
     var orderedMetrics: [MeStatType]
     var layout: MeStatsLayout
+
+    var hiddenMetrics: [MeStatType] {
+        let visible = Set(orderedMetrics)
+        return MeStatType.allCases.filter { !visible.contains($0) }
+    }
+
+    mutating func hideMetric(_ metric: MeStatType, minimum: Int = 2) -> Bool {
+        guard orderedMetrics.count > minimum,
+              let index = orderedMetrics.firstIndex(of: metric) else { return false }
+        orderedMetrics.remove(at: index)
+        return true
+    }
+
+    mutating func showMetric(_ metric: MeStatType) {
+        guard !orderedMetrics.contains(metric) else { return }
+        orderedMetrics.append(metric)
+    }
+
+    mutating func moveMetric(at index: Int, by delta: Int) {
+        moveMetric(from: index, to: index + delta)
+    }
+
+    mutating func moveMetric(from source: Int, to destination: Int) {
+        guard orderedMetrics.indices.contains(source) else { return }
+        let metric = orderedMetrics.remove(at: source)
+        let index = min(max(destination, 0), orderedMetrics.count)
+        orderedMetrics.insert(metric, at: index)
+    }
 }
 
 struct MeStatItem {

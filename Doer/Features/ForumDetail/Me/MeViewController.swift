@@ -499,7 +499,10 @@ final class MeViewController: ObservableViewController {
     }
 
     private func showStatsCustomizer() {
-        let editor = ProfileStatsEditorViewController(configuration: statsPreferences.configuration)
+        let editor = ProfileStatsEditorViewController(
+            configuration: statsPreferences.configuration,
+            previewItems: makeStatItems()
+        )
         editor.onChange = { [weak self] configuration in
             guard let self else { return }
             self.statsPreferences.configuration = configuration

@@ -71,6 +71,11 @@ Questions to answer:
 
 <!-- Component-related mistakes your team has made -->
 
+### Me Customize Editors
+
+- Stats card and account-function customizers use the card chrome in `MeCustomizeEditorViews.swift` (hero preview, icon-well rows, drag handle + hide/show).
+- Reorder visible items with table drag-and-drop (`dragInteractionEnabled`, no `isEditing`). Hide/show with minus/plus. Do not turn on `isEditing` reorder handles — that hides accessories and blocks taps.
+- Me stats layouts stay compact: grid is four equal columns at 84pt via `MeStatsLayoutCanvas`; horizontal shows about three tiles plus a peek so it never fills like the 4-up grid. Do not enlarge into two-column color cards.
 ### UIKit Card Controls
 
 - Purely decorative subviews inside a tappable `UIControl` card must set `isUserInteractionEnabled = false`.
