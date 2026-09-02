@@ -105,18 +105,9 @@ extension HomeViewController {
         let manager = CategoryTabManagerViewController(
             categories: viewModel.allSelectableCategories(),
             pinnedCategoryIds: AppSettings.shared.homePinnedCategoryIds,
+            baseURL: api.baseURL,
             displayNameProvider: { [weak self] category in
                 self?.viewModel.categoryDisplayName(for: category) ?? category.name
-            },
-            parentNameProvider: { [weak self] category in
-                guard let parentId = category.parentCategoryId,
-                      let parent = self?.viewModel.category(id: parentId)
-                else { return nil }
-                return self?.viewModel.categoryDisplayName(for: parent) ?? parent.name
-            },
-            colorProvider: { [weak self] category in
-                self?.viewModel.category(id: category.id).flatMap { Self.color(fromHex: $0.color) }
-                    ?? Self.color(fromHex: category.color)
             }
         )
         manager.onPinnedCategoryIdsChanged = { [weak self] ids in
