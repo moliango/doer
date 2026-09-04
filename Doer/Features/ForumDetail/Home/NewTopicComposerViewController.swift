@@ -47,6 +47,13 @@ final class NewTopicComposerViewController: UIViewController {
     private var serverDraftSaveTask: Task<Void, Never>?
     private var panelHeightConstraint: NSLayoutConstraint?
     private let markdownCoordinator = ComposerMarkdownCoordinator()
+    private lazy var mentionController: ComposerMentionController = {
+        let controller = ComposerMentionController(api: api, topicId: nil)
+        controller.onInsert = { [weak self] user, range in
+            self?.insertMention(user, range: range)
+        }
+        return controller
+    }()
     
     var onTopicCreated: ((Int) -> Void)?
     var onDraftDeleted: (() -> Void)?
@@ -308,11 +315,15 @@ final class NewTopicComposerViewController: UIViewController {
             onEditingBegan: { [weak self] in
                 guard let self, self.currentPanel != .none else { return }
                 self.closePanel(returnToKeyboard: false)
+            },
+            onSelectionChanged: { [weak self] in
+                self?.toolsPanelView.setActiveTools(self?.experimentalComposerView?.activeTools ?? [])
+                self?.refreshMentions()
             }
         ) {
             ExperimentalComposerHosting.pin(experimental, over: textView, in: view)
             experimentalComposerView = experimental
-            modeToggleButton.isHidden = true
+            modeToggleButton.isHidden = false
             placeholderLabel.isHidden = true
             view.bringSubviewToFront(previewView)
             view.bringSubviewToFront(bottomStackView)
@@ -385,6 +396,8 @@ final class NewTopicComposerViewController: UIViewController {
         view.addSubview(previewView)
         view.addSubview(placeholderLabel)
         view.addSubview(bottomStackView)
+        mentionController.install(in: view, editor: textView, baseURL: api.baseURL)
+        view.bringSubviewToFront(mentionController.picker)
     }
 
     private func setupConstraints() {
@@ -686,12 +699,39 @@ final class NewTopicComposerViewController: UIViewController {
             toolsButton: toolsToggleButton,
             panel: currentPanel,
             isPreviewing: isPreviewingMarkdown,
-            editingMode: editingMode
+            editingMode: isExperimentalSourceVisible ? .source : editingMode
         )
     }
 
+    private var isExperimentalSourceVisible = false
+
     @objc private func toggleEditingMode() {
-        guard experimentalComposerView == nil else { return }
+        if let experimental = experimentalComposerView {
+            if isExperimentalSourceVisible {
+                let raw = textView.text ?? bodyRaw
+                if experimental.tryLoad(raw) {
+                    isExperimentalSourceVisible = false
+                    experimental.isHidden = false
+                    textView.isHidden = true
+                    experimental.becomeFirstResponder()
+                }
+            } else {
+                let raw = experimental.markdown
+                isExperimentalSourceVisible = true
+                experimental.resignFirstResponder()
+                experimental.isHidden = true
+                textView.isHidden = false
+                editingMode = .source
+                textView.attributedText = ComposerMarkdownRenderer.styleSource(
+                    raw,
+                    baseAttributes: ComposerTypography.typingAttributes
+                )
+                textView.becomeFirstResponder()
+            }
+            updateToolbarState()
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            return
+        }
         let raw = bodyRaw
         editingMode = editingMode.toggled
         ComposerEditingMode.stored = editingMode
@@ -707,7 +747,7 @@ final class NewTopicComposerViewController: UIViewController {
     }
 
     private var bodyRaw: String {
-        if let experimentalComposerView {
+        if let experimentalComposerView, !isExperimentalSourceVisible {
             return experimentalComposerView.markdown
         }
         guard let attributed = textView.attributedText, attributed.length > 0 else {
@@ -720,7 +760,7 @@ final class NewTopicComposerViewController: UIViewController {
     }
 
     private func applyBodyMarkdown(_ raw: String) {
-        if let experimentalComposerView {
+        if let experimentalComposerView, !isExperimentalSourceVisible {
             if experimentalComposerView.tryLoad(raw) {
                 return
             }
@@ -742,8 +782,15 @@ final class NewTopicComposerViewController: UIViewController {
         textView.typingAttributes = ComposerTypography.typingAttributes
     }
 
+    override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+        if motion == .motionShake {
+            experimentalComposerView?.performUndo()
+        }
+        super.motionEnded(motion, with: event)
+    }
+
     private func focusBody() {
-        if let experimentalComposerView {
+        if let experimentalComposerView, !isExperimentalSourceVisible {
             experimentalComposerView.becomeFirstResponder()
         } else {
             textView.becomeFirstResponder()
@@ -752,11 +799,18 @@ final class NewTopicComposerViewController: UIViewController {
 
     private func setPreviewVisible(_ visible: Bool) {
         previewView.isHidden = !visible
+        if visible {
+            experimentalComposerView?.captureFocus()
+            mentionController.hide()
+        }
         if experimentalComposerView != nil {
-            experimentalComposerView?.isHidden = visible
-            textView.isHidden = true
+            experimentalComposerView?.isHidden = visible || isExperimentalSourceVisible
+            textView.isHidden = visible || !isExperimentalSourceVisible
         } else {
             textView.isHidden = visible
+        }
+        if !visible {
+            experimentalComposerView?.restoreCapturedFocus()
         }
     }
 
@@ -956,6 +1010,38 @@ extension NewTopicComposerViewController: UITextViewDelegate {
     func textViewDidChange(_ textView: UITextView) {
         updateEditorState()
         scheduleDraftSave()
+        refreshMentions()
+    }
+
+    private func refreshMentions() {
+        let caret = (experimentalComposerView != nil && !isExperimentalSourceVisible)
+            ? (experimentalComposerView?.activeTextView ?? textView)
+            : textView
+        let display = caret.attributedText?.string ?? caret.text ?? ""
+        mentionController.refresh(
+            displayText: display,
+            cursor: caret.selectedRange.location,
+            caretView: caret,
+            isPreviewing: isPreviewingMarkdown
+        )
+    }
+
+    private func insertMention(_ user: DiscourseMentionUser, range: NSRange) {
+        let insertion = "@\(user.username) "
+        if let experimental = experimentalComposerView, !isExperimentalSourceVisible {
+            experimental.replaceActiveDisplayRange(range, withRaw: insertion)
+        } else {
+            let text = NSMutableString(string: textView.text ?? "")
+            let length = text.length
+            let location = min(max(range.location, 0), length)
+            let len = min(max(range.length, 0), length - location)
+            text.replaceCharacters(in: NSRange(location: location, length: len), with: insertion)
+            textView.text = text as String
+            textView.selectedRange = NSRange(location: location + (insertion as NSString).length, length: 0)
+        }
+        updateEditorState()
+        scheduleDraftSave()
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     func textViewDidBeginEditing(_ textView: UITextView) {
@@ -1022,6 +1108,20 @@ extension NewTopicComposerViewController: ComposerTextSurface {
         }
         updateEditorState()
         scheduleDraftSave()
+    }
+
+    func composerFocusedBlockRaw() -> String? {
+        experimentalComposerView?.focusedBlockRaw
+    }
+
+    func composerReplaceFocusedBlock(with raw: String) {
+        if let experimentalComposerView {
+            experimentalComposerView.replaceFocusedBlock(with: raw)
+            updateEditorState()
+            scheduleDraftSave()
+            return
+        }
+        composerInsertRaw(raw)
     }
 
     func composerReplaceFullRaw(_ raw: String) {

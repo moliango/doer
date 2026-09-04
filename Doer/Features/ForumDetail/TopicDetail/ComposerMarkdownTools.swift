@@ -226,6 +226,18 @@ final class ComposerToolPanelView: UIView {
         return button
     }
 
+    func setActiveTools(_ tools: Set<ComposerMarkdownTool>) {
+        for (button, tool) in toolByButton {
+            let active = tools.contains(tool)
+            var config = button.configuration
+            config?.baseForegroundColor = active ? ComposerTypography.accentColor : .label
+            config?.background.backgroundColor = active
+                ? ComposerTypography.accentColor.withAlphaComponent(0.12)
+                : .clear
+            button.configuration = config
+        }
+    }
+
     @objc private func toolTapped(_ sender: UIButton) {
         guard !isCustomizing, let tool = toolByButton[sender] else { return }
         onToolSelected?(tool)

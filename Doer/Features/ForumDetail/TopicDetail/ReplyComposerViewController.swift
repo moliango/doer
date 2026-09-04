@@ -297,6 +297,7 @@ final class ReplyComposerViewController: UIViewController {
             },
             onSelectionChanged: { [weak self] in
                 self?.refreshMentionSuggestions()
+                self?.refreshExperimentalTools()
             },
             onScroll: { [weak self] in
                 self?.repositionMentionPicker()
@@ -306,7 +307,7 @@ final class ReplyComposerViewController: UIViewController {
             experimentalComposerView = experimental
             textView.isHidden = true
             placeholderLabel.isHidden = true
-            modeToggleButton.isHidden = true
+            modeToggleButton.isHidden = false
         }
         view.addSubview(previewView)
         view.addSubview(placeholderLabel)
@@ -517,8 +518,13 @@ final class ReplyComposerViewController: UIViewController {
         setPanel(currentPanel == .tools ? .none : .tools)
     }
 
+    private var isExperimentalSourceVisible = false
+
     @objc private func toggleEditingMode() {
-        guard !usesExperimentalComposer else { return }
+        if let experimental = experimentalComposerView {
+            toggleExperimentalSource(experimental)
+            return
+        }
         hideMentionPicker()
         let raw = composerRawText
         editingMode = editingMode.toggled
@@ -533,15 +539,57 @@ final class ReplyComposerViewController: UIViewController {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
+    private func toggleExperimentalSource(_ experimental: ExperimentalComposerView) {
+        hideMentionPicker()
+        if isExperimentalSourceVisible {
+            let raw = textView.text ?? composerRawText
+            if experimental.tryLoad(raw) {
+                isExperimentalSourceVisible = false
+                experimental.isHidden = false
+                textView.isHidden = true
+                experimental.becomeFirstResponder()
+            }
+        } else {
+            let raw = experimental.markdown
+            isExperimentalSourceVisible = true
+            experimental.resignFirstResponder()
+            experimental.isHidden = true
+            textView.isHidden = false
+            editingMode = .source
+            isApplyingAttributedText = true
+            textView.attributedText = ComposerMarkdownRenderer.styleSource(
+                raw,
+                baseAttributes: ComposerTypography.typingAttributes
+            )
+            isApplyingAttributedText = false
+            textView.becomeFirstResponder()
+        }
+        updateToolbarState()
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    private func refreshExperimentalTools() {
+        toolsPanelView.setActiveTools(experimentalComposerView?.activeTools ?? [])
+    }
+
+    override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+        if motion == .motionShake {
+            experimentalComposerView?.performUndo()
+        }
+        super.motionEnded(motion, with: event)
+    }
+
     @objc private func toggleMarkdownPreview() {
         hideMentionPicker()
         isPreviewingMarkdown.toggle()
         if isPreviewingMarkdown {
             closePanel(returnToKeyboard: false)
             blurComposer()
+            experimentalComposerView?.captureFocus()
             previewView.update(markdown: ComposerPangu.applyToOutgoing(composerRawText))
         } else {
             focusComposer()
+            experimentalComposerView?.restoreCapturedFocus()
         }
         updatePreviewState()
     }
@@ -618,7 +666,7 @@ final class ReplyComposerViewController: UIViewController {
 
     /// Raw markdown for the body (ComposerTextSurface uses the same extraction).
     private var bodyRawText: String {
-        if let experimentalComposerView {
+        if let experimentalComposerView, !isExperimentalSourceVisible {
             return experimentalComposerView.markdown
         }
         return rawText(from: textView.attributedText ?? NSAttributedString(string: textView.text ?? ""))
@@ -633,7 +681,7 @@ final class ReplyComposerViewController: UIViewController {
     }
 
     private func setRawComposerText(_ raw: String) {
-        if let experimentalComposerView {
+        if let experimentalComposerView, !isExperimentalSourceVisible {
             if experimentalComposerView.tryLoad(raw) {
                 updatePlaceholder()
                 updateSendButton()
@@ -1123,7 +1171,8 @@ final class ReplyComposerViewController: UIViewController {
             previewView.alpha = 1
         }
         if usesExperimentalComposer {
-            textView.isHidden = true
+            experimentalComposerView?.isHidden = showPreview || isExperimentalSourceVisible
+            textView.isHidden = showPreview || !isExperimentalSourceVisible
             placeholderLabel.isHidden = true
         } else {
             placeholderLabel.isHidden = showPreview || !composerRawText.isEmpty
@@ -1139,7 +1188,7 @@ final class ReplyComposerViewController: UIViewController {
             toolsButton: toolsToggleButton,
             panel: currentPanel,
             isPreviewing: isPreviewingMarkdown,
-            editingMode: editingMode
+            editingMode: isExperimentalSourceVisible ? .source : .rich
         )
     }
 
@@ -1407,6 +1456,21 @@ extension ReplyComposerViewController: ComposerTextSurface {
         updatePlaceholder()
         updateSendButton()
         scheduleDraftSave()
+    }
+
+    func composerFocusedBlockRaw() -> String? {
+        experimentalComposerView?.focusedBlockRaw
+    }
+
+    func composerReplaceFocusedBlock(with raw: String) {
+        if let experimentalComposerView {
+            experimentalComposerView.replaceFocusedBlock(with: raw)
+            updatePlaceholder()
+            updateSendButton()
+            scheduleDraftSave()
+            return
+        }
+        composerInsertRaw(raw)
     }
 
     func composerReplaceFullRaw(_ raw: String) {

@@ -33,6 +33,13 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         return view
     }()
     private let markdownCoordinator = ComposerMarkdownCoordinator()
+    private lazy var mentionController: ComposerMentionController = {
+        let controller = ComposerMentionController(api: api, topicId: nil)
+        controller.onInsert = { [weak self] user, range in
+            self?.insertMention(user, range: range)
+        }
+        return controller
+    }()
     private let uploadStatusLabel = ComposerToolbarFactory.makeUploadStatusLabel()
 
     private lazy var closeButton: UIButton = {
@@ -92,11 +99,13 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
                 self.updateSendState()
                 self.scheduleDraftSave()
             },
-            onEditingBegan: {}
+            onEditingBegan: {},
+            onSelectionChanged: { [weak self] in
+                self?.refreshMentions()
+            }
         ) {
             ExperimentalComposerHosting.pin(experimental, over: textView, in: view)
             experimentalComposerView = experimental
-            navigationItem.rightBarButtonItems = navigationItem.rightBarButtonItems?.filter { $0 !== modeBarItem }
             placeholderLabel.isHidden = true
             view.bringSubviewToFront(previewView)
             view.bringSubviewToFront(uploadStatusLabel)
@@ -199,6 +208,8 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         view.addSubview(previewView)
         textView.addSubview(placeholderLabel)
         textView.addSubview(uploadStatusLabel)
+        mentionController.install(in: view, editor: textView, baseURL: api.baseURL)
+        view.bringSubviewToFront(mentionController.picker)
 
         let titleTop = allowsEditingRecipient
             ? titleField.topAnchor.constraint(equalTo: recipientField.bottomAnchor, constant: 10)
@@ -248,7 +259,7 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
     }
 
     private var bodyRaw: String {
-        if let experimentalComposerView {
+        if let experimentalComposerView, !isExperimentalSourceVisible {
             return experimentalComposerView.markdown
         }
         guard let attributed = textView.attributedText, attributed.length > 0 else {
@@ -261,7 +272,7 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
     }
 
     private func applyBodyMarkdown(_ raw: String) {
-        if let experimentalComposerView {
+        if let experimentalComposerView, !isExperimentalSourceVisible {
             if experimentalComposerView.tryLoad(raw) {
                 placeholderLabel.isHidden = raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
                 return
@@ -281,8 +292,15 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         placeholderLabel.isHidden = raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
+    override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+        if motion == .motionShake {
+            experimentalComposerView?.performUndo()
+        }
+        super.motionEnded(motion, with: event)
+    }
+
     private func focusBody() {
-        if let experimentalComposerView {
+        if let experimentalComposerView, !isExperimentalSourceVisible {
             experimentalComposerView.becomeFirstResponder()
         } else {
             textView.becomeFirstResponder()
@@ -311,8 +329,35 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         textView.typingAttributes = ComposerTypography.typingAttributes
     }
 
+    private var isExperimentalSourceVisible = false
+
     @objc private func toggleEditingMode() {
-        guard experimentalComposerView == nil else { return }
+        if let experimental = experimentalComposerView {
+            if isExperimentalSourceVisible {
+                let raw = textView.text ?? bodyRaw
+                if experimental.tryLoad(raw) {
+                    isExperimentalSourceVisible = false
+                    experimental.isHidden = false
+                    textView.isHidden = true
+                    experimental.becomeFirstResponder()
+                    modeBarItem?.title = "Aa"
+                }
+            } else {
+                let raw = experimental.markdown
+                isExperimentalSourceVisible = true
+                experimental.resignFirstResponder()
+                experimental.isHidden = true
+                textView.isHidden = false
+                editingMode = .source
+                textView.attributedText = ComposerMarkdownRenderer.styleSource(
+                    raw,
+                    baseAttributes: ComposerTypography.typingAttributes
+                )
+                textView.becomeFirstResponder()
+                modeBarItem?.title = "MD"
+            }
+            return
+        }
         let raw = bodyRaw
         editingMode = editingMode.toggled
         ComposerEditingMode.stored = editingMode
@@ -324,17 +369,24 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
     @objc private func toggleMarkdownPreview() {
         isPreviewingMarkdown.toggle()
         previewView.isHidden = !isPreviewingMarkdown
+        if isPreviewingMarkdown {
+            experimentalComposerView?.captureFocus()
+        }
         if experimentalComposerView != nil {
-            experimentalComposerView?.isHidden = isPreviewingMarkdown
-            textView.isHidden = true
+            experimentalComposerView?.isHidden = isPreviewingMarkdown || isExperimentalSourceVisible
+            textView.isHidden = isPreviewingMarkdown || !isExperimentalSourceVisible
         } else {
             textView.isHidden = isPreviewingMarkdown
+        }
+        if !isPreviewingMarkdown {
+            experimentalComposerView?.restoreCapturedFocus()
         }
         placeholderLabel.isHidden = isPreviewingMarkdown || !bodyRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         previewBarItem?.image = UIImage(systemName: isPreviewingMarkdown ? "eye.slash" : "eye")
         if isPreviewingMarkdown {
             experimentalComposerView?.resignFirstResponder()
             textView.resignFirstResponder()
+            mentionController.hide()
             previewView.update(markdown: ComposerPangu.applyToOutgoing(bodyRaw))
         } else {
             focusBody()
@@ -473,6 +525,39 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         placeholderLabel.isHidden = !bodyRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         updateSendState()
         scheduleDraftSave()
+        refreshMentions()
+    }
+
+    private func refreshMentions() {
+        let caret = (experimentalComposerView != nil && !isExperimentalSourceVisible)
+            ? (experimentalComposerView?.activeTextView ?? textView)
+            : textView
+        let display = caret.attributedText?.string ?? caret.text ?? ""
+        mentionController.refresh(
+            displayText: display,
+            cursor: caret.selectedRange.location,
+            caretView: caret,
+            isPreviewing: isPreviewingMarkdown
+        )
+    }
+
+    private func insertMention(_ user: DiscourseMentionUser, range: NSRange) {
+        let insertion = "@\(user.username) "
+        if let experimental = experimentalComposerView, !isExperimentalSourceVisible {
+            experimental.replaceActiveDisplayRange(range, withRaw: insertion)
+        } else {
+            let text = NSMutableString(string: textView.text ?? "")
+            let length = text.length
+            let location = min(max(range.location, 0), length)
+            let len = min(max(range.length, 0), length - location)
+            text.replaceCharacters(in: NSRange(location: location, length: len), with: insertion)
+            textView.text = text as String
+            textView.selectedRange = NSRange(location: location + (insertion as NSString).length, length: 0)
+        }
+        placeholderLabel.isHidden = !bodyRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        updateSendState()
+        scheduleDraftSave()
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
@@ -542,6 +627,21 @@ extension PrivateMessageComposerViewController: ComposerTextSurface {
         placeholderLabel.isHidden = !bodyRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         updateSendState()
         scheduleDraftSave()
+    }
+
+    func composerFocusedBlockRaw() -> String? {
+        experimentalComposerView?.focusedBlockRaw
+    }
+
+    func composerReplaceFocusedBlock(with raw: String) {
+        if let experimentalComposerView {
+            experimentalComposerView.replaceFocusedBlock(with: raw)
+            placeholderLabel.isHidden = !bodyRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            updateSendState()
+            scheduleDraftSave()
+            return
+        }
+        composerInsertRaw(raw)
     }
 
     func composerReplaceFullRaw(_ raw: String) {

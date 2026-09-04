@@ -34,6 +34,15 @@ protocol ComposerTextSurface: AnyObject {
     func composerSetUploading(_ uploading: Bool, statusText: String?)
     func composerCloseToolPanel(returnToKeyboard: Bool)
     func composerExitMarkdownPreviewIfNeeded()
+    func composerFocusedBlockRaw() -> String?
+    func composerReplaceFocusedBlock(with raw: String)
+}
+
+extension ComposerTextSurface {
+    func composerFocusedBlockRaw() -> String? { nil }
+    func composerReplaceFocusedBlock(with raw: String) {
+        composerInsertRaw(raw)
+    }
 }
 
 // MARK: - Paste-capable body text view
@@ -76,6 +85,12 @@ enum ComposerCaretGeometry {
 final class ComposerBodyTextView: UITextView, UITextPasteDelegate {
     weak var pasteCoordinator: ComposerMarkdownCoordinator?
 
+    weak var experimentalUndoManager: UndoManager?
+
+    override var undoManager: UndoManager? {
+        experimentalUndoManager ?? super.undoManager
+    }
+
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
         pasteDelegate = self
@@ -99,6 +114,11 @@ final class ComposerBodyTextView: UITextView, UITextPasteDelegate {
     }
 
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if let host = experimentalHost, host.hasBlockSelection {
+            if action == #selector(copy(_:)) || action == #selector(cut(_:)) || action == #selector(delete(_:)) {
+                return true
+            }
+        }
         if action == #selector(paste(_:)),
            pasteCoordinator != nil,
            UIPasteboard.general.hasImages,
@@ -106,6 +126,30 @@ final class ComposerBodyTextView: UITextView, UITextPasteDelegate {
             return true
         }
         return super.canPerformAction(action, withSender: sender)
+    }
+
+    override func copy(_ sender: Any?) {
+        if let host = experimentalHost, host.copySelectedBlocksIfNeeded() { return }
+        super.copy(sender)
+    }
+
+    override func cut(_ sender: Any?) {
+        if let host = experimentalHost, host.cutSelectedBlocksIfNeeded() { return }
+        super.cut(sender)
+    }
+
+    override func delete(_ sender: Any?) {
+        if let host = experimentalHost, host.deleteSelectedBlocksIfNeeded() { return }
+        super.delete(sender)
+    }
+
+    private var experimentalHost: ExperimentalComposerView? {
+        var view: UIView? = self
+        while let current = view {
+            if let host = current as? ExperimentalComposerView { return host }
+            view = current.superview
+        }
+        return nil
     }
 
     override func paste(_ sender: Any?) {
@@ -605,12 +649,25 @@ final class ComposerMarkdownCoordinator: NSObject {
     private func presentPollBuilder() {
         guard let surface else { return }
         let selected = surface.composerSelectedRawText()
-        let spec = ComposerPollSpec.parse(from: selected) ?? ComposerPollSpec.blank()
+        let focused = surface.composerFocusedBlockRaw()
+        let source: String
+        if let focused, ComposerPollSpec.parse(from: focused) != nil {
+            source = focused
+        } else {
+            source = selected
+        }
+        let spec = ComposerPollSpec.parse(from: source) ?? ComposerPollSpec.blank()
         let builder = PollBuilderViewController(spec: spec)
         builder.onSave = { [weak self] spec in
             guard let self, let surface = self.surface else { return }
             let selected = surface.composerSelectedRawText()
-            if ComposerPollSpec.parse(from: selected) != nil {
+            let focused = surface.composerFocusedBlockRaw()
+            if ExperimentalComposerPollPolicy.shouldReplaceFocusedBlock(
+                focusedRaw: focused,
+                selectedRaw: selected
+            ) {
+                surface.composerReplaceFocusedBlock(with: spec.bbcode)
+            } else if ComposerPollSpec.parse(from: selected) != nil {
                 let updated = ComposerPollSpec.replacingPoll(in: selected, with: spec)
                 surface.composerInsertRaw(updated)
             } else {

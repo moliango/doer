@@ -58,6 +58,12 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
     private var blockViews: [ExperimentalComposerBlockView] = []
     private var focusedIndex = 0
     private var isRebuilding = false
+    private var undoStack: [ExperimentalComposerSnapshot] = []
+    private var redoStack: [ExperimentalComposerSnapshot] = []
+    private var selectedBlockRange: Range<Int>?
+    private var savedFocus: ExperimentalComposerSnapshot?
+    private var reorderIndex: Int?
+    private let documentUndoManager = ExperimentalComposerUndoProxy()
 
     private(set) var document = ExperimentalComposerDocument(blocks: [.paragraph("")])
 
@@ -81,6 +87,127 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
             return blockViews[focusedIndex].textView
         }
         return blockViews.first?.textView ?? UITextView()
+    }
+
+    var canUndo: Bool { !undoStack.isEmpty || documentUndoManager.canUndoRegisteredActions }
+    var canRedo: Bool { !redoStack.isEmpty || documentUndoManager.canRedoRegisteredActions }
+    var undoStackIsEmpty: Bool { undoStack.isEmpty }
+    var redoStackIsEmpty: Bool { redoStack.isEmpty }
+
+    var focusedBlockRaw: String? {
+        syncDocumentFromViews()
+        guard focusedIndex >= 0, focusedIndex < document.blocks.count else { return nil }
+        return ExperimentalComposerDocument(blocks: [document.blocks[focusedIndex]]).markdown
+    }
+
+    var activeTools: Set<ComposerMarkdownTool> {
+        let marks = activeMarks
+        var tools: Set<ComposerMarkdownTool> = []
+        if marks.headingLevel != nil { tools.insert(.heading) }
+        if marks.isQuote { tools.insert(.quote) }
+        if marks.isBullet { tools.insert(.bulletList) }
+        if marks.isNumbered { tools.insert(.numberedList) }
+        if marks.isBold { tools.insert(.bold) }
+        if marks.isItalic { tools.insert(.italic) }
+        if marks.isStrike { tools.insert(.strikethrough) }
+        if marks.isCode {
+            tools.insert(.codeBlock)
+            tools.insert(.inlineCode)
+        }
+        if marks.isPoll { tools.insert(.poll) }
+        if marks.isImage { tools.insert(.image) }
+        return tools
+    }
+
+    var activeMarks: ExperimentalComposerMarks {
+        let block = document.blocks[safe: focusedIndex] ?? .paragraph("")
+        let traits = activeTextView.typingAttributes[.font] as? UIFont
+        let strike = (activeTextView.typingAttributes[.strikethroughStyle] as? Int).map { $0 != 0 } ?? false
+        return ExperimentalComposerFormatting.marks(
+            block: block,
+            selectedRaw: selectedRawText(),
+            isBold: traits?.fontDescriptor.symbolicTraits.contains(.traitBold) == true,
+            isItalic: traits?.fontDescriptor.symbolicTraits.contains(.traitItalic) == true,
+            isStrike: strike
+        )
+    }
+
+    func captureFocus() {
+        savedFocus = currentSnapshot()
+    }
+
+    func restoreCapturedFocus() {
+        guard let savedFocus else { return }
+        focusBlock(at: savedFocus.focusedIndex, caret: .display(savedFocus.caret))
+    }
+
+    func replaceFocusedBlock(with raw: String) {
+        performStructural {
+            syncDocumentFromViews()
+            guard focusedIndex >= 0, focusedIndex < document.blocks.count else { return }
+            let parsed = ExperimentalComposerDocument.parse(raw).blocks
+            document.blocks = ExperimentalComposerBlockRangePolicy.replacing(
+                document.blocks,
+                range: focusedIndex..<(focusedIndex + 1),
+                with: parsed
+            )
+            document.blocks = ExperimentalComposerEditingPolicy.ensuringEditableTail(document.blocks)
+            rebuild(from: document)
+            focusBlock(at: focusedIndex, caret: .end)
+        }
+    }
+
+    var hasBlockSelection: Bool { selectedBlockRange != nil }
+
+    func copySelectedBlocksIfNeeded() -> Bool {
+        guard selectedBlockRange != nil else { return false }
+        copySelectedBlocks()
+        return true
+    }
+
+    func cutSelectedBlocksIfNeeded() -> Bool {
+        guard selectedBlockRange != nil else { return false }
+        copySelectedBlocks()
+        deleteSelectedBlocks()
+        return true
+    }
+
+    func deleteSelectedBlocksIfNeeded() -> Bool {
+        guard selectedBlockRange != nil else { return false }
+        deleteSelectedBlocks()
+        return true
+    }
+
+    func performUndo() {
+        let current = currentSnapshot()
+        if documentUndoManager.canUndoRegisteredActions {
+            documentUndoManager.undoRegisteredActions()
+            return
+        }
+        guard let result = ExperimentalComposerHistory.undo(
+            current: current,
+            undo: undoStack,
+            redo: redoStack
+        ) else { return }
+        undoStack = result.undo
+        redoStack = result.redo
+        applySnapshot(result.current)
+    }
+
+    func performRedo() {
+        let current = currentSnapshot()
+        if documentUndoManager.canRedoRegisteredActions {
+            documentUndoManager.redoRegisteredActions()
+            return
+        }
+        guard let result = ExperimentalComposerHistory.redo(
+            current: current,
+            undo: undoStack,
+            redo: redoStack
+        ) else { return }
+        undoStack = result.undo
+        redoStack = result.redo
+        applySnapshot(result.current)
     }
 
     override init(frame: CGRect) {
@@ -119,6 +246,10 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
         let tap = UITapGestureRecognizer(target: self, action: #selector(backgroundTapped))
         tap.cancelsTouchesInView = false
         scrollView.addGestureRecognizer(tap)
+        let press = UILongPressGestureRecognizer(target: self, action: #selector(handleBlockPress(_:)))
+        press.minimumPressDuration = 0.35
+        scrollView.addGestureRecognizer(press)
+        documentUndoManager.owner = self
         rebuild(from: document)
     }
 
@@ -156,6 +287,22 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
     }
 
     func insertRaw(_ text: String) {
+        if let selectedBlockRange, selectedBlockRange.count > 0 {
+            let focusAt = selectedBlockRange.lowerBound
+            performStructural {
+                syncDocumentFromViews()
+                let parsed = ExperimentalComposerDocument.parse(text).blocks
+                document.blocks = ExperimentalComposerBlockRangePolicy.replacing(
+                    document.blocks,
+                    range: selectedBlockRange,
+                    with: parsed
+                )
+                self.selectedBlockRange = nil
+                rebuild(from: document)
+                focusBlock(at: focusAt, caret: .end)
+            }
+            return
+        }
         let parsed = ExperimentalComposerDocument.parse(text)
         let shouldInsertBlocks: Bool
         if parsed.blocks.count > 1 {
@@ -172,6 +319,7 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
         }
 
         if shouldInsertBlocks, !parsed.blocks.isEmpty {
+            performStructural {
             syncDocumentFromViews()
             let insertAt = min(max(focusedIndex + 1, 0), document.blocks.count)
             document.blocks.insert(contentsOf: parsed.blocks, at: insertAt)
@@ -190,6 +338,7 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
             )
             focusBlock(at: focus, caret: .start)
             onDocumentChanged?()
+            }
             return
         }
 
@@ -204,6 +353,7 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
     }
 
     func wrapSelection(start: String, end: String, placeholder: String) {
+        pushHistory()
         guard let blockView = blockViews[safe: focusedIndex] else { return }
         let selection = blockView.textView.selectedRange
         let selected = selection.length > 0 ? blockView.rawText(inDisplayRange: selection) : ""
@@ -231,7 +381,21 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
     }
 
     func applyLinePrefix(_ prefix: String) {
+        performStructural {
         syncDocumentFromViews()
+        if prefix == "- " || prefix.hasSuffix(". ") {
+            let range = selectedBlockRange ?? focusedIndex..<(focusedIndex + 1)
+            document.blocks = ExperimentalComposerBlockRangePolicy.convertingToList(
+                document.blocks,
+                range: range,
+                ordered: prefix.hasSuffix(". ")
+            )
+            selectedBlockRange = nil
+            rebuild(from: document)
+            focusBlock(at: range.lowerBound, caret: .end)
+            onDocumentChanged?()
+            return
+        }
         guard focusedIndex >= 0, focusedIndex < document.blocks.count else { return }
         let current = document.blocks[focusedIndex]
         let inner = current.innerMarkdown
@@ -244,23 +408,7 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
                 next = .heading(min(max(level, 1), 6), inner)
             }
         } else if prefix.hasPrefix("> ") {
-            if case .quote = current {
-                next = .paragraph(inner)
-            } else {
-                next = .quote(inner)
-            }
-        } else if prefix == "- " {
-            if case .listItem(ordered: false, _) = current {
-                next = .paragraph(inner)
-            } else {
-                next = .listItem(ordered: false, text: inner)
-            }
-        } else if prefix.hasSuffix(". ") {
-            if case .listItem(ordered: true, _) = current {
-                next = .paragraph(inner)
-            } else {
-                next = .listItem(ordered: true, text: inner)
-            }
+            next = ExperimentalComposerQuotePolicy.cycling(current)
         } else {
             insertInline(prefix)
             return
@@ -269,10 +417,13 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
         rebuild(from: document)
         focusBlock(at: focusedIndex, caret: .end)
         onDocumentChanged?()
+        }
     }
 
     func replaceFullRaw(_ raw: String) {
-        load(markdown: raw)
+        performStructural {
+            load(markdown: raw)
+        }
     }
 
     private func insertInline(_ text: String) {
@@ -299,17 +450,37 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
             )
             blockView.textView.delegate = self
             blockView.textView.pasteCoordinator = pasteCoordinator
+            blockView.textView.experimentalUndoManager = documentUndoManager
             blockView.textView.isEditable = isEditable && {
                 if case .image = block { return false }
                 return true
             }()
             blockView.textView.tag = index
+            blockView.onSelectBlock = { [weak self] in
+                self?.extendOrSelectBlock(at: index)
+            }
+            blockView.onIslandTap = { [weak self] in
+                self?.presentIslandActions(at: index)
+            }
             stackView.addArrangedSubview(blockView)
             blockViews.append(blockView)
         }
         focusedIndex = min(focusedIndex, max(blockViews.count - 1, 0))
         isRebuilding = false
         refreshPlaceholder()
+        refreshBlockSelection()
+    }
+
+    private func extendOrSelectBlock(at index: Int) {
+        if let selectedBlockRange {
+            let lower = min(selectedBlockRange.lowerBound, index)
+            let upper = max(selectedBlockRange.upperBound, index + 1)
+            selectBlocks(lower..<upper)
+        } else {
+            selectBlocks(index..<(index + 1))
+        }
+        focusedIndex = index
+        onSelectionChanged?()
     }
 
     private func refreshPlaceholder() {
@@ -357,6 +528,10 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
     func textViewDidChangeSelection(_ textView: UITextView) {
         guard !isRebuilding else { return }
         focusedIndex = textView.tag
+        if selectedBlockRange != nil, textView.selectedRange.length == 0 {
+            selectedBlockRange = nil
+            refreshBlockSelection()
+        }
         onSelectionChanged?()
     }
 
@@ -392,7 +567,158 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
         return true
     }
 
+    private func currentSnapshot() -> ExperimentalComposerSnapshot {
+        ExperimentalComposerSnapshot(
+            markdown: markdown,
+            focusedIndex: focusedIndex,
+            caret: activeTextView.selectedRange.location
+        )
+    }
+
+    private func pushHistory() {
+        let snapshot = currentSnapshot()
+        let next = ExperimentalComposerHistory.pushing(snapshot, undo: undoStack, redo: redoStack)
+        undoStack = next.undo
+        redoStack = next.redo
+        documentUndoManager.removeAllActions()
+    }
+
+    private func performStructural(_ mutate: () -> Void) {
+        pushHistory()
+        mutate()
+    }
+
+    private func applySnapshot(_ snapshot: ExperimentalComposerSnapshot) {
+        _ = tryLoad(snapshot.markdown)
+        focusBlock(at: snapshot.focusedIndex, caret: .display(snapshot.caret))
+        onDocumentChanged?()
+    }
+
+    @objc private func handleBlockPress(_ gesture: UILongPressGestureRecognizer) {
+        let point = gesture.location(in: stackView)
+        guard let index = blockViews.firstIndex(where: { $0.frame.contains(point) }) else { return }
+        switch gesture.state {
+        case .began:
+            reorderIndex = index
+            selectBlocks(index..<(index + 1))
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        case .changed:
+            guard let from = reorderIndex,
+                  let to = blockViews.firstIndex(where: { $0.frame.contains(point) }),
+                  to != from
+            else { return }
+            performStructural {
+                syncDocumentFromViews()
+                let block = document.blocks.remove(at: from)
+                document.blocks.insert(block, at: to)
+                reorderIndex = to
+                selectedBlockRange = to..<(to + 1)
+                rebuild(from: document)
+                focusBlock(at: to, caret: .start)
+                onDocumentChanged?()
+            }
+        default:
+            reorderIndex = nil
+        }
+    }
+
+    private func selectBlocks(_ range: Range<Int>) {
+        selectedBlockRange = ExperimentalComposerBlockRangePolicy.clamped(range, count: blockViews.count)
+        refreshBlockSelection()
+    }
+
+    private func refreshBlockSelection() {
+        for (index, view) in blockViews.enumerated() {
+            let selected = selectedBlockRange?.contains(index) == true
+            view.setBlockSelected(selected)
+        }
+    }
+
+    private func copySelectedBlocks() {
+        guard let selectedBlockRange else { return }
+        syncDocumentFromViews()
+        UIPasteboard.general.string = ExperimentalComposerBlockRangePolicy.markdown(
+            of: document.blocks,
+            range: selectedBlockRange
+        )
+    }
+
+    private func deleteSelectedBlocks() {
+        guard let selectedBlockRange else { return }
+        performStructural {
+            syncDocumentFromViews()
+            document.blocks = ExperimentalComposerBlockRangePolicy.replacing(
+                document.blocks,
+                range: selectedBlockRange,
+                with: [.paragraph("")]
+            )
+            let focus = selectedBlockRange.lowerBound
+            self.selectedBlockRange = nil
+            rebuild(from: document)
+            focusBlock(at: focus, caret: .start)
+            onDocumentChanged?()
+        }
+    }
+
+    private func presentIslandActions(at index: Int) {
+        guard let block = document.blocks[safe: index] else { return }
+        let host = closestViewController()
+        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+        if case .image(_, let url, _) = block {
+            sheet.addAction(UIAlertAction(
+                title: String(localized: "common.preview", defaultValue: "预览"),
+                style: .default
+            ) { [weak self] _ in
+                self?.previewImage(url: url)
+            })
+        }
+        sheet.addAction(UIAlertAction(
+            title: String(localized: "common.delete", defaultValue: "删除"),
+            style: .destructive
+        ) { [weak self] _ in
+            self?.deleteBlock(at: index)
+        })
+        sheet.addAction(UIAlertAction(title: String(localized: "common.cancel"), style: .cancel))
+        if let pop = sheet.popoverPresentationController, let view = blockViews[safe: index] {
+            pop.sourceView = view
+            pop.sourceRect = view.bounds
+        }
+        host?.present(sheet, animated: true)
+    }
+
+    private func deleteBlock(at index: Int) {
+        performStructural {
+            syncDocumentFromViews()
+            guard document.blocks.indices.contains(index) else { return }
+            document.blocks.remove(at: index)
+            if document.blocks.isEmpty {
+                document.blocks = [.paragraph("")]
+            }
+            rebuild(from: document)
+            focusBlock(at: min(index, document.blocks.count - 1), caret: .start)
+            onDocumentChanged?()
+        }
+    }
+
+    private func previewImage(url: String) {
+        guard let parsed = ExperimentalComposerDocument.previewImageURL(from: url, baseURL: imageBaseURL) else { return }
+        let viewer = ExperimentalComposerImagePreviewController(url: parsed, baseURL: imageBaseURL)
+        closestViewController()?.present(viewer, animated: true)
+    }
+
+    private func closestViewController() -> UIViewController? {
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let viewController = current as? UIViewController {
+                return viewController
+            }
+            responder = current.next
+        }
+        return nil
+    }
+
     private func splitBlock(at index: Int, caret: NSRange) {
+        performStructural {
         guard let blockView = blockViews[safe: index] else { return }
         let prefixRaw = blockView.rawText(inDisplayRange: NSRange(location: 0, length: caret.location))
         let attributedLength = blockView.textView.attributedText?.length ?? blockView.textView.text?.utf16.count ?? 0
@@ -434,6 +760,7 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
         rebuild(from: document)
         focusBlock(at: index + 1, caret: .start)
         onDocumentChanged?()
+        }
     }
 
     private func currentInnerAfterSplit(kind: ExperimentalComposerBlock, prefixRaw: String) -> String {
@@ -445,10 +772,11 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
 
     private func mergeBlock(at index: Int) {
         guard index > 0, index < document.blocks.count else { return }
+        performStructural {
         syncDocumentFromViews()
         let previous = document.blocks[index - 1]
         let current = document.blocks[index]
-        if previous.isAtomicIsland {
+        if ExperimentalComposerEditingPolicy.isAtomicIsland(previous) {
             document.blocks.remove(at: index - 1)
             rebuild(from: document)
             focusBlock(at: index - 1, caret: .start)
@@ -470,6 +798,7 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
         let joinDisplay = blockViews[safe: index - 1]?.displayLength(ofRaw: joinRaw) ?? 0
         focusBlock(at: index - 1, caret: .display(joinDisplay))
         onDocumentChanged?()
+        }
     }
 
     private enum Caret {
@@ -500,61 +829,80 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
     }
 }
 
-private extension ExperimentalComposerBlock {
-    var innerMarkdown: String {
-        switch self {
-        case .paragraph(let text), .quote(let text), .literal(let text):
-            return text
-        case .heading(_, let text), .listItem(_, let text):
-            return text
-        case .code(_, let code):
-            return code
-        case .image(let alt, _, _):
-            return alt
-        case .quoteCard(_, _, _, _, _, let inner):
-            return inner
-        }
+final class ExperimentalComposerUndoProxy: UndoManager {
+    weak var owner: ExperimentalComposerView?
+
+    var canUndoRegisteredActions: Bool { super.canUndo }
+    var canRedoRegisteredActions: Bool { super.canRedo }
+
+    func undoRegisteredActions() {
+        super.undo()
     }
 
-    var isAtomicIsland: Bool {
-        switch self {
-        case .image, .quoteCard:
-            return true
-        default:
-            return false
-        }
+    func redoRegisteredActions() {
+        super.redo()
     }
 
-    func replacingInner(_ text: String) -> ExperimentalComposerBlock {
-        switch self {
-        case .paragraph:
-            return .paragraph(text)
-        case .heading(let level, _):
-            return .heading(level, text)
-        case .quote:
-            return .quote(text)
-        case .listItem(let ordered, _):
-            return .listItem(ordered: ordered, text: text)
-        case .code(let language, _):
-            return .code(language: language, code: text)
-        case .image(_, let url, let title):
-            return .image(alt: text, url: url, title: title)
-        case .quoteCard(let username, let displayName, let postNumber, let topicId, let full, _):
-            return .quoteCard(
-                username: username,
-                displayName: displayName,
-                postNumber: postNumber,
-                topicId: topicId,
-                full: full,
-                inner: text
-            )
-        case .literal:
-            return .literal(text)
-        }
+    override var canUndo: Bool {
+        super.canUndo || !(owner?.undoStackIsEmpty ?? true)
+    }
+
+    override var canRedo: Bool {
+        super.canRedo || !(owner?.redoStackIsEmpty ?? true)
+    }
+
+    override func undo() {
+        owner?.performUndo()
+    }
+
+    override func redo() {
+        owner?.performRedo()
+    }
+}
+
+private final class ExperimentalComposerImagePreviewController: UIViewController {
+    private let url: URL
+    private let baseURL: String
+    private let imageView = UIImageView()
+
+    init(url: URL, baseURL: String) {
+        self.url = url
+        self.baseURL = baseURL
+        super.init(nibName: nil, bundle: nil)
+        modalPresentationStyle = .fullScreen
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.contentMode = .scaleAspectFit
+        imageView.isUserInteractionEnabled = true
+        view.addSubview(imageView)
+        NSLayoutConstraint.activate([
+            imageView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            imageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            imageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        ForumImageLoader.setImage(on: imageView, url: url, placeholder: nil, cloudflareBaseURL: baseURL)
+        let tap = UITapGestureRecognizer(target: self, action: #selector(close))
+        view.addGestureRecognizer(tap)
+    }
+
+    @objc private func close() {
+        dismiss(animated: true)
     }
 }
 
 private final class ExperimentalComposerBlockView: UIView {
+    var onSelectBlock: (() -> Void)?
+    var onIslandTap: (() -> Void)?
     private(set) var block: ExperimentalComposerBlock
     private let orderedIndex: Int
     private let imageBaseURL: String
@@ -620,7 +968,11 @@ private final class ExperimentalComposerBlockView: UIView {
         imageView.backgroundColor = UIColor.secondarySystemFill
         imageView.layer.cornerRadius = 8
         imageView.isHidden = true
-        imageView.isUserInteractionEnabled = false
+        imageView.isUserInteractionEnabled = true
+        imageView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(islandTapped)))
+        quoteHeader.isUserInteractionEnabled = true
+        quoteHeader.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(islandTapped)))
+        markerColumn.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(selectTapped)))
 
         markerColumn.setContentHuggingPriority(.required, for: .horizontal)
         markerColumn.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -666,6 +1018,20 @@ private final class ExperimentalComposerBlockView: UIView {
         ])
         applyChrome()
         applyContent()
+    }
+
+    func setBlockSelected(_ selected: Bool) {
+        backgroundColor = selected ? ComposerTypography.accentColor.withAlphaComponent(0.10) : .clear
+        layer.cornerRadius = 8
+        layer.cornerCurve = .continuous
+    }
+
+    @objc private func islandTapped() {
+        onIslandTap?()
+    }
+
+    @objc private func selectTapped() {
+        onSelectBlock?()
     }
 
     @available(*, unavailable)

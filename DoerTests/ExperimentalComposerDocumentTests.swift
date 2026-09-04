@@ -299,6 +299,117 @@ final class ExperimentalComposerDocumentTests: XCTestCase {
         XCTAssertEqual(tailed.last, .paragraph(""))
     }
 
+    func testMentionQueryRequiresBoundaryAndCapturesTerm() {
+        let hit = ComposerMentionQuery.activeMentionQuery(in: "hello @al", cursor: 9)
+        XCTAssertEqual(hit?.term, "al")
+        XCTAssertNil(ComposerMentionQuery.activeMentionQuery(in: "mail@al", cursor: 7))
+        XCTAssertEqual(
+            ComposerMentionQuery.filterSeeds(
+                [
+                    DiscourseMentionUser(username: "alice", name: "Alice", avatarTemplate: nil),
+                    DiscourseMentionUser(username: "bob", name: "Bob", avatarTemplate: nil),
+                ],
+                term: "al"
+            ).map(\.username),
+            ["alice"]
+        )
+    }
+
+    func testHistoryUndoRedoRestoresSnapshot() {
+        let first = ExperimentalComposerSnapshot(markdown: "a", focusedIndex: 0, caret: 1)
+        let second = ExperimentalComposerSnapshot(markdown: "ab", focusedIndex: 0, caret: 2)
+        let pushed = ExperimentalComposerHistory.pushing(first, undo: [], redo: [second])
+        XCTAssertEqual(pushed.undo, [first])
+        XCTAssertEqual(pushed.redo, [])
+        let undone = ExperimentalComposerHistory.undo(current: second, undo: pushed.undo, redo: pushed.redo)
+        XCTAssertEqual(undone?.current, first)
+        XCTAssertEqual(undone?.redo, [second])
+        let redone = ExperimentalComposerHistory.redo(
+            current: first,
+            undo: undone?.undo ?? [],
+            redo: undone?.redo ?? []
+        )
+        XCTAssertEqual(redone?.current, second)
+    }
+
+    func testQuotePolicyNestsByParsingInnerArrowsAndUnwraps() {
+        XCTAssertEqual(
+            ExperimentalComposerQuotePolicy.cycling(.paragraph("hi")),
+            .quote("hi")
+        )
+        XCTAssertEqual(
+            ExperimentalComposerQuotePolicy.cycling(.quote("hi")),
+            .paragraph("hi")
+        )
+        XCTAssertEqual(
+            ExperimentalComposerQuotePolicy.cycling(.quote("> nested")),
+            .quote("nested")
+        )
+    }
+
+    func testBlockRangeConvertToListAndMarkdown() {
+        let blocks: [ExperimentalComposerBlock] = [
+            .paragraph("a"),
+            .paragraph("b"),
+            .paragraph("c"),
+        ]
+        let listed = ExperimentalComposerBlockRangePolicy.convertingToList(
+            blocks,
+            range: 0..<2,
+            ordered: false
+        )
+        XCTAssertEqual(listed[0], .listItem(ordered: false, text: "a"))
+        XCTAssertEqual(listed[1], .listItem(ordered: false, text: "b"))
+        XCTAssertEqual(listed[2], .paragraph("c"))
+        let toggled = ExperimentalComposerBlockRangePolicy.convertingToList(
+            listed,
+            range: 0..<2,
+            ordered: false
+        )
+        XCTAssertEqual(toggled[0], .paragraph("a"))
+        XCTAssertEqual(
+            ExperimentalComposerBlockRangePolicy.markdown(of: listed, range: 0..<2),
+            "- a\n- b"
+        )
+    }
+
+    func testPollPolicyPrefersFocusedLiteral() {
+        let poll = "[poll name=test]\n- a\n- b\n[/poll]"
+        XCTAssertTrue(
+            ExperimentalComposerPollPolicy.shouldReplaceFocusedBlock(
+                focusedRaw: poll,
+                selectedRaw: ""
+            )
+        )
+        XCTAssertFalse(
+            ExperimentalComposerPollPolicy.shouldReplaceFocusedBlock(
+                focusedRaw: "hello",
+                selectedRaw: "hello"
+            )
+        )
+    }
+
+    func testFormattingMarksHeadingAndPoll() {
+        let heading = ExperimentalComposerFormatting.marks(
+            block: .heading(2, "Title"),
+            selectedRaw: "",
+            isBold: false,
+            isItalic: false,
+            isStrike: false
+        )
+        XCTAssertEqual(heading.headingLevel, 2)
+        let poll = ExperimentalComposerFormatting.marks(
+            block: .literal("[poll name=x]\n- a\n[/poll]"),
+            selectedRaw: "",
+            isBold: true,
+            isItalic: false,
+            isStrike: false
+        )
+        XCTAssertTrue(poll.isPoll)
+        XCTAssertTrue(poll.isBold)
+        XCTAssertTrue(poll.isCode)
+    }
+
     func testParagraphAfterIslandDoesNotDuplicateTail() {
         let blocks: [ExperimentalComposerBlock] = [
             .quoteCard(

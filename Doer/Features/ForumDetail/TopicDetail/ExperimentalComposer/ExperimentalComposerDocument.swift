@@ -18,6 +18,49 @@ enum ExperimentalComposerBlock: Equatable {
         inner: String
     )
     case literal(String)
+
+    var innerMarkdown: String {
+        switch self {
+        case .paragraph(let text), .quote(let text), .literal(let text):
+            return text
+        case .heading(_, let text), .listItem(_, let text):
+            return text
+        case .code(_, let code):
+            return code
+        case .image(let alt, _, _):
+            return alt
+        case .quoteCard(_, _, _, _, _, let inner):
+            return inner
+        }
+    }
+
+    func replacingInner(_ text: String) -> ExperimentalComposerBlock {
+        switch self {
+        case .paragraph:
+            return .paragraph(text)
+        case .heading(let level, _):
+            return .heading(level, text)
+        case .quote:
+            return .quote(text)
+        case .listItem(let ordered, _):
+            return .listItem(ordered: ordered, text: text)
+        case .code(let language, _):
+            return .code(language: language, code: text)
+        case .image(_, let url, let title):
+            return .image(alt: text, url: url, title: title)
+        case .quoteCard(let username, let displayName, let postNumber, let topicId, let full, _):
+            return .quoteCard(
+                username: username,
+                displayName: displayName,
+                postNumber: postNumber,
+                topicId: topicId,
+                full: full,
+                inner: text
+            )
+        case .literal:
+            return .literal(text)
+        }
+    }
 }
 
 struct ExperimentalComposerDocument: Equatable {
@@ -570,5 +613,214 @@ enum ExperimentalComposerWrapPolicy {
             return (stripped, stripped, "")
         }
         return (start + core + end, core, start)
+    }
+}
+
+struct ExperimentalComposerSnapshot: Equatable {
+    var markdown: String
+    var focusedIndex: Int
+    var caret: Int
+}
+
+enum ExperimentalComposerHistory {
+    static let limit = 50
+
+    static func pushing(
+        _ snapshot: ExperimentalComposerSnapshot,
+        undo: [ExperimentalComposerSnapshot],
+        redo: [ExperimentalComposerSnapshot]
+    ) -> (undo: [ExperimentalComposerSnapshot], redo: [ExperimentalComposerSnapshot]) {
+        var nextUndo = undo
+        if nextUndo.last != snapshot {
+            nextUndo.append(snapshot)
+            if nextUndo.count > limit {
+                nextUndo.removeFirst(nextUndo.count - limit)
+            }
+        }
+        return (nextUndo, [])
+    }
+
+    static func undo(
+        current: ExperimentalComposerSnapshot,
+        undo: [ExperimentalComposerSnapshot],
+        redo: [ExperimentalComposerSnapshot]
+    ) -> (
+        current: ExperimentalComposerSnapshot,
+        undo: [ExperimentalComposerSnapshot],
+        redo: [ExperimentalComposerSnapshot]
+    )? {
+        guard let previous = undo.last else { return nil }
+        var nextUndo = undo
+        nextUndo.removeLast()
+        var nextRedo = redo
+        nextRedo.append(current)
+        return (previous, nextUndo, nextRedo)
+    }
+
+    static func redo(
+        current: ExperimentalComposerSnapshot,
+        undo: [ExperimentalComposerSnapshot],
+        redo: [ExperimentalComposerSnapshot]
+    ) -> (
+        current: ExperimentalComposerSnapshot,
+        undo: [ExperimentalComposerSnapshot],
+        redo: [ExperimentalComposerSnapshot]
+    )? {
+        guard let next = redo.last else { return nil }
+        var nextRedo = redo
+        nextRedo.removeLast()
+        var nextUndo = undo
+        nextUndo.append(current)
+        return (next, nextUndo, nextRedo)
+    }
+}
+
+struct ExperimentalComposerMarks: Equatable {
+    var headingLevel: Int?
+    var isQuote: Bool
+    var isBullet: Bool
+    var isNumbered: Bool
+    var isCode: Bool
+    var isBold: Bool
+    var isItalic: Bool
+    var isStrike: Bool
+    var isPoll: Bool
+    var isImage: Bool
+}
+
+enum ExperimentalComposerFormatting {
+    static func marks(
+        block: ExperimentalComposerBlock,
+        selectedRaw: String,
+        isBold: Bool,
+        isItalic: Bool,
+        isStrike: Bool
+    ) -> ExperimentalComposerMarks {
+        var heading: Int?
+        var quote = false
+        var bullet = false
+        var numbered = false
+        var code = false
+        var poll = false
+        var image = false
+        switch block {
+        case .heading(let level, _):
+            heading = level
+        case .quote:
+            quote = true
+        case .listItem(let ordered, _):
+            if ordered { numbered = true } else { bullet = true }
+        case .code:
+            code = true
+        case .literal(let raw):
+            poll = raw.localizedCaseInsensitiveContains("[poll")
+            code = true
+        case .image:
+            image = true
+        default:
+            break
+        }
+        _ = selectedRaw
+        return ExperimentalComposerMarks(
+            headingLevel: heading,
+            isQuote: quote,
+            isBullet: bullet,
+            isNumbered: numbered,
+            isCode: code,
+            isBold: isBold,
+            isItalic: isItalic,
+            isStrike: isStrike,
+            isPoll: poll,
+            isImage: image
+        )
+    }
+}
+
+enum ExperimentalComposerBlockRangePolicy {
+    static func clamped(_ range: Range<Int>, count: Int) -> Range<Int>? {
+        guard count > 0 else { return nil }
+        let lower = min(max(range.lowerBound, 0), count - 1)
+        let upper = min(max(range.upperBound, lower + 1), count)
+        guard lower < upper else { return nil }
+        return lower..<upper
+    }
+
+    static func markdown(of blocks: [ExperimentalComposerBlock], range: Range<Int>) -> String {
+        guard let clamped = clamped(range, count: blocks.count) else { return "" }
+        return ExperimentalComposerDocument(blocks: Array(blocks[clamped])).markdown
+    }
+
+    static func replacing(
+        _ blocks: [ExperimentalComposerBlock],
+        range: Range<Int>,
+        with inserted: [ExperimentalComposerBlock]
+    ) -> [ExperimentalComposerBlock] {
+        guard let clamped = clamped(range, count: blocks.count) else { return blocks }
+        var next = blocks
+        next.replaceSubrange(clamped, with: inserted.isEmpty ? [.paragraph("")] : inserted)
+        return next
+    }
+
+    static func convertingToList(
+        _ blocks: [ExperimentalComposerBlock],
+        range: Range<Int>,
+        ordered: Bool
+    ) -> [ExperimentalComposerBlock] {
+        guard let clamped = clamped(range, count: blocks.count) else { return blocks }
+        var next = blocks
+        let allMatch = clamped.allSatisfy { index in
+            if case .listItem(let existing, _) = next[index] {
+                return existing == ordered
+            }
+            return false
+        }
+        for index in clamped {
+            if ExperimentalComposerEditingPolicy.isAtomicIsland(next[index]) { continue }
+            if allMatch {
+                next[index] = .paragraph(next[index].innerMarkdown)
+            } else {
+                next[index] = .listItem(ordered: ordered, text: next[index].innerMarkdown)
+            }
+        }
+        return next
+    }
+}
+
+enum ExperimentalComposerQuotePolicy {
+    static func cycling(_ block: ExperimentalComposerBlock) -> ExperimentalComposerBlock {
+        switch block {
+        case .quote(let text):
+            if let stripped = strippingOneQuoteLevel(text), stripped != text {
+                return .quote(stripped)
+            }
+            return .paragraph(text)
+        default:
+            return .quote(block.innerMarkdown)
+        }
+    }
+
+    static func strippingOneQuoteLevel(_ text: String) -> String? {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard lines.contains(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix(">") }) else {
+            return nil
+        }
+        return lines.map { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix(">") else { return line }
+            var content = String(trimmed.dropFirst())
+            if content.hasPrefix(" ") {
+                content = String(content.dropFirst())
+            }
+            return content
+        }.joined(separator: "\n")
+    }
+}
+
+enum ExperimentalComposerPollPolicy {
+    static func shouldReplaceFocusedBlock(focusedRaw: String?, selectedRaw: String) -> Bool {
+        if let focusedRaw, ComposerPollSpec.parse(from: focusedRaw) != nil {
+            return true
+        }
+        return ComposerPollSpec.parse(from: selectedRaw) != nil
     }
 }
