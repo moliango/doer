@@ -171,14 +171,11 @@ extension HomeViewController: UITableViewDelegate {
         openTopic(topicId)
     }
 
-    func tableView(
-        _ tableView: UITableView,
-        contextMenuConfigurationForRowAt indexPath: IndexPath,
-        point: CGPoint
-    ) -> UIContextMenuConfiguration? {
-        guard let itemId = dataSource.itemIdentifier(for: indexPath),
+    func presentTopicPreview(at point: CGPoint) {
+        guard let indexPath = tableView.indexPathForRow(at: point),
+              let itemId = dataSource.itemIdentifier(for: indexPath),
               let resolved = resolveTopicPreview(at: indexPath, itemId: itemId, point: point)
-        else { return nil }
+        else { return }
         let topic = resolved.topic
         let topicId = topic.id
         let category = viewModel.category(for: topic)
@@ -188,65 +185,45 @@ extension HomeViewController: UITableViewDelegate {
             baseURL: api.baseURL,
             username: username
         )
-        let open = UIAction(
-            title: String(localized: "topic.preview.open", defaultValue: "打开话题"),
-            image: UIImage(systemName: "arrow.up.right.square")
-        ) { [weak self] _ in
-            self?.openTopic(topicId)
-        }
-        let bookmark = UIAction(
-            title: String(localized: "topic.bookmark.add", defaultValue: "书签"),
-            image: UIImage(systemName: "bookmark")
-        ) { [weak self] _ in
-            self?.bookmarkTopicFromList(topicId: topicId, title: topic.title)
-        }
-        let later = UIAction(
-            title: inQueue
-                ? String(localized: "topic.read_later.remove", defaultValue: "移出稍后")
-                : String(localized: "topic.read_later.add", defaultValue: "稍后阅读"),
-            image: UIImage(systemName: "clock")
-        ) { [weak self] _ in
-            TopicReadLaterStore.shared.toggle(
-                topicId: topicId,
-                baseURL: self?.api.baseURL ?? "",
-                username: username,
-                title: topic.title,
-                lastReadPostNumber: topic.lastReadPostNumber
-            )
-        }
-        return TopicPreviewMenu.configuration(
+        let previewActions = [
+            TopicPreviewAction(
+                title: String(localized: "topic.preview.open", defaultValue: "打开话题"),
+                image: UIImage(systemName: "arrow.up.right.square")
+            ) { [weak self] in
+                self?.openTopic(topicId)
+            },
+            TopicPreviewAction(
+                title: String(localized: "topic.bookmark.add", defaultValue: "书签"),
+                image: UIImage(systemName: "bookmark")
+            ) { [weak self] in
+                self?.bookmarkTopicFromList(topicId: topicId, title: topic.title)
+            },
+        ]
+        let laterTitle = inQueue
+            ? String(localized: "topic.read_later.remove", defaultValue: "移出稍后")
+            : String(localized: "topic.read_later.add", defaultValue: "稍后阅读")
+        let allActions = previewActions + [
+            TopicPreviewAction(
+                title: laterTitle,
+                image: UIImage(systemName: "clock")
+            ) { [weak self] in
+                TopicReadLaterStore.shared.toggle(
+                    topicId: topicId,
+                    baseURL: self?.api.baseURL ?? "",
+                    username: username,
+                    title: topic.title,
+                    lastReadPostNumber: topic.lastReadPostNumber
+                )
+            },
+        ]
+        TopicPreviewMenu.present(
             topic: topic,
             api: api,
             categoryName: viewModel.categoryDisplayName(for: category),
-            actions: [open, bookmark, later],
-            previewTargetView: resolved.targetView
+            actions: allActions,
+            sourceView: resolved.targetView,
+            from: self
         )
-    }
-
-    func tableView(
-        _ tableView: UITableView,
-        previewForHighlightingContextMenuWithConfiguration configuration: UIContextMenuConfiguration
-    ) -> UITargetedPreview? {
-        TopicPreviewMenu.targetedPreview(for: configuration)
-    }
-
-    func tableView(
-        _ tableView: UITableView,
-        previewForDismissingContextMenuWithConfiguration configuration: UIContextMenuConfiguration
-    ) -> UITargetedPreview? {
-        TopicPreviewMenu.targetedPreview(for: configuration)
-    }
-
-    func tableView(
-        _ tableView: UITableView,
-        willPerformPreviewActionForMenuWith configuration: UIContextMenuConfiguration,
-        animator: UIContextMenuInteractionCommitAnimating
-    ) {
-        TopicPreviewMenu.applyCommitPopIfAllowed(to: animator)
-        guard let number = configuration.identifier as? NSNumber else { return }
-        animator.addCompletion { [weak self] in
-            self?.openTopic(number.intValue)
-        }
     }
 
     private func resolveTopicPreview(

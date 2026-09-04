@@ -29361,6 +29361,7 @@
       }
     },
     "topic.preview.stats" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {

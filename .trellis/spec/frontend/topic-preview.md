@@ -1,13 +1,13 @@
 # Topic Preview Morph
 
-> Long-press topic cards morph into a preview (`08-28-topic-preview-morph`, `08-28-search-preview-morph`).
-> Learned 2026-08-28.
+> Long-press topic cards morph into a preview (`08-28-topic-preview-morph`, `08-28-search-preview-morph`, `09-03-topic-preview-detail-window`).
+> Learned 2026-08-28; 2026-09-04: preview is an expanded reading card, not a stuffed TopicDetail.
 
-## Scenario: UITargetedPreview from list / search cards
+## Scenario: long-press opens an expanded reading card
 
 ### 1. Scope / Trigger
 
-- Trigger: adding a list cell that should long-press-preview a topic, or changing how Home opens a topic from context menu.
+- Trigger: adding a list cell that should long-press-preview a topic, or changing how Home opens a topic from the preview.
 - Surfaces: Home, 稍后, 历史, Xiaohongshu two-column, Search topic results.
 
 ### 2. Signatures
@@ -18,11 +18,14 @@ protocol TopicPreviewTargetProviding: AnyObject {
 }
 
 enum TopicPreviewMenu {
-    static func configuration(
-        for topic: /* recommendation */,
+    static func present(
+        topic: DiscourseTopicList.Topic,
+        api: DiscourseAPI,
+        categoryName: String?,
+        actions: [TopicPreviewAction],
         sourceView: UIView?,
-        // existing bookmark / later actions…
-    ) -> UIContextMenuConfiguration
+        from presenter: UIViewController
+    )
 }
 ```
 
@@ -30,43 +33,44 @@ enum TopicPreviewMenu {
 
 | Event | Behavior |
 |-------|----------|
-| Cell conforms to `TopicPreviewTargetProviding` | Preview uses `UITargetedPreview` of that view (card, not the full cell chrome) |
-| No protocol / nil view | Preview appears from the default center; still opens |
-| Commit `.pop` | Same topic the preview showed; Home split pane updates instead of a second push when `usesSplitDetail` |
-| Search | `DiscourseSearchResult.SearchPost.makePreviewTopic`; commit calls `openSearchPost` |
-| Xiaohongshu staggered | Same menu + morph as single-column Home cells |
+| Cell conforms to `TopicPreviewTargetProviding` | Morph starts from that view (card, not the full cell chrome) |
+| Preview content | Title + meta (avatar / name / category / time) + native first-post blocks via `NativeContentRenderer`. Not `TopicDetailFactory` |
+| While loading | List excerpt as placeholder; spinner on the meta row |
+| Image gallery | Stays on the preview window |
+| Avatar, other topic, category, tag | Dismiss preview, push on the presenting navigation stack |
+| Reply / poll / quote-reply | Dismiss and run the first action (open topic) |
+| First action in `actions` | 「打开」filled accent capsule |
+| Remaining actions | Circular icon chips using `topicCountBackgroundColor` + `accentColor` |
 
 ### 4. Validation & Error Matrix
 
 | Condition | Result |
 |-----------|--------|
-| Reduce Motion | System preview still works; do not invent a custom animation |
+| Reduce Motion | Morph duration collapses to ~0.01s |
 | Search user/category rows | No topic preview menu |
-| Missing excerpt | Preview still shows title |
+| Missing excerpt and failed load | Empty-state copy |
+| Chat theme | Still a reading card, not WeChat/Telegram bubbles |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: long-press Home card → morph → lift finger into topic (or split detail)
+- Good: long-press Home card → morph into a reading card of the OP → tap dim to close
 - Base: later / history reuse `TopicPreviewMenu`
-- Bad: wrapping the whole `UITableViewCell` as the targeted preview (jumps from full-width chrome)
+- Bad: stuffing full TopicDetail (progress bar, chat input, thread) into the floating window
 
 ### 6. Tests Required
 
-- `DoerTests/TopicPreviewMorphTests.swift` for identifier / target helpers
-- Compile-only for search cell conformance
+- `DoerTests/TopicPreviewMorphTests.swift` for identifier helpers, excerpt placeholder, link policy
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```swift
-// Search results have no context menu, or use a different preview VC
+addChild(TopicDetailFactory.make(api: api, topicId: topic.id))
 ```
 
 #### Correct
 
 ```swift
-extension SearchResultCell: TopicPreviewTargetProviding {
-    var topicPreviewTargetView: UIView { cardView }
-}
+let views = NativeContentRenderer.renderBlocks(annotatedBlocks, config: config, delegate: self)
 ```

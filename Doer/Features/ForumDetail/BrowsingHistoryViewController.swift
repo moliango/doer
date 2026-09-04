@@ -161,6 +161,7 @@ final class BrowsingHistoryViewController: ObservableViewController {
     private let api: DiscourseAPI
     private let viewModel: BrowsingHistoryViewModel
     private weak var authGate: AuthGating?
+    private var topicPreviewLongPressHandler: TopicPreviewLongPressHandler?
 
     private lazy var tableView: UITableView = {
         let table = UITableView(frame: .zero, style: .plain)
@@ -298,6 +299,9 @@ final class BrowsingHistoryViewController: ObservableViewController {
         tableView.refreshControl = refreshControl
 
         view.addSubview(tableView)
+        topicPreviewLongPressHandler = TopicPreviewMenu.installLongPress(on: tableView) { [weak self] point in
+            self?.presentTopicPreview(at: point)
+        }
         view.addSubview(activityIndicator)
         view.addSubview(stateStackView)
 
@@ -478,58 +482,29 @@ extension BrowsingHistoryViewController: UITableViewDelegate {
         navigationController?.pushViewController(detailVC, animated: true)
     }
 
-    func tableView(
-        _ tableView: UITableView,
-        contextMenuConfigurationForRowAt indexPath: IndexPath,
-        point: CGPoint
-    ) -> UIContextMenuConfiguration? {
-        guard let topicId = dataSource.itemIdentifier(for: indexPath),
+    private func presentTopicPreview(at point: CGPoint) {
+        guard let indexPath = tableView.indexPathForRow(at: point),
+              let topicId = dataSource.itemIdentifier(for: indexPath),
               let topic = viewModel.topics.first(where: { $0.id == topicId })
-        else { return nil }
-        let open = UIAction(
-            title: String(localized: "topic.preview.open", defaultValue: "打开话题"),
-            image: UIImage(systemName: "arrow.up.right.square")
-        ) { [weak self] _ in
-            guard let self else { return }
-            let detailVC = TopicDetailFactory.make(api: self.api, topicId: topicId)
-            self.navigationController?.pushViewController(detailVC, animated: true)
-        }
+        else { return }
         let previewTarget = tableView.cellForRow(at: indexPath).map { TopicPreviewMenu.targetView(in: $0) }
-        return TopicPreviewMenu.configuration(
+        TopicPreviewMenu.present(
             topic: topic,
             api: api,
             categoryName: viewModel.categoryDisplayName(for: viewModel.category(for: topic)),
-            actions: [open],
-            previewTargetView: previewTarget
+            actions: [
+                TopicPreviewAction(
+                    title: String(localized: "topic.preview.open", defaultValue: "打开话题"),
+                    image: UIImage(systemName: "arrow.up.right.square")
+                ) { [weak self] in
+                    guard let self else { return }
+                    let detailVC = TopicDetailFactory.make(api: self.api, topicId: topicId)
+                    self.navigationController?.pushViewController(detailVC, animated: true)
+                },
+            ],
+            sourceView: previewTarget,
+            from: self
         )
-    }
-
-    func tableView(
-        _ tableView: UITableView,
-        previewForHighlightingContextMenuWithConfiguration configuration: UIContextMenuConfiguration
-    ) -> UITargetedPreview? {
-        TopicPreviewMenu.targetedPreview(for: configuration)
-    }
-
-    func tableView(
-        _ tableView: UITableView,
-        previewForDismissingContextMenuWithConfiguration configuration: UIContextMenuConfiguration
-    ) -> UITargetedPreview? {
-        TopicPreviewMenu.targetedPreview(for: configuration)
-    }
-
-    func tableView(
-        _ tableView: UITableView,
-        willPerformPreviewActionForMenuWith configuration: UIContextMenuConfiguration,
-        animator: UIContextMenuInteractionCommitAnimating
-    ) {
-        TopicPreviewMenu.applyCommitPopIfAllowed(to: animator)
-        guard let number = configuration.identifier as? NSNumber else { return }
-        animator.addCompletion { [weak self] in
-            guard let self else { return }
-            let detailVC = TopicDetailFactory.make(api: self.api, topicId: number.intValue)
-            self.navigationController?.pushViewController(detailVC, animated: true)
-        }
     }
 
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
@@ -541,4 +516,3 @@ extension BrowsingHistoryViewController: UITableViewDelegate {
         }
     }
 }
-

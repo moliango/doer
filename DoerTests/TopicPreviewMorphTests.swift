@@ -2,6 +2,62 @@ import XCTest
 @testable import Doer
 
 final class TopicPreviewMorphTests: XCTestCase {
+    @MainActor
+    func testTopicPreviewLaysOutInitialContent() {
+        let topic = DiscourseTopicList.Topic.makeRecommendation(
+            id: 10,
+            title: "Preview title",
+            fancyTitle: nil,
+            postsCount: 3,
+            replyCount: 2,
+            categoryId: nil,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            lastPostedAt: nil,
+            tags: [],
+            excerpt: "Initial preview content"
+        )
+        let controller = TopicPreviewViewController(
+            api: DiscourseAPI(baseURL: "https://preview.invalid"),
+            topic: topic,
+            categoryName: nil,
+            firstPostLoader: { nil }
+        )
+
+        controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        controller.view.layoutIfNeeded()
+
+        let labels = allLabels(in: controller.view)
+        XCTAssertTrue(labels.contains(where: { $0.text == "Initial preview content" }))
+        XCTAssertTrue(controller.children.isEmpty)
+        XCTAssertGreaterThan(controller.view.bounds.height, 0)
+    }
+
+    @MainActor
+    func testPreviewLinkPolicyKeepsSameTopicInPlace() {
+        XCTAssertEqual(
+            TopicPreviewLinkPolicy.behavior(
+                destination: .topic(id: 10, postNumber: 4),
+                currentTopicId: 10
+            ),
+            .stay
+        )
+        XCTAssertEqual(
+            TopicPreviewLinkPolicy.behavior(
+                destination: .topic(id: 11, postNumber: 1),
+                currentTopicId: 10
+            ),
+            .navigateOut
+        )
+        XCTAssertEqual(
+            TopicPreviewLinkPolicy.behavior(
+                destination: .user(username: "alice"),
+                currentTopicId: 10
+            ),
+            .navigateOut
+        )
+    }
+
     func testXiaohongshuRowIdentifierMapsLeftAndRightTopics() {
         let ids = [10, 20, 30, 40, 50]
         let row0 = XiaohongshuHomeTopicListLayout.rowIdentifier(for: 0)
@@ -83,5 +139,16 @@ final class TopicPreviewMorphTests: XCTestCase {
             XiaohongshuPreviewSelection.unpinnedTopicIndex(rowIndex: 3, side: .right),
             7
         )
+    }
+
+    private func allLabels(in view: UIView) -> [UILabel] {
+        var labels: [UILabel] = []
+        for subview in view.subviews {
+            if let label = subview as? UILabel {
+                labels.append(label)
+            }
+            labels.append(contentsOf: allLabels(in: subview))
+        }
+        return labels
     }
 }

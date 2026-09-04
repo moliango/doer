@@ -11,6 +11,7 @@ final class ReadLaterViewController: ObservableViewController {
     private var errorMessage: String?
     private var observer: NSObjectProtocol?
     private var cloudflareObserver: NSObjectProtocol?
+    private var topicPreviewLongPressHandler: TopicPreviewLongPressHandler?
 
     private lazy var tableView: UITableView = {
         let table = UITableView(frame: .zero, style: .plain)
@@ -101,6 +102,9 @@ final class ReadLaterViewController: ObservableViewController {
         applyTheme()
 
         view.addSubview(tableView)
+        topicPreviewLongPressHandler = TopicPreviewMenu.installLongPress(on: tableView) { [weak self] point in
+            self?.presentTopicPreview(at: point)
+        }
         view.addSubview(activityIndicator)
         view.addSubview(stateStackView)
         NSLayoutConstraint.activate([
@@ -359,59 +363,33 @@ extension ReadLaterViewController: UITableViewDataSource, UITableViewDelegate {
         )
     }
 
-    func tableView(
-        _ tableView: UITableView,
-        contextMenuConfigurationForRowAt indexPath: IndexPath,
-        point: CGPoint
-    ) -> UIContextMenuConfiguration? {
+    private func presentTopicPreview(at point: CGPoint) {
+        guard let indexPath = tableView.indexPathForRow(at: point),
+              entries.indices.contains(indexPath.row)
+        else { return }
+
         let entry = entries[indexPath.row]
         let topic = topicsById[entry.topicId] ?? DiscourseTopicList.Topic.readLaterPlaceholder(
             id: entry.topicId,
             title: entry.title,
             lastReadPostNumber: entry.lastReadPostNumber
         )
-        let open = UIAction(
-            title: String(localized: "topic.preview.open", defaultValue: "打开话题"),
-            image: UIImage(systemName: "arrow.up.right.square")
-        ) { [weak self] _ in
-            self?.openReadLaterEntry(at: indexPath)
-        }
         let previewTarget = tableView.cellForRow(at: indexPath).map { TopicPreviewMenu.targetView(in: $0) }
-        return TopicPreviewMenu.configuration(
+        TopicPreviewMenu.present(
             topic: topic,
             api: api,
             categoryName: topic.categoryId.flatMap { categoriesById[$0]?.name },
-            actions: [open],
-            previewTargetView: previewTarget
+            actions: [
+                TopicPreviewAction(
+                    title: String(localized: "topic.preview.open", defaultValue: "打开话题"),
+                    image: UIImage(systemName: "arrow.up.right.square")
+                ) { [weak self] in
+                    self?.openReadLaterEntry(at: indexPath)
+                },
+            ],
+            sourceView: previewTarget,
+            from: self
         )
-    }
-
-    func tableView(
-        _ tableView: UITableView,
-        previewForHighlightingContextMenuWithConfiguration configuration: UIContextMenuConfiguration
-    ) -> UITargetedPreview? {
-        TopicPreviewMenu.targetedPreview(for: configuration)
-    }
-
-    func tableView(
-        _ tableView: UITableView,
-        previewForDismissingContextMenuWithConfiguration configuration: UIContextMenuConfiguration
-    ) -> UITargetedPreview? {
-        TopicPreviewMenu.targetedPreview(for: configuration)
-    }
-
-    func tableView(
-        _ tableView: UITableView,
-        willPerformPreviewActionForMenuWith configuration: UIContextMenuConfiguration,
-        animator: UIContextMenuInteractionCommitAnimating
-    ) {
-        TopicPreviewMenu.applyCommitPopIfAllowed(to: animator)
-        guard let number = configuration.identifier as? NSNumber,
-              let index = entries.firstIndex(where: { $0.topicId == number.intValue })
-        else { return }
-        animator.addCompletion { [weak self] in
-            self?.openReadLaterEntry(at: IndexPath(row: index, section: 0))
-        }
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {

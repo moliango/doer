@@ -27,7 +27,7 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [Composer](./composer.md) | Image paste upload, Pangu, poll builder, hold-to-talk, PM preview, experimental reply WYSIWYG | Filled |
 | [Topic Find Filter](./topic-find-filter.md) | In-topic find bar, `filterUsername` / 只看此人 | Filled |
 | [Cooked Blocks](./cooked-blocks.md) | `ContentBlock.policy`, voice wrap, exhaustive switch | Filled |
-| [Topic Preview](./topic-preview.md) | Long-press morph, search + Home targets | Filled |
+| [Topic Preview](./topic-preview.md) | Long-press morph into a native first-post reading card | Filled |
 | [GitHub Proxy](./github-proxy.md) | Update check mirror prefix | Filled |
 
 ---

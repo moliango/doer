@@ -264,6 +264,7 @@ final class HomeViewController: ObservableViewController {
     }()
 
     var miniProgramDrawer: MiniProgramDrawerViewController?
+    var topicPreviewLongPressHandler: TopicPreviewLongPressHandler?
 
     let categoryScrollView: UIScrollView = {
         let scroll = UIScrollView()
@@ -726,6 +727,9 @@ final class HomeViewController: ObservableViewController {
         incomingTopicsHeaderView.addSubview(incomingTopicsButton)
         incomingTopicsInlineHeaderView.addSubview(incomingTopicsInlineButton)
         view.addSubview(tableView)
+        topicPreviewLongPressHandler = TopicPreviewMenu.installLongPress(on: tableView) { [weak self] point in
+            self?.presentTopicPreview(at: point)
+        }
         view.addSubview(loadingSkeletonView)
         view.addSubview(emptyStateView)
         view.addSubview(headerContainer)

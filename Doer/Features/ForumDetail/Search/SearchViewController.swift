@@ -10,6 +10,7 @@ final class SearchViewController: ObservableViewController, UITextFieldDelegate 
     private var searchTask: Task<Void, Never>?
     private var selectedScope: SearchResultScope = .topics
     private var scopeButtons: [SearchResultScope: UIButton] = [:]
+    private var topicPreviewLongPressHandler: TopicPreviewLongPressHandler?
 
     private var currentScopeIsEmpty: Bool {
         switch selectedScope {
@@ -344,6 +345,9 @@ final class SearchViewController: ObservableViewController, UITextFieldDelegate 
         updateFilterButtons()
 
         view.addSubview(tableView)
+        topicPreviewLongPressHandler = TopicPreviewMenu.installLongPress(on: tableView) { [weak self] point in
+            self?.presentTopicPreview(at: point)
+        }
         view.addSubview(activityIndicator)
         view.addSubview(emptyLabel)
         view.addSubview(listStateView)
@@ -1178,60 +1182,33 @@ extension SearchViewController: UITableViewDelegate {
         }
     }
 
-    func tableView(
-        _ tableView: UITableView,
-        contextMenuConfigurationForRowAt indexPath: IndexPath,
-        point: CGPoint
-    ) -> UIContextMenuConfiguration? {
+    private func presentTopicPreview(at point: CGPoint) {
         guard selectedScope == .topics,
+              let indexPath = tableView.indexPathForRow(at: point),
               let itemId = dataSource.itemIdentifier(for: indexPath),
               itemId.hasPrefix("post:"),
               let postId = Int(itemId.dropFirst(5)),
               let post = viewModel.searchResults.first(where: { $0.id == postId })
-        else { return nil }
+        else { return }
         let topic = viewModel.topic(for: post.topicId)
         let previewTopic = post.makePreviewTopic(topic: topic, baseURL: api.baseURL)
         let category = topic?.categoryId.flatMap { viewModel.categoriesById[$0] }
         let cell = tableView.cellForRow(at: indexPath)
-        let open = UIAction(
-            title: String(localized: "topic.preview.open", defaultValue: "打开"),
-            image: UIImage(systemName: "arrow.up.right")
-        ) { [weak self] _ in
-            self?.openSearchPost(post)
-        }
-        return TopicPreviewMenu.configuration(
+        TopicPreviewMenu.present(
             topic: previewTopic,
             api: api,
             categoryName: viewModel.categoryDisplayName(for: category),
-            actions: [open],
-            previewTargetView: cell.map { TopicPreviewMenu.targetView(in: $0) }
+            actions: [
+                TopicPreviewAction(
+                    title: String(localized: "topic.preview.open", defaultValue: "打开"),
+                    image: UIImage(systemName: "arrow.up.right")
+                ) { [weak self] in
+                    self?.openSearchPost(post)
+                },
+            ],
+            sourceView: cell.map { TopicPreviewMenu.targetView(in: $0) },
+            from: self
         )
-    }
-
-    func tableView(
-        _ tableView: UITableView,
-        previewForHighlightingContextMenuWithConfiguration configuration: UIContextMenuConfiguration
-    ) -> UITargetedPreview? {
-        TopicPreviewMenu.targetedPreview(for: configuration)
-    }
-
-    func tableView(
-        _ tableView: UITableView,
-        previewForDismissingContextMenuWithConfiguration configuration: UIContextMenuConfiguration
-    ) -> UITargetedPreview? {
-        TopicPreviewMenu.targetedPreview(for: configuration)
-    }
-
-    func tableView(
-        _ tableView: UITableView,
-        willPerformPreviewActionForMenuWith configuration: UIContextMenuConfiguration,
-        animator: UIContextMenuInteractionCommitAnimating
-    ) {
-        TopicPreviewMenu.applyCommitPopIfAllowed(to: animator)
-        guard let number = configuration.identifier as? NSNumber else { return }
-        animator.addCompletion { [weak self] in
-            self?.openSearchTopic(id: number.intValue)
-        }
     }
 
     private func openSearchPost(_ post: DiscourseSearchResult.SearchPost) {
@@ -1242,17 +1219,6 @@ extension SearchViewController: UITableViewDelegate {
             initialPostId: post.id
         )
         navigationController?.pushViewController(detailVC, animated: true)
-    }
-
-    private func openSearchTopic(id topicId: Int) {
-        if let post = viewModel.searchResults.first(where: { $0.topicId == topicId }) {
-            openSearchPost(post)
-            return
-        }
-        navigationController?.pushViewController(
-            TopicDetailFactory.make(api: api, topicId: topicId),
-            animated: true
-        )
     }
 
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
