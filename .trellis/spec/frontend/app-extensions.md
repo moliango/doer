@@ -24,6 +24,9 @@
 ### 3. Contracts
 - Shared source compiled into **both** `Doer` and `DoerWidget`:
   `Shared/TrustLevelWidgetSnapshot.swift` (listed in `Project.swift` `sources`).
+- Widget chrome (penguin mascot, card gradient) lives in
+  `Extensions/DoerWidget/Assets.xcassets`. Do not load App `Assets.xcassets`
+  from the widget target.
 - Codable snapshot only. Widget UI reads `TrustLevelWidgetSnapshot`; it must
   not parse Connect HTML.
 - Entitlements: `com.apple.security.application-groups` = `[group.com.naine.doer]`

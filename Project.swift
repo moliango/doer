@@ -137,6 +137,10 @@ let project = Project(
                 "Extensions/DoerWidget/**",
                 "Shared/TrustLevelWidgetSnapshot.swift",
             ],
+            resources: [
+                "Extensions/DoerWidget/Assets.xcassets",
+                "Doer/Localizable.xcstrings",
+            ],
             entitlements: .file(path: "Extensions/DoerWidget/DoerWidget.entitlements"),
             dependencies: [],
             settings: .settings(

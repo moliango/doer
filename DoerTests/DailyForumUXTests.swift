@@ -130,6 +130,33 @@ final class DailyForumUXTests: XCTestCase {
         XCTAssertEqual(loaded?.trustLevel, 2)
         XCTAssertEqual(loaded?.headlineItem?.label, "已读帖子")
         XCTAssertEqual(loaded?.headlineItem?.remaining, 15000)
+        XCTAssertEqual(loaded?.levelBadgeText, "TL2")
+        XCTAssertEqual(loaded?.secondaryItems.map(\.label), ["访问天数"])
+        XCTAssertEqual(loaded?.headlineItem?.fractionComplete ?? 0, 0.25, accuracy: 0.0001)
+        XCTAssertEqual(
+            TrustLevelWidgetItem.formattedCount(5000).filter(\.isNumber),
+            "5000"
+        )
+        XCTAssertEqual(
+            TrustLevelWidgetItem(
+                label: "被禁言",
+                current: 2,
+                target: 5,
+                isMet: false,
+                isReverse: true
+            ).fractionComplete,
+            0.6,
+            accuracy: 0.0001
+        )
+        let stamped = TrustLevelWidgetSnapshot(
+            title: "信任等级",
+            badgeText: "未达标",
+            subtitle: "",
+            items: [],
+            updatedAt: Date(timeIntervalSince1970: 1_757_000_000),
+            trustLevel: 2
+        )
+        XCTAssertFalse(stamped.formattedUpdatedAt.isEmpty)
     }
 
     func testBoostInputCountsEachShortcodeAsOneCharacter() {

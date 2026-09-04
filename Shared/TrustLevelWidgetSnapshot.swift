@@ -18,6 +18,27 @@ struct TrustLevelWidgetItem: Codable, Equatable {
         if isReverse { return max(current - target, 0) }
         return max(target - current, 0)
     }
+
+    var fractionComplete: Double {
+        if isMet { return 1 }
+        if isReverse {
+            guard target > 0 else { return current <= 0 ? 1 : 0 }
+            return min(max(1 - Double(current) / Double(target), 0), 1)
+        }
+        guard target > 0 else { return 0 }
+        return min(max(Double(current) / Double(target), 0), 1)
+    }
+
+    var formattedCurrent: String { Self.formattedCount(current) }
+    var formattedTarget: String { Self.formattedCount(target) }
+    var formattedRemaining: String { Self.formattedCount(remaining) }
+
+    static func formattedCount(_ value: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.maximumFractionDigits = 0
+        return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
+    }
 }
 
 struct TrustLevelWidgetSnapshot: Codable, Equatable {
@@ -32,6 +53,23 @@ struct TrustLevelWidgetSnapshot: Codable, Equatable {
         items.first { $0.label.contains("帖") || $0.label.lowercased().contains("post") || $0.label.contains("读") }
             ?? items.first { !$0.isMet }
             ?? items.first
+    }
+
+    var levelBadgeText: String {
+        if let trustLevel { return "TL\(trustLevel)" }
+        return badgeText
+    }
+
+    var secondaryItems: [TrustLevelWidgetItem] {
+        guard let headline = headlineItem else { return Array(items.prefix(3)) }
+        return items.filter { $0.label != headline.label }
+    }
+
+    var formattedUpdatedAt: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale.current
+        formatter.dateFormat = "MM-dd HH:mm"
+        return formatter.string(from: updatedAt)
     }
 }
 
