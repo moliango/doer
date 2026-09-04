@@ -127,6 +127,8 @@ final class BookmarksViewController: ObservableViewController {
 
     private let emptyFooter = UIView(frame: CGRect(x: 0, y: 0, width: 0, height: CGFloat.leastNormalMagnitude))
     private var loadGeneration = 0
+    private var hasLoadedOnce = false
+    private var lastFetchAt: Date?
 
     init(api: DiscourseAPI, username: String, authGate: AuthGating? = nil) {
         self.api = api
@@ -185,8 +187,12 @@ final class BookmarksViewController: ObservableViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        guard BookmarkSessionUsernamePolicy.shouldFetchOnAppear(
+            hasLoadedOnce: hasLoadedOnce,
+            lastFetch: lastFetchAt
+        ) else { return }
         Task {
-            await loadBookmarks()
+            await loadBookmarks(force: false)
         }
     }
 
@@ -282,55 +288,69 @@ final class BookmarksViewController: ObservableViewController {
         retryButton.isHidden = !showRetry
     }
 
-    private func loadBookmarks() async {
+    private func loadBookmarks(force: Bool) async {
         loadGeneration += 1
         let generation = loadGeneration
 
         if let authGate, authGate.isAuthenticated() {
-            viewModel.markLoadingIfEmpty()
-            let username = await waitForSessionUsername(authGate)
-            guard generation == loadGeneration else { return }
-            viewModel.updateUsername(username)
+            if let username = BookmarkSessionUsernamePolicy.readyUsername(
+                current: authGate.currentUsername(),
+                stored: viewModel.storedUsername()
+            ) {
+                viewModel.updateUsername(username)
+            } else {
+                viewModel.markLoadingIfEmpty()
+                let username = await waitForSessionUsername(authGate)
+                guard generation == loadGeneration else { return }
+                viewModel.updateUsername(username)
+            }
         } else if authGate != nil {
             viewModel.updateUsername(nil)
         }
 
         guard generation == loadGeneration else { return }
-        await viewModel.loadBookmarks()
+        await viewModel.loadBookmarks(showLoading: force || viewModel.bookmarks.isEmpty)
+        guard generation == loadGeneration else { return }
+        hasLoadedOnce = true
+        lastFetchAt = Date()
     }
 
     /// Cookie login returns as soon as `_t` exists; username lands later via
-    /// `/session/current`. Fetching bookmarks before that hits an empty list.
+    /// `/session/current`. Only refresh when we do not already know the user.
     private func waitForSessionUsername(_ authGate: AuthGating) async -> String? {
-        func currentUsername() -> String {
-            authGate.currentUsername()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if let ready = BookmarkSessionUsernamePolicy.readyUsername(
+            current: authGate.currentUsername(),
+            stored: viewModel.storedUsername()
+        ) {
+            return ready
         }
-        for attempt in 0..<5 {
-            let didRefresh = await authGate.refreshSessionUser()
-            let username = currentUsername()
-            if !username.isEmpty {
-                return username
-            }
-            if !didRefresh, !authGate.isAuthenticated() {
-                return nil
-            }
-            if attempt < 4 {
-                try? await Task.sleep(nanoseconds: 400_000_000)
-            }
+        let didRefresh = await authGate.refreshSessionUser()
+        if let ready = BookmarkSessionUsernamePolicy.readyUsername(
+            current: authGate.currentUsername(),
+            stored: viewModel.storedUsername()
+        ) {
+            return ready
         }
-        let username = currentUsername()
-        return username.isEmpty ? nil : username
+        if !didRefresh, !authGate.isAuthenticated() {
+            return nil
+        }
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        _ = await authGate.refreshSessionUser()
+        return BookmarkSessionUsernamePolicy.readyUsername(
+            current: authGate.currentUsername(),
+            stored: viewModel.storedUsername()
+        )
     }
 
     @objc private func pullToRefresh() {
         Task {
-            await loadBookmarks()
+            await loadBookmarks(force: true)
         }
     }
 
     @objc private func retryTapped() {
         Task {
-            await loadBookmarks()
+            await loadBookmarks(force: true)
         }
     }
 
@@ -344,7 +364,7 @@ final class BookmarksViewController: ObservableViewController {
         authGate?.requireAuth(then: { [weak self] in
             guard let self else { return }
             Task {
-                await self.loadBookmarks()
+                await self.loadBookmarks(force: true)
             }
         })
     }

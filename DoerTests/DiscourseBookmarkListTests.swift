@@ -31,6 +31,40 @@ final class DiscourseBookmarkListTests: XCTestCase {
         XCTAssertNil(list.moreBookmarksUrl)
     }
 
+    func testSessionUsernamePrefersCurrentThenStored() {
+        XCTAssertEqual(
+            BookmarkSessionUsernamePolicy.readyUsername(current: " sam ", stored: "other"),
+            "sam"
+        )
+        XCTAssertEqual(
+            BookmarkSessionUsernamePolicy.readyUsername(current: "  ", stored: "alice"),
+            "alice"
+        )
+        XCTAssertNil(BookmarkSessionUsernamePolicy.readyUsername(current: nil, stored: nil))
+        XCTAssertNil(BookmarkSessionUsernamePolicy.readyUsername(current: " ", stored: ""))
+    }
+
+    func testAppearRefreshSkipsUntilIntervalElapses() {
+        XCTAssertTrue(
+            BookmarkSessionUsernamePolicy.shouldFetchOnAppear(hasLoadedOnce: false, lastFetch: nil)
+        )
+        let now = Date()
+        XCTAssertFalse(
+            BookmarkSessionUsernamePolicy.shouldFetchOnAppear(
+                hasLoadedOnce: true,
+                lastFetch: now.addingTimeInterval(-5),
+                now: now
+            )
+        )
+        XCTAssertTrue(
+            BookmarkSessionUsernamePolicy.shouldFetchOnAppear(
+                hasLoadedOnce: true,
+                lastFetch: now.addingTimeInterval(-25),
+                now: now
+            )
+        )
+    }
+
     func testBookmarkRouteEncodesUsernameAndOmitsFirstPage() {
         XCTAssertEqual(
             DiscourseRouter.bookmarks(username: "sam", page: 0).path,

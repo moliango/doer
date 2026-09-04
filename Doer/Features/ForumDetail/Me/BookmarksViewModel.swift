@@ -25,6 +25,10 @@ final class BookmarksViewModel: DoerObservableObject {
         self.username = username
     }
 
+    func storedUsername() -> String? {
+        BookmarkSessionUsernamePolicy.normalized(username)
+    }
+
     /// Keep the spinner up while `/session/current` catches up after cookie login.
     func markLoadingIfEmpty() {
         guard bookmarks.isEmpty else { return }
@@ -34,7 +38,7 @@ final class BookmarksViewModel: DoerObservableObject {
         notifyChanged()
     }
 
-    func loadBookmarks() async {
+    func loadBookmarks(showLoading: Bool = true) async {
         guard let username, !username.isEmpty else {
             bookmarks = []
             isLoading = false
@@ -46,11 +50,14 @@ final class BookmarksViewModel: DoerObservableObject {
             return
         }
 
-        isLoading = true
+        let showSpinner = showLoading && bookmarks.isEmpty
         errorMessage = nil
         loadMoreErrorMessage = nil
         requiresLogin = false
-        notifyChanged()
+        if showSpinner {
+            isLoading = true
+            notifyChanged()
+        }
         do {
             let list = try await api.fetchBookmarks(username: username, page: 0)
             bookmarks = Self.uniqueBookmarks(list.bookmarks)
@@ -60,8 +67,8 @@ final class BookmarksViewModel: DoerObservableObject {
             if AuthSessionInvalidationPolicy.shouldInvalidateWebSession(error: error, baseURL: api.baseURL) {
                 requiresLogin = true
             }
-            errorMessage = error.localizedDescription
             if bookmarks.isEmpty {
+                errorMessage = error.localizedDescription
                 canLoadMore = false
             }
         }
@@ -113,5 +120,24 @@ final class BookmarksViewModel: DoerObservableObject {
             return true
         }
         return list.bookmarks.count >= pageSize
+    }
+}
+
+enum BookmarkSessionUsernamePolicy {
+    static let appearRefreshInterval: TimeInterval = 20
+
+    static func readyUsername(current: String?, stored: String?) -> String? {
+        normalized(current) ?? normalized(stored)
+    }
+
+    static func shouldFetchOnAppear(hasLoadedOnce: Bool, lastFetch: Date?, now: Date = Date()) -> Bool {
+        if !hasLoadedOnce { return true }
+        guard let lastFetch else { return true }
+        return now.timeIntervalSince(lastFetch) >= appearRefreshInterval
+    }
+
+    static func normalized(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
