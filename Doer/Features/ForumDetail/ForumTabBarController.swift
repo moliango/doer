@@ -943,6 +943,10 @@ private extension ForumTabBarController {
                 return controller
             case .bookmarks:
                 return BookmarksViewController(api: api, authGate: authGate)
+            case .chat:
+                let controller = ChatChannelsViewController(api: api)
+                controller.hidesBottomBarWhenPushed = false
+                return controller
             }
         }
     }
@@ -986,12 +990,20 @@ private extension ForumTabBarController {
 
     func applyChatTabBadge(_ count: Int) {
         lastChatBadgeCount = count
-        guard let index = tabIdentifiers.firstIndex(of: "me"),
-              index < navigationControllers.count
-        else { return }
-        let item = navigationControllers[index].tabBarItem
-        item?.badgeValue = DiscourseChatChannelsResponse.badgeText(for: count)
-        item?.badgeColor = .systemRed
+        let badge = DiscourseChatChannelsResponse.badgeText(for: count)
+        let primary = tabIdentifiers.contains("chat") ? "chat" : "me"
+        for identifier in ["chat", "me"] {
+            guard let index = tabIdentifiers.firstIndex(of: identifier),
+                  index < navigationControllers.count
+            else { continue }
+            let item = navigationControllers[index].tabBarItem
+            if identifier == primary {
+                item?.badgeValue = badge
+                item?.badgeColor = .systemRed
+            } else {
+                item?.badgeValue = nil
+            }
+        }
     }
 }
 

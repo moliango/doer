@@ -70,6 +70,8 @@ enum DoerTabBarIconStyle {
             return "envelope.fill"
         case "bookmarks":
             return "bookmark.fill"
+        case "chat":
+            return "bubble.left.and.bubble.right.fill"
         case "me":
             return "person.crop.circle.fill"
         default:

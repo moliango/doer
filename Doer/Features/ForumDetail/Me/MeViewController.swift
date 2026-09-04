@@ -527,6 +527,11 @@ final class MeViewController: ObservableViewController {
 
     private func applyChatTabBadge(isLoggedIn: Bool) {
         let item = navigationController?.tabBarItem ?? tabBarItem
+        if AppSettings.shared.forumVisibleConfiguredTabItemIDs.contains(
+            AppSettings.ForumDynamicTabItem.chat.rawValue
+        ) {
+            return
+        }
         if !isLoggedIn {
             item?.badgeValue = nil
             return
@@ -539,6 +544,14 @@ final class MeViewController: ObservableViewController {
     private func openChat() {
         guard authGate?.isAuthenticated() == true else {
             authGate?.requireAuth { [weak self] in self?.openChat() }
+            return
+        }
+        let chatTabID = "forum.tab.\(AppSettings.ForumDynamicTabItem.chat.rawValue)"
+        if let tabBar = tabBarController,
+           let index = tabBar.viewControllers?.firstIndex(where: {
+               $0.tabBarItem.accessibilityIdentifier == chatTabID
+           }) {
+            tabBar.selectedIndex = index
             return
         }
         navigationController?.pushViewController(ChatChannelsViewController(api: api), animated: true)
