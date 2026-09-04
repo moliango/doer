@@ -8,6 +8,8 @@ final class MiniProgramHostViewController: UIViewController {
     private let program: MiniProgramDescriptor
     private let api: DiscourseAPI
     private let username: String?
+    private var popGestureEnablers: [ObjectIdentifier: NavigationPopGestureEnabler] = [:]
+    private let interactiveBack = MiniProgramInteractiveBackController()
     /// When true, embedded web content disables edge-swipe shake and pinch zoom.
     /// Default on so pages don't rubber-band or pinch-zoom until the user unlocks.
     private var isInteractionLocked = false
@@ -127,13 +129,6 @@ final class MiniProgramHostViewController: UIViewController {
         chromeView.addSubview(titleLabel)
         chromeView.addSubview(capsuleView)
         capsuleView.addSubview(moreButton)
-
-        // Right swipe: go back in mini-program history (web / nav). Never dismiss host here.
-        // Left swipe: ignored (close only via capsule ◎).
-        let swipeRight = UISwipeGestureRecognizer()
-        swipeRight.direction = .right
-        swipeRight.addTarget(self, action: #selector(handleSwipeBack))
-        view.addGestureRecognizer(swipeRight)
         capsuleView.addSubview(capsuleDivider)
         capsuleView.addSubview(closeButton)
 
@@ -186,16 +181,33 @@ final class MiniProgramHostViewController: UIViewController {
         if iconView.isHidden {
             titleLabel.leadingAnchor.constraint(equalTo: chromeView.leadingAnchor, constant: 16).isActive = true
         }
-    }
 
-    @objc private func handleSwipeBack() {
-        // History only — if nothing to go back to, do nothing (do not close mini-program).
-        _ = tryGoBackInContent()
+        // Follow-finger edge back, same 20pt strip as TopicDetail. History only —
+        // never dismiss the host (close stays on the capsule ◎).
+        interactiveBack.attach(hostView: view, slidingView: contentContainer)
+        interactiveBack.canBegin = { [weak self] pan in
+            guard let self else { return false }
+            return MiniProgramBackGesturePolicy.shouldBeginHostPan(
+                locationX: pan.location(in: self.view).x,
+                translation: pan.translation(in: self.view),
+                velocity: pan.velocity(in: self.view),
+                webCanGoBack: self.webCanGoBack(),
+                nestedNavCanPop: self.embeddedNavCanPop(),
+                hasPresentedOverlay: self.presentedViewController != nil
+            )
+        }
+        interactiveBack.peekBack = { [weak self] in
+            self?.tryGoBackInContent(animated: false) ?? false
+        }
+        interactiveBack.peekForward = { [weak self] in
+            self?.tryGoForwardInContent() ?? false
+        }
     }
 
     /// Try to go back in embedded content (web history / nav stack).
     /// Returns true if a back action was performed.
-    private func tryGoBackInContent() -> Bool {
+    @discardableResult
+    private func tryGoBackInContent(animated: Bool = true) -> Bool {
         var stack: [UIViewController] = [content]
         var visited = Set<ObjectIdentifier>()
         while let vc = stack.popLast() {
@@ -208,7 +220,7 @@ final class MiniProgramHostViewController: UIViewController {
             }
             if let nav = vc as? UINavigationController {
                 if nav.viewControllers.count > 1 {
-                    nav.popViewController(animated: true)
+                    nav.popViewController(animated: animated)
                     return true
                 }
                 stack.append(contentsOf: nav.viewControllers)
@@ -219,6 +231,73 @@ final class MiniProgramHostViewController: UIViewController {
             stack.append(contentsOf: vc.children)
         }
         return false
+    }
+
+    @discardableResult
+    private func tryGoForwardInContent() -> Bool {
+        var stack: [UIViewController] = [content]
+        var visited = Set<ObjectIdentifier>()
+        while let vc = stack.popLast() {
+            let id = ObjectIdentifier(vc)
+            guard visited.insert(id).inserted else { continue }
+            if let browser = vc as? InAppBrowserViewController {
+                if browser.goForwardIfPossible() {
+                    return true
+                }
+            }
+            if let nav = vc as? UINavigationController {
+                stack.append(contentsOf: nav.viewControllers)
+            }
+            if let tab = vc as? UITabBarController {
+                stack.append(contentsOf: tab.viewControllers ?? [])
+            }
+            stack.append(contentsOf: vc.children)
+        }
+        return false
+    }
+
+    private func webCanGoBack() -> Bool {
+        currentEmbeddedBrowser()?.canGoBack == true
+    }
+
+    private func embeddedNavCanPop() -> Bool {
+        var stack: [UIViewController] = [content]
+        var visited = Set<ObjectIdentifier>()
+        while let vc = stack.popLast() {
+            let id = ObjectIdentifier(vc)
+            guard visited.insert(id).inserted else { continue }
+            if let nav = vc as? UINavigationController, nav.viewControllers.count > 1 {
+                return true
+            }
+            if let nav = vc as? UINavigationController {
+                stack.append(contentsOf: nav.viewControllers)
+            }
+            if let tab = vc as? UITabBarController {
+                stack.append(contentsOf: tab.viewControllers ?? [])
+            }
+            stack.append(contentsOf: vc.children)
+        }
+        return false
+    }
+
+    private func attachPopEnablers(in root: UIViewController) {
+        popGestureEnablers.removeAll()
+        var stack: [UIViewController] = [root]
+        var visited = Set<ObjectIdentifier>()
+        while let vc = stack.popLast() {
+            let id = ObjectIdentifier(vc)
+            guard visited.insert(id).inserted else { continue }
+            if let nav = vc as? UINavigationController {
+                let enabler = NavigationPopGestureEnabler()
+                enabler.attach(to: nav)
+                popGestureEnablers[ObjectIdentifier(nav)] = enabler
+                stack.append(contentsOf: nav.viewControllers)
+            }
+            if let tab = vc as? UITabBarController {
+                stack.append(contentsOf: tab.viewControllers ?? [])
+            }
+            stack.append(contentsOf: vc.children)
+        }
     }
 
     // MARK: - Capsule icon
@@ -435,6 +514,7 @@ final class MiniProgramHostViewController: UIViewController {
             child.view.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
         child.didMove(toParent: self)
+        attachPopEnablers(in: child)
     }
 
     private func replaceContent(with newContent: UIViewController) {

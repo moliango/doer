@@ -21,7 +21,9 @@ final class InAppBrowserViewController: UIViewController {
         webView.translatesAutoresizingMaskIntoConstraints = false
         webView.navigationDelegate = self
         webView.uiDelegate = self
-        webView.allowsBackForwardNavigationGestures = true
+        // Mini-program chrome owns the 20pt follow-finger back. WK's own
+        // back-forward gesture fights that pan and rubber-bands the page.
+        webView.allowsBackForwardNavigationGestures = !hidesBrowserControlBar
         if let userAgent = WebCookieStore.shared.userAgent {
             webView.customUserAgent = userAgent
         }
@@ -187,11 +189,12 @@ final class InAppBrowserViewController: UIViewController {
 
     private func applyPageInteractionLock() {
         let locked = isPageInteractionLocked
-        // Edge swipe back/forward makes the page "shake" horizontally.
-        webView.allowsBackForwardNavigationGestures = !locked
+        // Mini-program host owns edge-back; keep WK's gesture off there even unlocked.
+        let allowWKBackForward = !hidesBrowserControlBar && !locked
+        webView.allowsBackForwardNavigationGestures = allowWKBackForward
         applyLock(to: webView.scrollView, locked: locked)
         if let popup = popupWebView {
-            popup.allowsBackForwardNavigationGestures = !locked
+            popup.allowsBackForwardNavigationGestures = allowWKBackForward
             applyLock(to: popup.scrollView, locked: locked)
         }
     }
@@ -482,11 +485,21 @@ final class InAppBrowserViewController: UIViewController {
 
     @objc private func backTapped() { webView.goBack() }
 
+    var canGoBack: Bool { webView.canGoBack }
+
     /// Go back in web history if possible; return true if a back was performed.
     @discardableResult
     func goBackIfPossible() -> Bool {
         guard webView.canGoBack else { return false }
         webView.goBack()
+        return true
+    }
+
+    /// Restore the page that `goBackIfPossible` left, used when an interactive back cancels.
+    @discardableResult
+    func goForwardIfPossible() -> Bool {
+        guard webView.canGoForward else { return false }
+        webView.goForward()
         return true
     }
 

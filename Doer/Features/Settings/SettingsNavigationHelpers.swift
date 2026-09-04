@@ -14,6 +14,23 @@ enum NavigationPopGesturePriority {
         let dy = abs(translation.y) >= 1 ? translation.y : velocity.y
         return locationX <= systemEdgeWidth && dx > 0 && abs(dx) >= abs(dy)
     }
+
+    /// Freeze in-flight scroll pans so an edge-back gesture can take over.
+    static func stopScrollTracking(in root: UIView?) {
+        guard let root else { return }
+        var stack: [UIView] = [root]
+        while let view = stack.popLast() {
+            if let scrollView = view as? UIScrollView {
+                let pan = scrollView.panGestureRecognizer
+                pan.isEnabled = false
+                pan.isEnabled = true
+                if scrollView.isDragging || scrollView.isDecelerating || scrollView.isTracking {
+                    scrollView.setContentOffset(scrollView.contentOffset, animated: false)
+                }
+            }
+            stack.append(contentsOf: view.subviews)
+        }
+    }
 }
 
 /// Enables system interactive pop (follow-finger edge swipe) on a UINavigationController.
@@ -49,23 +66,7 @@ final class NavigationPopGestureEnabler: NSObject, UIGestureRecognizerDelegate {
 
     @objc private func handlePopGesture(_ gesture: UIGestureRecognizer) {
         guard gesture.state == .began else { return }
-        stopScrollTracking(in: navigationController?.topViewController?.view)
-    }
-
-    private func stopScrollTracking(in root: UIView?) {
-        guard let root else { return }
-        var stack: [UIView] = [root]
-        while let view = stack.popLast() {
-            if let scrollView = view as? UIScrollView {
-                let pan = scrollView.panGestureRecognizer
-                pan.isEnabled = false
-                pan.isEnabled = true
-                if scrollView.isDragging || scrollView.isDecelerating || scrollView.isTracking {
-                    scrollView.setContentOffset(scrollView.contentOffset, animated: false)
-                }
-            }
-            stack.append(contentsOf: view.subviews)
-        }
+        NavigationPopGesturePriority.stopScrollTracking(in: navigationController?.topViewController?.view)
     }
 }
 
