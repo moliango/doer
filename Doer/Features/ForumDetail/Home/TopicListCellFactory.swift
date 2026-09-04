@@ -12,7 +12,7 @@ enum TopicListLayoutKind: Hashable {
         case .weChat: return .weChat
         case .telegram: return .telegram
         case .xiaohongshu: return .xiaohongshu
-        case .systemDefault, .eyeCare, .oled: return .standard
+        case .systemDefault, .eyeCare, .oled, .kraftPaper: return .standard
         }
     }
 

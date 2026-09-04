@@ -31,6 +31,31 @@ final class ThemeStyleOLEDTests: XCTestCase {
         assertRGB(AppSettings.ThemeStyle.oledCanvasColor, r: 0, g: 0, b: 0)
     }
 
+    func testKraftPaperUsesStandardReadingLayout() {
+        let style = AppSettings.ThemeStyle.kraftPaper
+        XCTAssertEqual(HomeTopicListLayoutFactory.make(style: style).kind, .standard)
+        XCTAssertFalse(style.usesChatTopicDetail)
+        XCTAssertFalse(style.usesChatHomeList)
+        XCTAssertTrue(style.prefersOpaqueChrome)
+        XCTAssertEqual(style.webAccentHex, "#b43d26")
+        XCTAssertEqual(style.webBackgroundHex, "#f6f2e9")
+    }
+
+    func testKraftPaperLightSurfacesMatchNewsNookInk() {
+        let style = AppSettings.ThemeStyle.kraftPaper
+        let light = UITraitCollection(userInterfaceStyle: .light)
+        assertRGB(style.contentBackgroundColor.resolvedColor(with: light), r: 246 / 255, g: 242 / 255, b: 233 / 255)
+        assertRGB(style.topicCardBackgroundColor.resolvedColor(with: light), r: 1, g: 252 / 255, b: 245 / 255)
+        assertRGB(style.accentColor.resolvedColor(with: light), r: 180 / 255, g: 61 / 255, b: 38 / 255)
+    }
+
+    func testKraftPaperDarkSurfacesStayWarmInk() {
+        let style = AppSettings.ThemeStyle.kraftPaper
+        let dark = UITraitCollection(userInterfaceStyle: .dark)
+        assertRGB(style.contentBackgroundColor.resolvedColor(with: dark), r: 14 / 255, g: 15 / 255, b: 18 / 255)
+        assertRGB(style.accentColor.resolvedColor(with: dark), r: 196 / 255, g: 92 / 255, b: 74 / 255)
+    }
+
     private func assertRGB(
         _ color: UIColor,
         r: CGFloat,

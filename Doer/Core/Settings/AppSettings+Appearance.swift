@@ -81,6 +81,8 @@ extension AppSettings {
         case weChat = 4
         /// True-black OLED/AMOLED night surfaces. Standard list layout, like eye care.
         case oled = 5
+        /// Warm kraft / parchment reading surfaces (有所闻 News Nook ink scheme).
+        case kraftPaper = 6
 
         var title: String {
             switch self {
@@ -90,6 +92,7 @@ extension AppSettings {
             case .telegram: return String(localized: "settings.theme.telegram")
             case .weChat: return String(localized: "settings.theme.wechat", defaultValue: "微信风格")
             case .oled: return String(localized: "settings.theme.oled", defaultValue: "OLED 纯黑")
+            case .kraftPaper: return String(localized: "settings.theme.kraft_paper", defaultValue: "牛皮纸")
             }
         }
 
@@ -99,7 +102,7 @@ extension AppSettings {
             case .weChat: return 10
             case .telegram: return 14
             case .xiaohongshu: return 14
-            case .systemDefault, .eyeCare, .oled: return 12
+            case .systemDefault, .eyeCare, .oled, .kraftPaper: return 12
             }
         }
 
@@ -107,7 +110,7 @@ extension AppSettings {
         /// OLED keeps system chrome: opaque black bars blank the window on live switch.
         var prefersOpaqueChrome: Bool {
             switch self {
-            case .weChat, .telegram: return true
+            case .weChat, .telegram, .kraftPaper: return true
             case .systemDefault, .eyeCare, .xiaohongshu, .oled: return false
             }
         }
@@ -133,6 +136,10 @@ extension AppSettings {
             switch self {
             case .systemDefault, .oled: return .systemBlue
             case .eyeCare: return UIColor(red: 0.24, green: 0.55, blue: 0.34, alpha: 1)
+            case .kraftPaper:
+                return UIColor { trait in
+                    trait.userInterfaceStyle == .dark ? Self.kraftCinnabarDark : Self.kraftCinnabarLight
+                }
             case .xiaohongshu: return UIColor(red: 0.92, green: 0.13, blue: 0.22, alpha: 1)
             // Telegram brand blue ≈ #3390EC
             case .telegram: return UIColor(red: 0.20, green: 0.56, blue: 0.93, alpha: 1)
@@ -153,6 +160,10 @@ extension AppSettings {
                 }
             case .eyeCare, .telegram, .oled:
                 return contentBackgroundColor
+            case .kraftPaper:
+                return UIColor { trait in
+                    trait.userInterfaceStyle == .dark ? Self.kraftInkRaisedDark : Self.kraftInkRaisedLight
+                }
             case .weChat:
                 return UIColor { trait in
                     trait.userInterfaceStyle == .dark
@@ -170,7 +181,7 @@ extension AppSettings {
                 return mutedContentBackgroundColor
             case .telegram, .oled:
                 return contentBackgroundColor
-            case .weChat:
+            case .kraftPaper, .weChat:
                 // WeChat list is slightly gray behind white cells.
                 return mutedContentBackgroundColor
             }
@@ -186,7 +197,7 @@ extension AppSettings {
                         ? UIColor(red: 0.14, green: 0.17, blue: 0.20, alpha: 1)
                         : UIColor(red: 0.94, green: 0.95, blue: 0.96, alpha: 1)
                 }
-            case .eyeCare, .xiaohongshu, .weChat, .oled:
+            case .eyeCare, .xiaohongshu, .weChat, .oled, .kraftPaper:
                 return mutedContentBackgroundColor
             }
         }
@@ -194,14 +205,14 @@ extension AppSettings {
         var topicCountForegroundColor: UIColor {
             switch self {
             case .systemDefault: return .secondaryLabel
-            case .eyeCare, .xiaohongshu, .telegram, .weChat, .oled: return accentColor
+            case .eyeCare, .xiaohongshu, .telegram, .weChat, .oled, .kraftPaper: return accentColor
             }
         }
 
         var topicCountBackgroundColor: UIColor {
             switch self {
             case .systemDefault: return .tertiarySystemFill
-            case .eyeCare, .xiaohongshu, .telegram, .weChat, .oled: return accentColor.withAlphaComponent(0.12)
+            case .eyeCare, .xiaohongshu, .telegram, .weChat, .oled, .kraftPaper: return accentColor.withAlphaComponent(0.12)
             }
         }
 
@@ -212,6 +223,7 @@ extension AppSettings {
             case .xiaohongshu: return UIColor(red: 1.0, green: 0.34, blue: 0.40, alpha: 1)
             case .telegram: return UIColor(red: 0.0, green: 0.56, blue: 0.86, alpha: 1)
             case .weChat: return UIColor(red: 0.98, green: 0.62, blue: 0.15, alpha: 1) // warm amber accent
+            case .kraftPaper: return UIColor(red: 0.745, green: 0.290, blue: 0.200, alpha: 1) // #be4a33
             }
         }
 
@@ -265,6 +277,10 @@ extension AppSettings {
                     // makes UIBarStyle.black and can blank the window until relaunch.
                     trait.userInterfaceStyle == .dark ? Self.oledCanvasColor : .white
                 }
+            case .kraftPaper:
+                return UIColor { trait in
+                    trait.userInterfaceStyle == .dark ? Self.kraftInkDark : Self.kraftInkLight
+                }
             }
         }
 
@@ -306,6 +322,10 @@ extension AppSettings {
                         ? UIColor.white.withAlphaComponent(0.08)
                         : UIColor.systemGroupedBackground
                 }
+            case .kraftPaper:
+                return UIColor { trait in
+                    trait.userInterfaceStyle == .dark ? Self.kraftInkDeepDark : Self.kraftInkDeepLight
+                }
             }
         }
 
@@ -326,6 +346,8 @@ extension AppSettings {
                 }
             case .systemDefault, .eyeCare, .xiaohongshu, .oled:
                 return contentBackgroundColor
+            case .kraftPaper:
+                return contentBackgroundColor
             }
         }
 
@@ -336,6 +358,7 @@ extension AppSettings {
             case .xiaohongshu: return "#eb3349"
             case .telegram: return "#3390EC"
             case .weChat: return "#07C160"
+            case .kraftPaper: return "#b43d26"
             }
         }
 
@@ -346,6 +369,7 @@ extension AppSettings {
             case .xiaohongshu: return "#fff5f5"
             case .telegram: return "#c8d9e8"
             case .weChat: return "#ffffff"
+            case .kraftPaper: return "#f6f2e9"
             }
         }
 
@@ -356,20 +380,21 @@ extension AppSettings {
             case .xiaohongshu: return "#ffe8eb"
             case .telegram: return "#e8f4fc"
             case .weChat: return "#ededed"
+            case .kraftPaper: return "#ebe4d6"
             }
         }
 
         var webQuoteBorderHex: String {
             switch self {
             case .systemDefault: return "#cccccc"
-            case .eyeCare, .xiaohongshu, .telegram, .weChat, .oled: return webAccentHex
+            case .eyeCare, .xiaohongshu, .telegram, .weChat, .oled, .kraftPaper: return webAccentHex
             }
         }
 
         var webBlockquoteBackgroundHex: String {
             switch self {
             case .systemDefault, .oled: return "transparent"
-            case .eyeCare, .xiaohongshu, .telegram, .weChat: return webMutedBackgroundHex
+            case .eyeCare, .xiaohongshu, .telegram, .weChat, .kraftPaper: return webMutedBackgroundHex
             }
         }
 
@@ -412,6 +437,14 @@ extension AppSettings {
                     UIColor(red: 0.45, green: 0.55, blue: 0.70, alpha: 1),
                     UIColor(red: 0.55, green: 0.45, blue: 0.65, alpha: 1),
                 ]
+            case .kraftPaper:
+                return [
+                    Self.kraftCinnabarLight,
+                    UIColor(red: 0.45, green: 0.38, blue: 0.28, alpha: 1),
+                    UIColor(red: 0.55, green: 0.42, blue: 0.28, alpha: 1),
+                    UIColor(red: 0.32, green: 0.40, blue: 0.34, alpha: 1),
+                    UIColor(red: 0.62, green: 0.48, blue: 0.22, alpha: 1),
+                ]
             }
         }
 
@@ -448,11 +481,23 @@ extension AppSettings {
                 ]
             case .oled:
                 return topicTagPalette
+            case .kraftPaper:
+                return topicTagPalette
             }
         }
 
         /// sRGB #000000. Avoid `UIColor.black` (DeviceGray catalog color).
         static let oledCanvasColor = UIColor(red: 0, green: 0, blue: 0, alpha: 1)
+
+        /// 有所闻 News Nook ink / kraft paper tokens.
+        static let kraftInkLight = UIColor(red: 246 / 255, green: 242 / 255, blue: 233 / 255, alpha: 1) // #f6f2e9
+        static let kraftInkRaisedLight = UIColor(red: 255 / 255, green: 252 / 255, blue: 245 / 255, alpha: 1) // #fffcf5
+        static let kraftInkDeepLight = UIColor(red: 235 / 255, green: 228 / 255, blue: 214 / 255, alpha: 1) // #ebe4d6
+        static let kraftCinnabarLight = UIColor(red: 180 / 255, green: 61 / 255, blue: 38 / 255, alpha: 1) // #b43d26
+        static let kraftInkDark = UIColor(red: 14 / 255, green: 15 / 255, blue: 18 / 255, alpha: 1) // #0e0f12
+        static let kraftInkRaisedDark = UIColor(red: 22 / 255, green: 24 / 255, blue: 29 / 255, alpha: 1) // #16181d
+        static let kraftInkDeepDark = UIColor(red: 8 / 255, green: 9 / 255, blue: 11 / 255, alpha: 1) // #08090b
+        static let kraftCinnabarDark = UIColor(red: 196 / 255, green: 92 / 255, blue: 74 / 255, alpha: 1) // #c45c4a
 
         private func paletteColor(for seed: String, palette: [UIColor]) -> UIColor {
             guard !palette.isEmpty else { return accentColor }

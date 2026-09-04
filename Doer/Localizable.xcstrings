@@ -25615,6 +25615,34 @@
         }
       }
     },
+    "settings.theme.kraft_paper" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kraft Paper"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "牛皮纸"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "牛皮紙"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "牛皮紙"
+          }
+        }
+      }
+    },
     "settings.theme.telegram" : {
       "localizations" : {
         "en" : {

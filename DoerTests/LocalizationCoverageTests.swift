@@ -6,6 +6,7 @@ final class LocalizationCoverageTests: XCTestCase {
         let keys = [
             "settings.about",
             "settings.theme.oled",
+            "settings.theme.kraft_paper",
             "settings.about.subtitle",
             "settings.update.auto_check",
             "settings.update.check_now",
