@@ -152,7 +152,7 @@ extension AppSettings {
 
     /// Experimental block WYSIWYG in the reply composer. Default off; existing Aa/MD path stays unchanged.
     var experimentalRichComposerEnabled: Bool {
-        get { bool(forKey: "experimentalRichComposerEnabled", defaultValue: false) }
+        get { bool(forKey: "experimentalRichComposerEnabled", defaultValue: true) }
         set {
             defaults.set(newValue, forKey: "experimentalRichComposerEnabled")
             notifyChanged()

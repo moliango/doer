@@ -240,10 +240,10 @@ final class PreferencesSettingsViewController: ObservableViewController {
             backgroundColor: card
         )
         experimentalWysiwygRow.configure(
-            title: String(localized: "settings.composer.experimental_wysiwyg", defaultValue: "实验性所见即所得"),
+            title: String(localized: "settings.composer.experimental_wysiwyg", defaultValue: "所见即所得编辑器"),
             subtitle: String(
                 localized: "settings.composer.experimental_wysiwyg.subtitle",
-                defaultValue: "回复时使用块级编辑器；默认关闭。现有 Aa/MD 编辑器不受影响"
+                defaultValue: "回复、发帖、私信使用块级编辑器。可随时关掉回到 Aa/MD"
             ),
             symbolName: "text.justify.left",
             isOn: settings.experimentalRichComposerEnabled,
