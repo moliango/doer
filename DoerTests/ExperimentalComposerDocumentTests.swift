@@ -202,6 +202,125 @@ final class ExperimentalComposerDocumentTests: XCTestCase {
         XCTAssertEqual(document.markdown, raw)
     }
 
+    func testBoldWrapSelectsInnerAndTogglesOff() {
+        let wrapped = ExperimentalComposerWrapPolicy.wrap(
+            inner: "hello",
+            start: "**",
+            end: "**",
+            placeholder: "粗体"
+        )
+        XCTAssertEqual(wrapped.raw, "**hello**")
+        XCTAssertEqual(wrapped.selectedInner, "hello")
+        XCTAssertEqual(wrapped.marker, "**")
+
+        let toggled = ExperimentalComposerWrapPolicy.wrap(
+            inner: "**hello**",
+            start: "**",
+            end: "**",
+            placeholder: "粗体"
+        )
+        XCTAssertEqual(toggled.raw, "hello")
+        XCTAssertEqual(toggled.selectedInner, "hello")
+        XCTAssertEqual(toggled.marker, "")
+
+        let empty = ExperimentalComposerWrapPolicy.wrap(
+            inner: "",
+            start: "**",
+            end: "**",
+            placeholder: "粗体"
+        )
+        XCTAssertEqual(empty.raw, "**粗体**")
+        XCTAssertEqual(empty.selectedInner, "粗体")
+    }
+
+    func testCaretGeometryEnforcesReadableInsertionPoint() {
+        let font = UIFont.systemFont(ofSize: 16)
+        let minHeight = ComposerCaretGeometry.minHeight(for: font)
+        XCTAssertGreaterThanOrEqual(minHeight, 18)
+
+        let collapsed = ComposerCaretGeometry.normalized(
+            CGRect(x: 0, y: 4, width: 1, height: 2),
+            font: font,
+            bounds: CGRect(x: 0, y: 0, width: 320, height: 40)
+        )
+        XCTAssertEqual(collapsed.width, ComposerCaretGeometry.minWidth)
+        XCTAssertEqual(collapsed.height, minHeight)
+
+        let clipped = ComposerCaretGeometry.normalized(
+            CGRect(x: -3, y: 0, width: 2, height: minHeight),
+            font: font,
+            bounds: CGRect(x: 0, y: 0, width: 320, height: 40)
+        )
+        XCTAssertEqual(clipped.origin.x, 0)
+
+        let empty = ComposerCaretGeometry.normalized(
+            .zero,
+            font: font,
+            bounds: CGRect(x: 0, y: 0, width: 320, height: 40)
+        )
+        XCTAssertEqual(empty.height, minHeight)
+        XCTAssertEqual(empty.width, ComposerCaretGeometry.minWidth)
+    }
+
+    func testHarvestSkipsMarkedText() {
+        XCTAssertFalse(ExperimentalComposerEditingPolicy.shouldHarvest(hasMarkedText: true))
+        XCTAssertTrue(ExperimentalComposerEditingPolicy.shouldHarvest(hasMarkedText: false))
+    }
+
+    func testImageInsertGetsTrailingParagraphAndFocus() {
+        let blocks: [ExperimentalComposerBlock] = [
+            .paragraph("hello"),
+            .image(alt: "a", url: "https://example.com/a.png", title: nil),
+        ]
+        XCTAssertTrue(
+            ExperimentalComposerEditingPolicy.needsTrailingParagraph(
+                in: blocks,
+                insertAt: 1,
+                insertedCount: 1
+            )
+        )
+        let withTail = ExperimentalComposerEditingPolicy.ensuringEditableTail(blocks)
+        XCTAssertEqual(withTail.last, .paragraph(""))
+        XCTAssertEqual(
+            ExperimentalComposerEditingPolicy.focusIndexAfterInsert(
+                in: withTail,
+                insertAt: 1,
+                insertedCount: 1
+            ),
+            2
+        )
+    }
+
+    func testQuoteCardLoadGetsEditableTail() {
+        let raw = "[quote=\"alice, post:1, topic:2\"]\nhello\n[/quote]"
+        let parsed = ExperimentalComposerDocument.parse(raw)
+        let tailed = ExperimentalComposerEditingPolicy.ensuringEditableTail(parsed.blocks)
+        XCTAssertEqual(tailed.count, 2)
+        XCTAssertEqual(tailed.last, .paragraph(""))
+    }
+
+    func testParagraphAfterIslandDoesNotDuplicateTail() {
+        let blocks: [ExperimentalComposerBlock] = [
+            .quoteCard(
+                username: "alice",
+                displayName: nil,
+                postNumber: 1,
+                topicId: 2,
+                full: false,
+                inner: "hello"
+            ),
+            .paragraph("already"),
+        ]
+        XCTAssertFalse(
+            ExperimentalComposerEditingPolicy.needsTrailingParagraph(
+                in: blocks,
+                insertAt: 0,
+                insertedCount: 1
+            )
+        )
+        XCTAssertEqual(ExperimentalComposerEditingPolicy.ensuringEditableTail(blocks), blocks)
+    }
+
     private func assertRoundTrip(_ raw: String) {
         let back = ExperimentalComposerDocument.parse(raw).markdown
             .trimmingCharacters(in: .whitespacesAndNewlines)

@@ -497,3 +497,78 @@ struct ExperimentalComposerDocument: Equatable {
         return (chunk.joined(separator: "\n"), index)
     }
 }
+
+enum ExperimentalComposerEditingPolicy {
+    static func shouldHarvest(hasMarkedText: Bool) -> Bool {
+        !hasMarkedText
+    }
+
+    static func isAtomicIsland(_ block: ExperimentalComposerBlock) -> Bool {
+        switch block {
+        case .image, .quoteCard:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// After inserting `count` blocks at `insertAt`, append a blank paragraph if the last
+    /// inserted block is an island with nothing to type into after it.
+    static func needsTrailingParagraph(
+        in blocks: [ExperimentalComposerBlock],
+        insertAt: Int,
+        insertedCount: Int
+    ) -> Bool {
+        guard insertedCount > 0 else { return false }
+        let last = insertAt + insertedCount - 1
+        guard last >= 0, last < blocks.count, isAtomicIsland(blocks[last]) else { return false }
+        let next = last + 1
+        if next < blocks.count, case .paragraph = blocks[next] {
+            return false
+        }
+        return true
+    }
+
+    static func focusIndexAfterInsert(
+        in blocks: [ExperimentalComposerBlock],
+        insertAt: Int,
+        insertedCount: Int
+    ) -> Int {
+        let last = insertAt + insertedCount - 1
+        guard last >= 0 else { return 0 }
+        if last < blocks.count, isAtomicIsland(blocks[last]) {
+            let next = last + 1
+            if next < blocks.count { return next }
+        }
+        return min(max(last, 0), max(blocks.count - 1, 0))
+    }
+
+    static func loadSucceeded(raw: String, document: ExperimentalComposerDocument) -> Bool {
+        !document.blocks.isEmpty
+    }
+
+    static func ensuringEditableTail(
+        _ blocks: [ExperimentalComposerBlock]
+    ) -> [ExperimentalComposerBlock] {
+        guard let last = blocks.last, isAtomicIsland(last) else { return blocks }
+        return blocks + [.paragraph("")]
+    }
+}
+
+enum ExperimentalComposerWrapPolicy {
+    static func wrap(
+        inner: String,
+        start: String,
+        end: String,
+        placeholder: String
+    ) -> (raw: String, selectedInner: String, marker: String) {
+        let core = inner.isEmpty ? placeholder : inner
+        if core.hasPrefix(start),
+           core.hasSuffix(end),
+           core.count >= start.count + end.count {
+            let stripped = String(core.dropFirst(start.count).dropLast(end.count))
+            return (stripped, stripped, "")
+        }
+        return (start + core + end, core, start)
+    }
+}

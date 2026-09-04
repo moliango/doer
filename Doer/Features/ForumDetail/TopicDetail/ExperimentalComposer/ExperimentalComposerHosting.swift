@@ -11,6 +11,7 @@ enum ExperimentalComposerHosting {
     static func makeViewIfEnabled(
         pasteCoordinator: ComposerMarkdownCoordinator,
         imageBaseURL: String,
+        placeholderText: String,
         onDocumentChanged: @escaping () -> Void,
         onEditingBegan: @escaping () -> Void,
         onSelectionChanged: (() -> Void)? = nil,
@@ -22,6 +23,7 @@ enum ExperimentalComposerHosting {
         let view = ExperimentalComposerView()
         view.translatesAutoresizingMaskIntoConstraints = false
         view.imageBaseURL = imageBaseURL
+        view.placeholderText = placeholderText
         view.pasteCoordinator = pasteCoordinator
         view.onDocumentChanged = onDocumentChanged
         view.onEditingBegan = onEditingBegan
@@ -39,5 +41,15 @@ enum ExperimentalComposerHosting {
             experimental.bottomAnchor.constraint(equalTo: textView.bottomAnchor),
         ])
         textView.isHidden = true
+    }
+
+    static func abandon(
+        _ experimental: ExperimentalComposerView,
+        revealing textView: UIView,
+        modeButton: UIButton? = nil
+    ) {
+        experimental.removeFromSuperview()
+        textView.isHidden = false
+        modeButton?.isHidden = false
     }
 }

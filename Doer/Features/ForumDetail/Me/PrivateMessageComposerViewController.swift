@@ -83,9 +83,12 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         if let experimental = ExperimentalComposerHosting.makeViewIfEnabled(
             pasteCoordinator: markdownCoordinator,
             imageBaseURL: api.baseURL,
+            placeholderText: String(localized: "reply.placeholder"),
             onDocumentChanged: { [weak self] in
                 guard let self else { return }
-                self.placeholderLabel.isHidden = !self.bodyRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                if self.experimentalComposerView == nil {
+                    self.placeholderLabel.isHidden = !self.bodyRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }
                 self.updateSendState()
                 self.scheduleDraftSave()
             },
@@ -94,8 +97,8 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
             ExperimentalComposerHosting.pin(experimental, over: textView, in: view)
             experimentalComposerView = experimental
             navigationItem.rightBarButtonItems = navigationItem.rightBarButtonItems?.filter { $0 !== modeBarItem }
+            placeholderLabel.isHidden = true
             view.bringSubviewToFront(previewView)
-            view.bringSubviewToFront(placeholderLabel)
             view.bringSubviewToFront(uploadStatusLabel)
         }
         applyBodyMarkdown(initialRaw)
@@ -259,9 +262,12 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
 
     private func applyBodyMarkdown(_ raw: String) {
         if let experimentalComposerView {
-            experimentalComposerView.load(markdown: raw)
-            placeholderLabel.isHidden = raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            return
+            if experimentalComposerView.tryLoad(raw) {
+                placeholderLabel.isHidden = raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                return
+            }
+            ExperimentalComposerHosting.abandon(experimentalComposerView, revealing: textView)
+            self.experimentalComposerView = nil
         }
         if editingMode == .rich {
             textView.attributedText = ComposerMarkdownCodec.richAttributedString(from: raw)

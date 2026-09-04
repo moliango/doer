@@ -38,6 +38,40 @@ protocol ComposerTextSurface: AnyObject {
 
 // MARK: - Paste-capable body text view
 
+/// Insertion-point size: empty TextKit 2 text views often report a 1–2pt caret.
+enum ComposerCaretGeometry {
+    static let minWidth: CGFloat = 2
+
+    static func minHeight(for font: UIFont) -> CGFloat {
+        max(ceil(font.lineHeight), 18)
+    }
+
+    static func normalized(_ rect: CGRect, font: UIFont, bounds: CGRect) -> CGRect {
+        let minHeight = minHeight(for: font)
+        var rect = rect
+        if rect.isNull || rect.isInfinite || rect.height < 1 {
+            rect = CGRect(x: max(bounds.minX, 0), y: bounds.minY, width: minWidth, height: minHeight)
+        } else {
+            if rect.height < minHeight {
+                rect.size.height = minHeight
+            }
+            if rect.width < minWidth {
+                rect.size.width = minWidth
+            }
+            if rect.origin.x < 0 {
+                rect.origin.x = 0
+            }
+        }
+        if bounds.height >= minHeight, rect.maxY > bounds.maxY {
+            rect.origin.y = bounds.maxY - rect.height
+        }
+        if rect.minY < bounds.minY {
+            rect.origin.y = bounds.minY
+        }
+        return rect
+    }
+}
+
 /// Shared composer body that uploads clipboard images instead of inserting a broken attachment.
 final class ComposerBodyTextView: UITextView, UITextPasteDelegate {
     weak var pasteCoordinator: ComposerMarkdownCoordinator?
@@ -46,6 +80,17 @@ final class ComposerBodyTextView: UITextView, UITextPasteDelegate {
         super.init(frame: frame, textContainer: textContainer)
         pasteDelegate = self
         pasteConfiguration?.addTypeIdentifiers(forAccepting: UIImage.self)
+        clipsToBounds = false
+        tintColor = ComposerTypography.accentColor
+    }
+
+    override func caretRect(for position: UITextPosition) -> CGRect {
+        let font = (typingAttributes[.font] as? UIFont) ?? font ?? ComposerTypography.bodyFont
+        return ComposerCaretGeometry.normalized(
+            super.caretRect(for: position),
+            font: font,
+            bounds: bounds
+        )
     }
 
     @available(*, unavailable)

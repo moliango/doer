@@ -300,6 +300,7 @@ final class NewTopicComposerViewController: UIViewController {
         if let experimental = ExperimentalComposerHosting.makeViewIfEnabled(
             pasteCoordinator: markdownCoordinator,
             imageBaseURL: api.baseURL,
+            placeholderText: String(localized: "new_topic.body.placeholder"),
             onDocumentChanged: { [weak self] in
                 self?.updateEditorState()
                 self?.scheduleDraftSave()
@@ -312,8 +313,8 @@ final class NewTopicComposerViewController: UIViewController {
             ExperimentalComposerHosting.pin(experimental, over: textView, in: view)
             experimentalComposerView = experimental
             modeToggleButton.isHidden = true
+            placeholderLabel.isHidden = true
             view.bringSubviewToFront(previewView)
-            view.bringSubviewToFront(placeholderLabel)
             view.bringSubviewToFront(bottomStackView)
         }
         categoryButton.addTarget(self, action: #selector(categoryButtonPressed), for: .touchDown)
@@ -574,7 +575,11 @@ final class NewTopicComposerViewController: UIViewController {
     }
 
     private func updateEditorState() {
-        placeholderLabel.isHidden = isPreviewingMarkdown || !bodyRaw.isEmpty
+        if experimentalComposerView != nil {
+            placeholderLabel.isHidden = true
+        } else {
+            placeholderLabel.isHidden = isPreviewingMarkdown || !bodyRaw.isEmpty
+        }
         characterCountLabel.text = String(
             format: String(localized: "new_topic.character_count_format", defaultValue: "%lld 字符"),
             Int64(bodyRaw.count)
@@ -716,8 +721,15 @@ final class NewTopicComposerViewController: UIViewController {
 
     private func applyBodyMarkdown(_ raw: String) {
         if let experimentalComposerView {
-            experimentalComposerView.load(markdown: raw)
-            return
+            if experimentalComposerView.tryLoad(raw) {
+                return
+            }
+            ExperimentalComposerHosting.abandon(
+                experimentalComposerView,
+                revealing: textView,
+                modeButton: modeToggleButton
+            )
+            self.experimentalComposerView = nil
         }
         if editingMode == .rich {
             textView.attributedText = ComposerMarkdownCodec.richAttributedString(from: raw)

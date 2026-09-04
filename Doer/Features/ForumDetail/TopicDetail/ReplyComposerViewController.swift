@@ -284,6 +284,7 @@ final class ReplyComposerViewController: UIViewController {
         if let experimental = ExperimentalComposerHosting.makeViewIfEnabled(
             pasteCoordinator: markdownCoordinator,
             imageBaseURL: baseURL,
+            placeholderText: String(localized: "reply.markdown_placeholder"),
             onDocumentChanged: { [weak self] in
                 guard let self else { return }
                 self.updatePlaceholder()
@@ -304,10 +305,14 @@ final class ReplyComposerViewController: UIViewController {
             view.addSubview(experimental)
             experimentalComposerView = experimental
             textView.isHidden = true
+            placeholderLabel.isHidden = true
             modeToggleButton.isHidden = true
         }
         view.addSubview(previewView)
         view.addSubview(placeholderLabel)
+        if let experimental = experimentalComposerView {
+            view.insertSubview(experimental, belowSubview: previewView)
+        }
         view.addSubview(bottomStackView)
         // Above text, below chrome — so @ list is tappable over the editor.
         view.addSubview(mentionPickerView)
@@ -629,10 +634,17 @@ final class ReplyComposerViewController: UIViewController {
 
     private func setRawComposerText(_ raw: String) {
         if let experimentalComposerView {
-            experimentalComposerView.load(markdown: raw)
-            updatePlaceholder()
-            updateSendButton()
-            return
+            if experimentalComposerView.tryLoad(raw) {
+                updatePlaceholder()
+                updateSendButton()
+                return
+            }
+            ExperimentalComposerHosting.abandon(
+                experimentalComposerView,
+                revealing: textView,
+                modeButton: modeToggleButton
+            )
+            self.experimentalComposerView = nil
         }
         let attributed = makeComposerAttributedString(raw)
         applyComposerAttributedText(attributed, selectedRange: NSRange(location: attributed.length, length: 0))
@@ -1040,6 +1052,10 @@ final class ReplyComposerViewController: UIViewController {
     }
 
     private func updatePlaceholder() {
+        if usesExperimentalComposer {
+            placeholderLabel.isHidden = true
+            return
+        }
         placeholderLabel.isHidden = isPreviewingMarkdown || !composerRawText.isEmpty
     }
 
@@ -1108,8 +1124,10 @@ final class ReplyComposerViewController: UIViewController {
         }
         if usesExperimentalComposer {
             textView.isHidden = true
+            placeholderLabel.isHidden = true
+        } else {
+            placeholderLabel.isHidden = showPreview || !composerRawText.isEmpty
         }
-        placeholderLabel.isHidden = showPreview || !composerRawText.isEmpty
         updateToolbarState()
     }
 

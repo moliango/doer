@@ -47,7 +47,7 @@ Paste lives on `ComposerBodyTextView` + `ComposerMarkdownCoordinator.claimPasted
 | Poll insert | `ComposerSharedCore.presentPollBuilder()` → `PollBuilderViewController`; selected `[poll]` is parsed by `ComposerPollSpec.parse` and replaced via `replacingPoll` |
 | Voice | Toolbar 语音消息 presents `ComposerVoiceRecorderViewController` (AAC/m4a). Success uploads via `uploadMediaFile` and inserts `[wrap=voice]…[/wrap]`. Failure: `presentUploadError`, no markdown |
 | Aa / MD | `ComposerEditingMode` already exists on reply, new topic, and PM; do not add a second toggle |
-| Experimental WYSIWYG | `AppSettings.experimentalRichComposerEnabled` default **false**. Off: reply/new-topic/PM keep the existing `UITextView` + `ComposerMarkdownCodec` path unchanged. On: reply, new topic, and PM swap the body for `ExperimentalComposerView` (block list) via `ExperimentalComposerHosting`. Send/preview/pangu/draft still use raw Markdown. `[poll]` / `[wrap=` / `[policy` / `[grid` stay `.literal`. Standalone `![alt](url)` lines become image islands; `[quote="user, post:N, topic:M"]` becomes a quote card with editable inner markdown. Consecutive ordered list items show and serialize as `1.` `2.` `3.`; Return on a `1. ` paragraph continues the run. Empty list item + Return exits to a paragraph. Parser is touched before hiding the old editor so a trap cannot leave a blank composer. |
+| Experimental WYSIWYG | `AppSettings.experimentalRichComposerEnabled` default **false**. Off: reply/new-topic/PM keep the existing `UITextView` + `ComposerMarkdownCodec` path unchanged. On: reply, new topic, and PM swap the body for `ExperimentalComposerView` (block list) via `ExperimentalComposerHosting`. Send/preview/pangu/draft still use raw Markdown. `[poll]` / `[wrap=` / `[policy` / `[grid` stay `.literal`. Standalone `![alt](url)` lines become image islands; `[quote="user, post:N, topic:M"]` becomes a quote card with editable inner markdown. Consecutive ordered list items show and serialize as `1.` `2.` `3.`; Return on a `1. ` paragraph continues the run. Empty list item + Return exits to a paragraph. Parser is touched before hiding the old editor so a trap cannot leave a blank composer. Do not harvest markdown while `markedTextRange != nil` (CJK IME). After inserting an image/quote island, append a paragraph and focus it. `tryLoad` failure calls `ExperimentalComposerHosting.abandon` and shows the classic `UITextView`. Return/backspace restore the caret at the start of the new block or the merge join. Host placeholder overlays stay hidden while experimental is on; `ExperimentalComposerView` keeps its own placeholder behind the block stack. `ComposerBodyTextView.caretRect` must be at least the body font line height and 2pt wide. Experimental paragraphs keep a line-fragment gutter and do not clip chrome, so the insertion point is not cropped at x = 0. |
 
 Setting toggle: Preferences → 基础 (`autoPanguSpacing` and `experimentalRichComposerEnabled`). Also import/export with other bool prefs.
 
@@ -63,6 +63,10 @@ Setting toggle: Preferences → 基础 (`autoPanguSpacing` and `experimentalRich
 | Selected `[poll]` in body | Builder opens with parsed `ComposerPollSpec`; save replaces that block only |
 | No `[poll]` selected | Builder inserts a new block at the caret |
 | Microphone denied | `ComposerVoiceRecorderError.microphoneDenied`; no `[wrap=voice]` |
+| Experimental WYSIWYG on, IME composing | Harvest skipped; block text stays as typed |
+| Paste image while experimental on | Image island + following paragraph focused |
+| Quote-reply initial markdown | Quote card + empty paragraph |
+| Experimental `tryLoad` fails | Classic `UITextView` shown; experimental view removed |
 
 ### 5. Good / Base / Bad Cases
 

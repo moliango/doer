@@ -1,5 +1,15 @@
 import UIKit
 
+private enum ExperimentalComposerLayout {
+    static let stackInset: CGFloat = 16
+    static let stackTop: CGFloat = 8
+    static let textInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
+    static let lineFragmentPadding: CGFloat = 5
+
+    static var placeholderTop: CGFloat { stackTop + textInsets.top }
+    static var placeholderLeading: CGFloat { stackInset + textInsets.left + lineFragmentPadding }
+}
+
 /// Vertical block list used when the experimental WYSIWYG setting is on.
 /// Hosts keep send / draft / pangu on `markdown`; this view never owns Discourse cook.
 @MainActor
@@ -13,6 +23,12 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
     var onEditingBegan: (() -> Void)?
     var onSelectionChanged: (() -> Void)?
     var onScroll: (() -> Void)?
+    var placeholderText: String = "" {
+        didSet {
+            placeholderLabel.text = placeholderText
+            refreshPlaceholder()
+        }
+    }
 
     private let scrollView: UIScrollView = {
         let scroll = UIScrollView()
@@ -26,9 +42,17 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
-        stack.spacing = 10
+        stack.spacing = 2
         stack.alignment = .fill
         return stack
+    }()
+
+    private let placeholderLabel: UILabel = {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        ComposerTypography.applyBody(to: label)
+        label.isUserInteractionEnabled = false
+        return label
     }()
 
     private var blockViews: [ExperimentalComposerBlockView] = []
@@ -63,6 +87,7 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
         super.init(frame: frame)
         backgroundColor = ComposerTypography.backgroundColor
         addSubview(scrollView)
+        scrollView.addSubview(placeholderLabel)
         scrollView.addSubview(stackView)
         scrollView.delegate = self
         NSLayoutConstraint.activate([
@@ -70,10 +95,25 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            stackView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 12),
-            stackView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 16),
+            placeholderLabel.topAnchor.constraint(
+                equalTo: scrollView.contentLayoutGuide.topAnchor,
+                constant: ExperimentalComposerLayout.placeholderTop
+            ),
+            placeholderLabel.leadingAnchor.constraint(
+                equalTo: scrollView.contentLayoutGuide.leadingAnchor,
+                constant: ExperimentalComposerLayout.placeholderLeading
+            ),
+            placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -16),
+            stackView.topAnchor.constraint(
+                equalTo: scrollView.contentLayoutGuide.topAnchor,
+                constant: ExperimentalComposerLayout.stackTop
+            ),
+            stackView.leadingAnchor.constraint(
+                equalTo: scrollView.contentLayoutGuide.leadingAnchor,
+                constant: ExperimentalComposerLayout.stackInset
+            ),
             stackView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -16),
-            stackView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -24),
+            stackView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -16),
             stackView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32),
         ])
         let tap = UITapGestureRecognizer(target: self, action: #selector(backgroundTapped))
@@ -98,9 +138,21 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
     }
 
     func load(markdown raw: String) {
-        document = ExperimentalComposerDocument.parse(raw)
+        _ = tryLoad(raw)
+    }
+
+    /// Returns false when the kernel cannot present `raw`; hosts should reveal the classic editor.
+    @discardableResult
+    func tryLoad(_ raw: String) -> Bool {
+        var parsed = ExperimentalComposerDocument.parse(raw)
+        guard ExperimentalComposerEditingPolicy.loadSucceeded(raw: raw, document: parsed) else {
+            return false
+        }
+        parsed.blocks = ExperimentalComposerEditingPolicy.ensuringEditableTail(parsed.blocks)
+        document = parsed
         rebuild(from: document)
         onDocumentChanged?()
+        return !blockViews.isEmpty
     }
 
     func insertRaw(_ text: String) {
@@ -121,11 +173,22 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
 
         if shouldInsertBlocks, !parsed.blocks.isEmpty {
             syncDocumentFromViews()
-            let insertAt = min(focusedIndex + 1, document.blocks.count)
+            let insertAt = min(max(focusedIndex + 1, 0), document.blocks.count)
             document.blocks.insert(contentsOf: parsed.blocks, at: insertAt)
+            if ExperimentalComposerEditingPolicy.needsTrailingParagraph(
+                in: document.blocks,
+                insertAt: insertAt,
+                insertedCount: parsed.blocks.count
+            ) {
+                document.blocks.insert(.paragraph(""), at: insertAt + parsed.blocks.count)
+            }
             rebuild(from: document)
-            focusedIndex = min(insertAt + parsed.blocks.count - 1, blockViews.count - 1)
-            blockViews[safe: focusedIndex]?.textView.becomeFirstResponder()
+            let focus = ExperimentalComposerEditingPolicy.focusIndexAfterInsert(
+                in: document.blocks,
+                insertAt: insertAt,
+                insertedCount: parsed.blocks.count
+            )
+            focusBlock(at: focus, caret: .start)
             onDocumentChanged?()
             return
         }
@@ -143,8 +206,19 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
     func wrapSelection(start: String, end: String, placeholder: String) {
         guard let blockView = blockViews[safe: focusedIndex] else { return }
         let selection = blockView.textView.selectedRange
-        let selected = selection.length > 0 ? blockView.rawText(inDisplayRange: selection) : placeholder
-        blockView.replaceDisplayRange(selection, withRaw: "\(start)\(selected)\(end)")
+        let selected = selection.length > 0 ? blockView.rawText(inDisplayRange: selection) : ""
+        let wrapped = ExperimentalComposerWrapPolicy.wrap(
+            inner: selected,
+            start: start,
+            end: end,
+            placeholder: placeholder
+        )
+        blockView.replaceDisplayRange(
+            selection,
+            withRaw: wrapped.raw,
+            selectInner: wrapped.selectedInner,
+            wrapStart: wrapped.marker
+        )
         syncDocumentFromViews()
         onDocumentChanged?()
     }
@@ -193,7 +267,7 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
         }
         document.blocks[focusedIndex] = next
         rebuild(from: document)
-        blockViews[safe: focusedIndex]?.textView.becomeFirstResponder()
+        focusBlock(at: focusedIndex, caret: .end)
         onDocumentChanged?()
     }
 
@@ -235,6 +309,14 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
         }
         focusedIndex = min(focusedIndex, max(blockViews.count - 1, 0))
         isRebuilding = false
+        refreshPlaceholder()
+    }
+
+    private func refreshPlaceholder() {
+        placeholderLabel.isHidden = !isBodyEmpty
+        if !placeholderLabel.isHidden {
+            scrollView.sendSubviewToBack(placeholderLabel)
+        }
     }
 
     private func applyPasteCoordinator() {
@@ -243,7 +325,12 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
 
     func syncDocumentFromViews() {
         guard !blockViews.isEmpty else { return }
-        blockViews.forEach { $0.harvestFromTextView() }
+        for view in blockViews {
+            guard ExperimentalComposerEditingPolicy.shouldHarvest(
+                hasMarkedText: view.textView.markedTextRange != nil
+            ) else { continue }
+            view.harvestFromTextView()
+        }
         document.blocks = blockViews.map(\.block)
     }
 
@@ -259,7 +346,11 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
 
     func textViewDidChange(_ textView: UITextView) {
         guard !isRebuilding else { return }
+        guard ExperimentalComposerEditingPolicy.shouldHarvest(hasMarkedText: textView.markedTextRange != nil) else {
+            return
+        }
         blockViews[safe: textView.tag]?.harvestFromTextView()
+        refreshPlaceholder()
         onDocumentChanged?()
     }
 
@@ -323,8 +414,7 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
            case .listItem = document.blocks[index - 1] {
             document.blocks[index] = .paragraph("")
             rebuild(from: document)
-            focusedIndex = index
-            blockViews[safe: focusedIndex]?.textView.becomeFirstResponder()
+            focusBlock(at: index, caret: .start)
             onDocumentChanged?()
             return
         }
@@ -342,8 +432,7 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
         }
         document.blocks.insert(newBlock, at: index + 1)
         rebuild(from: document)
-        focusedIndex = index + 1
-        blockViews[safe: focusedIndex]?.textView.becomeFirstResponder()
+        focusBlock(at: index + 1, caret: .start)
         onDocumentChanged?()
     }
 
@@ -362,11 +451,11 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
         if previous.isAtomicIsland {
             document.blocks.remove(at: index - 1)
             rebuild(from: document)
-            focusedIndex = index - 1
-            blockViews[safe: focusedIndex]?.textView.becomeFirstResponder()
+            focusBlock(at: index - 1, caret: .start)
             onDocumentChanged?()
             return
         }
+        let joinRaw = previous.innerMarkdown
         let mergedInner: String
         if previous.innerMarkdown.isEmpty {
             mergedInner = current.innerMarkdown
@@ -378,14 +467,36 @@ final class ExperimentalComposerView: UIView, UITextViewDelegate {
         document.blocks[index - 1] = previous.replacingInner(mergedInner)
         document.blocks.remove(at: index)
         rebuild(from: document)
-        focusedIndex = index - 1
-        let tv = blockViews[safe: focusedIndex]?.textView
-        tv?.becomeFirstResponder()
-        if let tv {
-            let end = tv.attributedText?.length ?? tv.text?.utf16.count ?? 0
-            tv.selectedRange = NSRange(location: end, length: 0)
-        }
+        let joinDisplay = blockViews[safe: index - 1]?.displayLength(ofRaw: joinRaw) ?? 0
+        focusBlock(at: index - 1, caret: .display(joinDisplay))
         onDocumentChanged?()
+    }
+
+    private enum Caret {
+        case start
+        case end
+        case display(Int)
+    }
+
+    private func focusBlock(at index: Int, caret: Caret) {
+        var target = min(max(index, 0), max(blockViews.count - 1, 0))
+        if let view = blockViews[safe: target], !view.textView.isEditable, target + 1 < blockViews.count {
+            target += 1
+        }
+        focusedIndex = target
+        guard let textView = blockViews[safe: target]?.textView else { return }
+        textView.becomeFirstResponder()
+        let length = textView.attributedText?.length ?? (textView.text as NSString?)?.length ?? 0
+        let location: Int
+        switch caret {
+        case .start:
+            location = 0
+        case .end:
+            location = length
+        case .display(let value):
+            location = min(max(value, 0), length)
+        }
+        textView.selectedRange = NSRange(location: location, length: 0)
     }
 }
 
@@ -464,6 +575,10 @@ private final class ExperimentalComposerBlockView: UIView {
     private let markerLabel = UILabel()
     private var isApplying = false
     private var markerWidthConstraint: NSLayoutConstraint!
+    private var chromeTopConstraint: NSLayoutConstraint!
+    private var chromeBottomConstraint: NSLayoutConstraint!
+    private var chromeLeadingConstraint: NSLayoutConstraint!
+    private var chromeTrailingConstraint: NSLayoutConstraint!
     init(block: ExperimentalComposerBlock, orderedIndex: Int = 1, imageBaseURL: String = "") {
         self.block = block
         self.orderedIndex = orderedIndex
@@ -478,8 +593,10 @@ private final class ExperimentalComposerBlockView: UIView {
         textView.translatesAutoresizingMaskIntoConstraints = false
         textView.isScrollEnabled = false
         textView.backgroundColor = .clear
-        textView.textContainerInset = UIEdgeInsets(top: 4, left: 0, bottom: 4, right: 4)
-        textView.textContainer.lineFragmentPadding = 0
+        textView.clipsToBounds = false
+        textView.tintColor = ComposerTypography.accentColor
+        textView.textContainerInset = ExperimentalComposerLayout.textInsets
+        textView.textContainer.lineFragmentPadding = ExperimentalComposerLayout.lineFragmentPadding
         textView.returnKeyType = .default
         textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -487,7 +604,7 @@ private final class ExperimentalComposerBlockView: UIView {
         textView.setContentCompressionResistancePriority(.required, for: .vertical)
         chrome.layer.cornerRadius = 10
         chrome.layer.cornerCurve = .continuous
-        chrome.clipsToBounds = true
+        chrome.clipsToBounds = false
 
         quoteHeader.font = AppSettings.shared.appInterfaceFont(
             ofSize: 13,
@@ -517,7 +634,7 @@ private final class ExperimentalComposerBlockView: UIView {
         let contentStack = UIStackView(arrangedSubviews: [quoteHeader, imageView, rowStack])
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         contentStack.axis = .vertical
-        contentStack.spacing = 6
+        contentStack.spacing = 4
 
         addSubview(chrome)
         chrome.addSubview(contentStack)
@@ -526,15 +643,19 @@ private final class ExperimentalComposerBlockView: UIView {
         rowStack.addArrangedSubview(textView)
         markerWidthConstraint = markerColumn.widthAnchor.constraint(equalToConstant: 0)
         imageHeightConstraint = imageView.heightAnchor.constraint(equalToConstant: 0)
+        chromeTopConstraint = contentStack.topAnchor.constraint(equalTo: chrome.topAnchor)
+        chromeBottomConstraint = contentStack.bottomAnchor.constraint(equalTo: chrome.bottomAnchor)
+        chromeLeadingConstraint = contentStack.leadingAnchor.constraint(equalTo: chrome.leadingAnchor)
+        chromeTrailingConstraint = contentStack.trailingAnchor.constraint(equalTo: chrome.trailingAnchor)
         NSLayoutConstraint.activate([
             chrome.topAnchor.constraint(equalTo: topAnchor),
             chrome.leadingAnchor.constraint(equalTo: leadingAnchor),
             chrome.trailingAnchor.constraint(equalTo: trailingAnchor),
             chrome.bottomAnchor.constraint(equalTo: bottomAnchor),
-            contentStack.topAnchor.constraint(equalTo: chrome.topAnchor, constant: 6),
-            contentStack.leadingAnchor.constraint(equalTo: chrome.leadingAnchor, constant: 6),
-            contentStack.trailingAnchor.constraint(equalTo: chrome.trailingAnchor, constant: -6),
-            contentStack.bottomAnchor.constraint(equalTo: chrome.bottomAnchor, constant: -6),
+            chromeTopConstraint,
+            chromeLeadingConstraint,
+            chromeTrailingConstraint,
+            chromeBottomConstraint,
             imageHeightConstraint,
             markerLabel.topAnchor.constraint(equalTo: markerColumn.topAnchor, constant: 4),
             markerLabel.leadingAnchor.constraint(equalTo: markerColumn.leadingAnchor),
@@ -550,6 +671,10 @@ private final class ExperimentalComposerBlockView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    func displayLength(ofRaw raw: String) -> Int {
+        displayedAttributedString(from: raw).length
     }
 
     func harvestFromTextView() {
@@ -598,7 +723,12 @@ private final class ExperimentalComposerBlockView: UIView {
         }
     }
 
-    func replaceDisplayRange(_ range: NSRange, withRaw raw: String) {
+    func replaceDisplayRange(
+        _ range: NSRange,
+        withRaw raw: String,
+        selectInner inner: String? = nil,
+        wrapStart: String = ""
+    ) {
         switch block {
         case .image:
             return
@@ -610,13 +740,19 @@ private final class ExperimentalComposerBlockView: UIView {
             text.replaceCharacters(in: NSRange(location: location, length: lengthClamped), with: raw)
             isApplying = true
             textView.text = text as String
-            let caret = location + (raw as NSString).length
-            textView.selectedRange = NSRange(location: min(caret, text.length), length: 0)
+            if let inner {
+                let start = (prefixOfLiteral(text as String, before: raw) + wrapStart) as NSString
+                let innerNS = inner as NSString
+                textView.selectedRange = NSRange(location: min(start.length, text.length), length: min(innerNS.length, max(text.length - start.length, 0)))
+            } else {
+                let caret = location + (raw as NSString).length
+                textView.selectedRange = NSRange(location: min(caret, text.length), length: 0)
+            }
             isApplying = false
             harvestFromTextView()
         default:
             let attributed = NSMutableAttributedString(
-                attributedString: textView.attributedText ?? NSAttributedString(string: "", attributes: ComposerTypography.typingAttributes)
+                attributedString: textView.attributedText ?? NSAttributedString(string: "", attributes: compactTypingAttributes)
             )
             let length = attributed.length
             let location = min(max(range.location, 0), length)
@@ -630,13 +766,47 @@ private final class ExperimentalComposerBlockView: UIView {
             let combined = prefixRaw + raw + suffixRaw
             block = block.replacingInner(combined)
             applyContent()
-            let caretRaw = prefixRaw + raw
-            let caretDisplay = displayedAttributedString(from: caretRaw).length
-            textView.selectedRange = NSRange(
-                location: min(caretDisplay, textView.attributedText?.length ?? 0),
-                length: 0
-            )
+            let attributedLength = textView.attributedText?.length ?? 0
+            if let inner {
+                let beforeInner = displayedAttributedString(from: prefixRaw + wrapStart).length
+                let withInner = displayedAttributedString(from: prefixRaw + wrapStart + inner).length
+                let loc = min(beforeInner, attributedLength)
+                let len = min(max(withInner - beforeInner, 0), max(attributedLength - loc, 0))
+                textView.selectedRange = NSRange(location: loc, length: len)
+                applyTypingAttributes(at: loc, length: len, in: textView.attributedText)
+            } else {
+                let caretDisplay = displayedAttributedString(from: prefixRaw + raw).length
+                let loc = min(caretDisplay, attributedLength)
+                textView.selectedRange = NSRange(location: loc, length: 0)
+                applyTypingAttributes(at: loc, length: 0, in: textView.attributedText)
+            }
         }
+    }
+
+    private func prefixOfLiteral(_ text: String, before raw: String) -> String {
+        if let range = text.range(of: raw) {
+            return String(text[..<range.lowerBound])
+        }
+        return text
+    }
+
+    private var compactTypingAttributes: [NSAttributedString.Key: Any] {
+        [
+            .font: ComposerTypography.bodyFont,
+            .foregroundColor: UIColor.label,
+            .paragraphStyle: Self.compactParagraphStyle,
+        ]
+    }
+
+    private func applyTypingAttributes(at location: Int, length: Int, in attributed: NSAttributedString?) {
+        guard let attributed, attributed.length > 0 else {
+            textView.typingAttributes = compactTypingAttributes
+            return
+        }
+        let index = min(max(length > 0 ? location : location - 1, 0), attributed.length - 1)
+        var attrs = ComposerMarkdownCodec.typingAttributes(at: index, in: attributed)
+        attrs[.paragraphStyle] = Self.compactParagraphStyle
+        textView.typingAttributes = attrs
     }
 
     private func applyChrome() {
@@ -651,6 +821,19 @@ private final class ExperimentalComposerBlockView: UIView {
         imageHeightConstraint.constant = 0
         textView.isHidden = false
         textView.isEditable = true
+        let pad: CGFloat
+        switch block {
+        case .paragraph, .heading, .listItem:
+            pad = 0
+            chrome.clipsToBounds = false
+        default:
+            pad = 8
+            chrome.clipsToBounds = true
+        }
+        chromeTopConstraint.constant = pad
+        chromeBottomConstraint.constant = -pad
+        chromeLeadingConstraint.constant = pad
+        chromeTrailingConstraint.constant = -pad
         switch block {
         case .paragraph:
             break
@@ -723,23 +906,14 @@ private final class ExperimentalComposerBlockView: UIView {
         case .quoteCard:
             let styled = displayedAttributedString(from: block.innerMarkdown)
             textView.attributedText = styled
-            textView.typingAttributes = ComposerTypography.typingAttributes
+            applyTypingAttributes(at: max(styled.length - 1, 0), length: 0, in: styled)
         default:
             let styled = displayedAttributedString(from: block.innerMarkdown)
             textView.attributedText = styled
             if styled.length > 0 {
-                textView.typingAttributes = ComposerMarkdownCodec.typingAttributes(
-                    at: max(styled.length - 1, 0),
-                    in: styled
-                )
-            } else if case .listItem = block {
-                textView.typingAttributes = [
-                    .font: ComposerTypography.bodyFont,
-                    .foregroundColor: UIColor.label,
-                    .paragraphStyle: Self.listParagraphStyle,
-                ]
+                applyTypingAttributes(at: max(styled.length - 1, 0), length: 0, in: styled)
             } else {
-                textView.typingAttributes = ComposerTypography.typingAttributes
+                textView.typingAttributes = compactTypingAttributes
             }
         }
         isApplying = false
@@ -750,32 +924,37 @@ private final class ExperimentalComposerBlockView: UIView {
         if styled.string.hasSuffix("\n"), styled.length > 0 {
             styled.deleteCharacters(in: NSRange(location: styled.length - 1, length: 1))
         }
+        if styled.length > 0 {
+            styled.addAttribute(
+                .paragraphStyle,
+                value: Self.compactParagraphStyle,
+                range: NSRange(location: 0, length: styled.length)
+            )
+        }
         switch block {
         case .heading(let level, _):
             let font = ComposerTypography.headingFont(level: level)
             styled.addAttribute(.font, value: font, range: NSRange(location: 0, length: styled.length))
         case .quote:
             styled.addAttribute(.foregroundColor, value: UIColor.secondaryLabel, range: NSRange(location: 0, length: styled.length))
-        case .listItem:
-            if styled.length > 0 {
-                styled.addAttribute(.paragraphStyle, value: Self.listParagraphStyle, range: NSRange(location: 0, length: styled.length))
-            }
         default:
             break
         }
         return styled
     }
 
-    private static var listParagraphStyle: NSParagraphStyle {
+    private static var compactParagraphStyle: NSParagraphStyle {
         let style = NSMutableParagraphStyle()
-        style.lineHeightMultiple = 1
+        style.lineHeightMultiple = 1.15
         style.paragraphSpacing = 0
         style.lineBreakMode = .byWordWrapping
         return style
     }
 
     private static var listRowMinHeight: CGFloat {
-        ceil(ComposerTypography.bodyFont.lineHeight) + 8
+        ComposerCaretGeometry.minHeight(for: ComposerTypography.bodyFont)
+            + ExperimentalComposerLayout.textInsets.top
+            + ExperimentalComposerLayout.textInsets.bottom
     }
 }
 
