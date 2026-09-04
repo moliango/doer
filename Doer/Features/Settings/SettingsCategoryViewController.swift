@@ -150,7 +150,10 @@ extension SettingsCategoryViewController: UITableViewDataSource {
                     : String(localized: "settings.network.cloudflare_required")
             )
         case .bottomBarLayout:
-            return valueCell(title: "底栏布局", detail: bottomBarLayoutSummary())
+            return valueCell(
+                title: String(localized: "settings.bottom_bar"),
+                detail: bottomBarLayoutSummary()
+            )
         case .bottomAutoHide:
             return switchCell(title: String(localized: "settings.bottom_bar.auto_hide"), isOn: settings.bottomBarAutoHideEnabled, action: #selector(bottomAutoHideChanged(_:)))
         case .clearImageCache:
@@ -294,9 +297,18 @@ extension SettingsCategoryViewController {
     func bottomBarLayoutSummary() -> String {
         let visibleItems = settings.forumVisibleDynamicTabItems.map(\.title).joined(separator: " / ")
         if visibleItems.isEmpty {
-            return "首页 + 我的"
+            return String(
+                localized: "settings.bottom_bar.summary_empty",
+                defaultValue: "当前实际底栏：首页 + 我的。"
+            )
         }
-        return "首页 + \(visibleItems) + 我的"
+        return String(
+            format: String(
+                localized: "settings.bottom_bar.summary_format",
+                defaultValue: "当前实际底栏：首页 + %@ + 我的。"
+            ),
+            visibleItems
+        )
     }
 
     @objc func dohToggleChanged(_ sender: UISwitch) {

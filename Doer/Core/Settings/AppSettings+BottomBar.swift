@@ -11,6 +11,7 @@ extension AppSettings {
         case notifications
         case messages
         case bookmarks
+        case chat
 
         var title: String {
             switch self {
@@ -19,16 +20,42 @@ extension AppSettings {
             case .notifications: return String(localized: "tab.notifications")
             case .messages: return String(localized: "tab.messages")
             case .bookmarks: return String(localized: "me.bookmarks")
+            case .chat: return String(localized: "chat.title", defaultValue: "站内聊天")
             }
         }
 
         var subtitle: String {
             switch self {
-            case .history: return "查看已读和看过的话题"
-            case .search: return "搜索帖子和回复"
-            case .notifications: return "查看回复、点赞和系统通知"
-            case .messages: return "查看论坛私信"
-            case .bookmarks: return "查看已收藏内容"
+            case .history:
+                return String(
+                    localized: "settings.bottom_bar.history.subtitle",
+                    defaultValue: "查看已读和看过的话题"
+                )
+            case .search:
+                return String(
+                    localized: "settings.bottom_bar.search.subtitle",
+                    defaultValue: "搜索帖子和回复"
+                )
+            case .notifications:
+                return String(
+                    localized: "settings.bottom_bar.notifications.subtitle",
+                    defaultValue: "查看回复、点赞和系统通知"
+                )
+            case .messages:
+                return String(
+                    localized: "settings.bottom_bar.messages.subtitle",
+                    defaultValue: "查看论坛私信"
+                )
+            case .bookmarks:
+                return String(
+                    localized: "settings.bottom_bar.bookmarks.subtitle",
+                    defaultValue: "查看已收藏内容"
+                )
+            case .chat:
+                return String(
+                    localized: "settings.bottom_bar.chat.subtitle",
+                    defaultValue: "频道与私聊"
+                )
             }
         }
 
@@ -39,6 +66,7 @@ extension AppSettings {
             case .notifications: return "bell"
             case .messages: return "envelope"
             case .bookmarks: return "bookmark"
+            case .chat: return "bubble.left.and.bubble.right"
             }
         }
 
@@ -56,7 +84,7 @@ extension AppSettings {
     static let defaultForumDynamicTabItems: [ForumDynamicTabItem] = [
         .history,
         .notifications,
-        .bookmarks,
+        .chat,
     ]
 
     static func pluginForumTabItemID(pluginID: String, contributionID: String) -> String {
