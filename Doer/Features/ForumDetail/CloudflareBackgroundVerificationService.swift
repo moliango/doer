@@ -62,12 +62,12 @@ final class CloudflareBackgroundVerificationService {
 
         if !force, let lastAttempt = lastAttemptAt[key],
            Date().timeIntervalSince(lastAttempt) < attemptCooldown {
-            // Critical: cooldown must NOT force another human challenge if we already
-            // hold clearance / are in post-pass grace. That caused Topic Detail to
-            // re-prompt immediately after a successful pass while image retries settled.
-            if CloudflareVerificationPolicy.isInVerificationGrace(baseURL: baseURL)
-                || WebCookieStore.shared.hasCookie(named: "cf_clearance", for: baseURL) {
-                log("skipped reason=\(reason) base=\(key) skip=attempt_cooldown_with_clearance")
+            // Only the post-pass grace counts as verified. A leftover cf_clearance
+            // can be stale and must not pretend the challenge is gone.
+            if CloudflareVerificationPolicy.shouldTreatCooldownAsVerified(
+                isInGrace: CloudflareVerificationPolicy.isInVerificationGrace(baseURL: baseURL)
+            ) {
+                log("skipped reason=\(reason) base=\(key) skip=attempt_cooldown_in_grace")
                 return true
             }
             log("skipped reason=\(reason) base=\(key) skip=attempt_cooldown")
@@ -100,21 +100,22 @@ final class CloudflareBackgroundVerificationService {
                     DiscourseAPI.cloudflareBaseURLUserInfoKey: key.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
                 ]
             )
-        } else if CloudflareVerificationPolicy.isInVerificationGrace(baseURL: baseURL)
-            || WebCookieStore.shared.hasCookie(named: "cf_clearance", for: baseURL) {
-            // Avoid re-prompting right after a successful pass when a flaky retry fails.
-            log("failed but clearance/grace present reason=\(reason) base=\(key); skip user prompt")
-        } else {
+        } else if CloudflareVerificationPolicy.shouldPromptAfterBackgroundFailure(
+            isInGrace: CloudflareVerificationPolicy.isInVerificationGrace(baseURL: baseURL)
+        ) {
             postNeedsUserInteraction(baseURL: baseURL, responseURL: responseURL, reason: reason)
+        } else {
+            log("failed during verification grace reason=\(reason) base=\(key); skip user prompt")
         }
 
         return ok
     }
 
     private func postNeedsUserInteraction(baseURL: URL, responseURL: URL?, reason: String) {
-        if CloudflareVerificationPolicy.isInVerificationGrace(baseURL: baseURL)
-            || WebCookieStore.shared.hasCookie(named: "cf_clearance", for: baseURL) {
-            log("needs user interaction suppressed reason=\(reason) base=\(baseURL.absoluteString) grace_or_clearance=true")
+        if !CloudflareVerificationPolicy.shouldPromptAfterBackgroundFailure(
+            isInGrace: CloudflareVerificationPolicy.isInVerificationGrace(baseURL: baseURL)
+        ) {
+            log("needs user interaction suppressed reason=\(reason) base=\(baseURL.absoluteString) grace=true")
             return
         }
         log("needs user interaction reason=\(reason) base=\(baseURL.absoluteString)")

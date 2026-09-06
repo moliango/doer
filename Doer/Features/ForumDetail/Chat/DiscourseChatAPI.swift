@@ -693,7 +693,7 @@ extension DiscourseAPI {
         let url = baseURL + DiscourseChatEndpoint.channels()
         let response = await session.request(url, method: .get).serializingData().response
         if let http = response.response, let responseURL = http.url,
-           shouldMergeWebCookieResponseHeaders(baseURL: baseURL, responseURL: responseURL) {
+           shouldMergeWebCookieResponseHeaders(baseURL: baseURL, responseURL: responseURL, statusCode: http.statusCode) {
             WebCookieStore.shared.mergeResponseHeaders(http.allHeaderFields, for: responseURL)
         }
         if let error = response.error { throw error }
@@ -751,7 +751,7 @@ extension DiscourseAPI {
 
     private func throwIfUnsuccessfulChatResponse(_ response: AFDataResponse<Data>) throws {
         if let http = response.response, let responseURL = http.url,
-           shouldMergeWebCookieResponseHeaders(baseURL: baseURL, responseURL: responseURL) {
+           shouldMergeWebCookieResponseHeaders(baseURL: baseURL, responseURL: responseURL, statusCode: http.statusCode) {
             WebCookieStore.shared.mergeResponseHeaders(http.allHeaderFields, for: responseURL)
         }
         if let newToken = response.response?.value(forHTTPHeaderField: "X-CSRF-Token") {

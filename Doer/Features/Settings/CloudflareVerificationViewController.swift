@@ -146,6 +146,17 @@ enum CloudflareVerificationPolicy {
         guard !query.isEmpty else { return false }
         return query.contains("__cf_chl_") || query.contains("cf_chl_")
     }
+
+    /// A leftover `cf_clearance` can be stale. Only the short post-pass grace
+    /// should suppress the human verification sheet.
+    static func shouldPromptAfterBackgroundFailure(isInGrace: Bool) -> Bool {
+        !isInGrace
+    }
+
+    /// Cooldown must not report verified just because any clearance cookie exists.
+    static func shouldTreatCooldownAsVerified(isInGrace: Bool) -> Bool {
+        isInGrace
+    }
 }
 
 /// After CF verification: only rebuild Topic Detail when the page is empty or already

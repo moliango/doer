@@ -57,8 +57,15 @@ func discourseRequestHasAuthCredentials(baseURL: String, url: URL) -> Bool {
     }
 }
 
-func shouldMergeWebCookieResponseHeaders(baseURL: String, responseURL: URL) -> Bool {
-    discourseRequestAuthMode(baseURL: baseURL, url: responseURL) == .webCookie
+func shouldMergeWebCookieResponseHeaders(
+    baseURL: String,
+    responseURL: URL,
+    statusCode: Int? = nil
+) -> Bool {
+    if let statusCode, !(200 ..< 300).contains(statusCode) {
+        return false
+    }
+    return discourseRequestAuthMode(baseURL: baseURL, url: responseURL) == .webCookie
 }
 
 struct CloudflareChallengeDetection: Sendable {

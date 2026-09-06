@@ -117,7 +117,7 @@ extension DiscourseAPI {
             interceptor.updateCSRFToken(newToken)
         }
         if let httpResponse = response.response, let responseURL = httpResponse.url,
-           shouldMergeWebCookieResponseHeaders(baseURL: baseURL, responseURL: responseURL) {
+           shouldMergeWebCookieResponseHeaders(baseURL: baseURL, responseURL: responseURL, statusCode: httpResponse.statusCode) {
             WebCookieStore.shared.mergeResponseHeaders(httpResponse.allHeaderFields, for: responseURL)
         }
         if handleCloudflareChallengeIfNeeded(route: route, response: response, source: "api.upload") {

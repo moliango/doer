@@ -29,6 +29,7 @@ final class WebCookieStore {
     nonisolated private static let sameSitePolicyKey = HTTPCookiePropertyKey("SameSitePolicy")
     nonisolated private static let createdKey = HTTPCookiePropertyKey("Created")
     private static let authCookieNames: Set<String> = ["_t", "_forum_session"]
+    private static let clearanceCookieName = "cf_clearance"
 
     /// The User-Agent captured from the WKWebView that completed login.
     var userAgent: String? {
@@ -62,12 +63,7 @@ final class WebCookieStore {
         for cookie in cookies {
             let key = key(for: cookie)
             if let kind = Self.deletionKind(cookie, now: now) {
-                if Self.isAuthCookieName(cookie.name),
-                   hasValidAuthCookieLocked(
-                    named: cookie.name,
-                    siteHost: Self.normalizedDomain(cookie.domain),
-                    now: now
-                   ) {
+                if shouldProtectCookieFromDeletionLocked(cookie, now: now) {
                     skippedAuthDeletions.append("\(cookie.name)(\(kind.logLabel))")
                     continue
                 }
@@ -258,17 +254,9 @@ final class WebCookieStore {
             if let names, !names.contains(cookie.name) {
                 return false
             }
-            if Self.isAuthCookieName(cookie.name),
-               let kind = Self.deletionKind(cookie, now: now),
-               shouldProtectAuthCookieFromDeletion(cookie, now: now) {
+            if let kind = Self.deletionKind(cookie, now: now),
+               shouldProtectCookieFromDeletion(cookie, now: now) {
                 skippedAuthDeletions.append("\(cookie.name)(\(kind.logLabel))")
-                return false
-            }
-            if cookie.name == "cf_clearance",
-               let url,
-               Self.deletionKind(cookie, now: now) != nil,
-               hasCookie(named: "cf_clearance", for: url) {
-                skippedAuthDeletions.append("cf_clearance(keep_jar)")
                 return false
             }
             // Skip expired leftovers from WK — applying them would delete still-valid jar
@@ -551,21 +539,38 @@ final class WebCookieStore {
         return jar.values.contains { cookie in
             cookie.name == name
                 && Self.normalizedDomain(cookie.domain) == siteHost
-                && !cookie.value.isEmpty
-                && cookie.value != "del"
-                && !Self.isExpired(cookie, now: now)
+                && Self.isLiveCookieValue(cookie, now: now)
         }
     }
 
-    private func shouldProtectAuthCookieFromDeletion(_ cookie: HTTPCookie, now: Date) -> Bool {
-        guard Self.isAuthCookieName(cookie.name) else { return false }
+    private func hasValidClearanceLocked(siteHost: String, now: Date) -> Bool {
+        guard !siteHost.isEmpty else { return false }
+        return jar.values.contains { cookie in
+            cookie.name == Self.clearanceCookieName
+                && Self.domainMatches(host: siteHost, cookieDomain: cookie.domain)
+                && Self.isLiveCookieValue(cookie, now: now)
+        }
+    }
+
+    private static func isLiveCookieValue(_ cookie: HTTPCookie, now: Date) -> Bool {
+        !cookie.value.isEmpty && cookie.value != "del" && !isExpired(cookie, now: now)
+    }
+
+    private func shouldProtectCookieFromDeletionLocked(_ cookie: HTTPCookie, now: Date) -> Bool {
+        let siteHost = Self.normalizedDomain(cookie.domain)
+        if Self.isAuthCookieName(cookie.name) {
+            return hasValidAuthCookieLocked(named: cookie.name, siteHost: siteHost, now: now)
+        }
+        if cookie.name == Self.clearanceCookieName {
+            return hasValidClearanceLocked(siteHost: siteHost, now: now)
+        }
+        return false
+    }
+
+    private func shouldProtectCookieFromDeletion(_ cookie: HTTPCookie, now: Date) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return hasValidAuthCookieLocked(
-            named: cookie.name,
-            siteHost: Self.normalizedDomain(cookie.domain),
-            now: now
-        )
+        return shouldProtectCookieFromDeletionLocked(cookie, now: now)
     }
 
     private static func isAuthCookieName(_ name: String) -> Bool {

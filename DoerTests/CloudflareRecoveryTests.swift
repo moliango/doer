@@ -187,6 +187,10 @@ final class CloudflareRecoveryTests: XCTestCase {
         CloudflareVerificationPolicy.markVerificationGrace(baseURL: base, duration: 5)
         XCTAssertTrue(CloudflareVerificationPolicy.isInVerificationGrace(baseURL: base))
         XCTAssertTrue(CloudflareVerificationPolicy.isInVerificationGrace(baseURL: "https://LINUX.DO/"))
+        XCTAssertFalse(CloudflareVerificationPolicy.shouldPromptAfterBackgroundFailure(isInGrace: true))
+        XCTAssertTrue(CloudflareVerificationPolicy.shouldPromptAfterBackgroundFailure(isInGrace: false))
+        XCTAssertTrue(CloudflareVerificationPolicy.shouldTreatCooldownAsVerified(isInGrace: true))
+        XCTAssertFalse(CloudflareVerificationPolicy.shouldTreatCooldownAsVerified(isInGrace: false))
     }
 
     func testRepeatedApiChallengesClearVerificationGrace() {

@@ -139,7 +139,7 @@ final class WebCookieStoreSessionTests: XCTestCase {
         XCTAssertEqual(WebCookieStore.shared.cookieValue(named: "_t", for: probeURL), "new-token")
     }
 
-    func testNonAuthExpiredSetCookieStillDeletes() throws {
+    func testExpiredClearanceSetCookieDoesNotWipeValidJarToken() throws {
         let tracking = try XCTUnwrap(HTTPCookie(properties: [
             .name: "cf_clearance",
             .value: "cf-token",
@@ -156,7 +156,30 @@ final class WebCookieStoreSessionTests: XCTestCase {
             for: probeURL
         )
 
-        XCTAssertFalse(WebCookieStore.shared.hasCookie(named: "cf_clearance", for: probeURL))
+        XCTAssertEqual(
+            WebCookieStore.shared.cookieValue(named: "cf_clearance", for: probeURL),
+            "cf-token",
+            "Failed/empty Set-Cookie must not delete a still-valid jar cf_clearance"
+        )
+    }
+
+    func testFreshClearanceSetCookieStillReplacesJarToken() throws {
+        let tracking = try XCTUnwrap(HTTPCookie(properties: [
+            .name: "cf_clearance",
+            .value: "old-cf",
+            .domain: probeHost,
+            .path: "/",
+            .secure: "TRUE",
+            .expires: Date().addingTimeInterval(3600),
+        ]))
+        WebCookieStore.shared.setCookies([tracking])
+
+        WebCookieStore.shared.mergeResponseHeaders(
+            ["Set-Cookie": "cf_clearance=new-cf; Expires=Thu, 01 Jan 2030 00:00:00 GMT; Path=/; Secure"],
+            for: probeURL
+        )
+
+        XCTAssertEqual(WebCookieStore.shared.cookieValue(named: "cf_clearance", for: probeURL), "new-cf")
     }
 
     private func seedValidAuthCookie(name: String, value: String) throws {

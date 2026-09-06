@@ -1,6 +1,42 @@
 import Foundation
 import WebKit
 
+enum WebSessionRefreshPolicy {
+    /// A failed, timed-out, or Cloudflare-challenge WK load must not pull cookies
+    /// into the jar. Challenge hops often mint a short-lived `cf_clearance` that
+    /// would replace a still-valid token.
+    static func shouldImportWebViewCookies(didFinishLoad: Bool, isChallengePage: Bool = false) -> Bool {
+        didFinishLoad && !isChallengePage
+    }
+
+    static func isSuccessfulRefresh(
+        didFinishLoad: Bool,
+        isChallengePage: Bool,
+        hasSessionCookie: Bool
+    ) -> Bool {
+        didFinishLoad && !isChallengePage && hasSessionCookie
+    }
+
+    static func isChallengePage(url: URL?, title: String?) -> Bool {
+        if let url {
+            if CloudflareVerificationPolicy.hasCloudflareChallengeToken(in: url) {
+                return true
+            }
+            let path = url.path.lowercased()
+            if path.contains("/cdn-cgi/") {
+                return true
+            }
+            if url.host?.lowercased().contains("challenges.cloudflare.com") == true {
+                return true
+            }
+        }
+        if let title, title.lowercased().contains("just a moment") {
+            return true
+        }
+        return false
+    }
+}
+
 @MainActor
 final class WebSessionRefreshService: NSObject {
     static let shared = WebSessionRefreshService()
@@ -128,15 +164,41 @@ final class WebSessionRefreshService: NSObject {
         webView.load(request)
 
         await delegate.wait()
-        await runSessionBootstrap(in: webView, baseURL: baseURL)
-        await runBrowserProbes(in: webView)
-        await WebCookieStore.shared.syncFromWebView(dataStore)
+        let didFinishLoad = delegate.didFinishLoad
+        let isChallengePage = WebSessionRefreshPolicy.isChallengePage(
+            url: webView.url,
+            title: webView.title
+        )
+        if WebSessionRefreshPolicy.shouldImportWebViewCookies(
+            didFinishLoad: didFinishLoad,
+            isChallengePage: isChallengePage
+        ) {
+            await runSessionBootstrap(in: webView, baseURL: baseURL)
+            await runBrowserProbes(in: webView)
+            await WebCookieStore.shared.syncFromWebView(dataStore, for: baseURL)
+        } else {
+            DohDebugLog.record(
+                "web session refresh skipped cookie import reason=\(reason) finished=\(didFinishLoad) challenge=\(isChallengePage)",
+                subsystem: "Auth"
+            )
+            if isChallengePage {
+                DiscourseAPI.postCloudflareChallengeDetected(
+                    baseURL: baseURL.absoluteString,
+                    responseURL: webView.url,
+                    source: "api.session.refresh"
+                )
+            }
+        }
 
         webView.stopLoading()
         webView.navigationDelegate = nil
 
-        let token = WebCookieStore.shared.cookieValue(named: "_t", for: baseURL)
-        let ok = token?.isEmpty == false || WebCookieStore.shared.hasDiscourseWebSessionCookie(for: baseURL)
+        let hasSessionCookie = WebCookieStore.shared.hasDiscourseWebSessionCookie(for: baseURL)
+        let ok = WebSessionRefreshPolicy.isSuccessfulRefresh(
+            didFinishLoad: didFinishLoad,
+            isChallengePage: isChallengePage,
+            hasSessionCookie: hasSessionCookie
+        )
         let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
         DohDebugLog.record(
             "web session refresh completed reason=\(reason) ok=\(ok) elapsedMs=\(elapsedMs)",
@@ -450,6 +512,7 @@ final class WebSessionRefreshService: NSObject {
 private final class LoadWaiter: NSObject, WKNavigationDelegate {
     private var continuation: CheckedContinuation<Void, Never>?
     private var isCompleted = false
+    private(set) var didFinishLoad = false
     private let timeout: TimeInterval
 
     init(timeout: TimeInterval) {
@@ -470,6 +533,7 @@ private final class LoadWaiter: NSObject, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        didFinishLoad = true
         finish()
     }
 

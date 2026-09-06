@@ -227,7 +227,11 @@ final class DiscourseAPI {
         }
 
         if let httpResponse = response.response, let url = httpResponse.url,
-           shouldMergeWebCookieResponseHeaders(baseURL: baseURL, responseURL: url) {
+           shouldMergeWebCookieResponseHeaders(
+            baseURL: baseURL,
+            responseURL: url,
+            statusCode: httpResponse.statusCode
+           ) {
             WebCookieStore.shared.mergeResponseHeaders(httpResponse.allHeaderFields, for: url)
             if executionContext.allowsInteractiveWebRecovery {
                 WebSessionRefreshService.shared.ensureInBackground(baseURL: baseURL, reason: "api_response_cookie")
