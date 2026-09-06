@@ -25,7 +25,7 @@ extension AppSettings {
             case .alidns: return "AliDNS (223.5.5.5)"
             case .custom: return String(localized: "doh.provider.custom")
             case .dnspod: return "DNSPod (doh.pub)"
-            case .tencent: return "腾讯 DNS (dns.pub)"
+            case .tencent: return String(localized: "doh.provider.tencent", defaultValue: "腾讯 DNS (dns.pub)")
             case .canadianShield: return "Canadian Shield"
             }
         }

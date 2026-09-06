@@ -51,7 +51,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
 
     var statusDescription: String {
         guard UserDefaults.standard.bool(forKey: "dohEnabled") else {
-            return "未启用"
+            return String(localized: "doh.status.disabled", defaultValue: "未启用")
         }
 
         lock.lock()
@@ -59,20 +59,32 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         lock.unlock()
 
         if let activeError {
-            return "启动失败：\(activeError.localizedDescription)"
+            return String(
+                format: String(localized: "doh.status.start_failed", defaultValue: "启动失败：%@"),
+                activeError.localizedDescription
+            )
         }
         let config = AppSettings.dohProxyConfig(from: .standard)
         guard config.bootstrapReady else {
-            return "启动失败：DoH 服务器没有 bootstrap IP"
+            return String(
+                localized: "doh.status.no_bootstrap",
+                defaultValue: "启动失败：DoH 服务器没有 bootstrap IP"
+            )
         }
         lock.lock()
         let browserReady = proxy?.isRunning == true
         lock.unlock()
         if !LocalConnectProxy.originECHReady {
             if #available(iOS 17.0, *), browserReady {
-                return "应用内 DoH · Encrypted DNS · 浏览器直通"
+                return String(
+                    localized: "doh.status.encrypted_dns_browser",
+                    defaultValue: "应用内 DoH · Encrypted DNS · 浏览器直通"
+                )
             }
-            return "应用内 DoH · Encrypted DNS"
+            return String(
+                localized: "doh.status.encrypted_dns",
+                defaultValue: "应用内 DoH · Encrypted DNS"
+            )
         }
         let mode = config.isGatewayMode ? "Gateway" : "CONNECT MITM"
         let h2 = config.h2Mitm ? " · h2" : ""
@@ -80,10 +92,17 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         let port = proxy?.proxyPort
         lock.unlock()
         let portText = port.map { " · :\($0)" } ?? ""
+        let detail = "\(mode)\(h2)\(portText)"
         if #available(iOS 17.0, *), browserReady {
-            return "应用内 DoH · \(mode)\(h2)\(portText) · 浏览器"
+            return String(
+                format: String(localized: "doh.status.with_browser", defaultValue: "应用内 DoH · %@ · 浏览器"),
+                detail
+            )
         }
-        return "应用内 DoH · \(mode)\(h2)\(portText)"
+        return String(
+            format: String(localized: "doh.status.running", defaultValue: "应用内 DoH · %@"),
+            detail
+        )
     }
 
     func configureFromSettings() {

@@ -489,7 +489,7 @@ final class HomeViewController: ObservableViewController {
 
     let loginTitleLabel: UILabel = {
         let label = UILabel()
-        label.text = "欢迎使用 Doer"
+        label.text = String(localized: "home.login.title", defaultValue: "欢迎使用 Doer")
         label.font = .systemFont(ofSize: 24, weight: .bold)
         label.textAlignment = .center
         label.numberOfLines = 0
@@ -498,7 +498,10 @@ final class HomeViewController: ObservableViewController {
 
     let loginFeatureLabel: UILabel = {
         let label = UILabel()
-        label.text = "连接观点、记录阅读，也不错过每一次回应"
+        label.text = String(
+            localized: "home.login.subtitle",
+            defaultValue: "连接观点、记录阅读，也不错过每一次回应"
+        )
         label.font = .systemFont(ofSize: 13, weight: .regular)
         label.textColor = .secondaryLabel
         label.textAlignment = .center
@@ -508,9 +511,9 @@ final class HomeViewController: ObservableViewController {
 
     let loginBenefitsStack: UIStackView = {
         let items = [
-            ("text.bubble.fill", "探索话题"),
-            ("bell.badge.fill", "及时回应"),
-            ("bookmark.fill", "同步收藏"),
+            ("text.bubble.fill", String(localized: "home.login.benefit.topics", defaultValue: "探索话题")),
+            ("bell.badge.fill", String(localized: "home.login.benefit.replies", defaultValue: "及时回应")),
+            ("bookmark.fill", String(localized: "home.login.benefit.bookmarks", defaultValue: "同步收藏")),
         ]
         let stack = UIStackView()
         stack.axis = .horizontal

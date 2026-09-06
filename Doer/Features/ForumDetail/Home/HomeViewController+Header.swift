@@ -186,13 +186,25 @@ extension HomeViewController {
         loginPromptCard.layer.shadowRadius = 26
         loginPromptCard.layer.shadowOffset = CGSize(width: 0, height: 12)
         loginTitleLabel.textColor = .label
-        loginBenefitsStack.arrangedSubviews.compactMap { $0 as? UIButton }.forEach { item in
+        loginTitleLabel.text = String(localized: "home.login.title", defaultValue: "欢迎使用 Doer")
+        loginFeatureLabel.text = String(
+            localized: "home.login.subtitle",
+            defaultValue: "连接观点、记录阅读，也不错过每一次回应"
+        )
+        let benefitTitles = [
+            String(localized: "home.login.benefit.topics", defaultValue: "探索话题"),
+            String(localized: "home.login.benefit.replies", defaultValue: "及时回应"),
+            String(localized: "home.login.benefit.bookmarks", defaultValue: "同步收藏"),
+        ]
+        zip(loginBenefitsStack.arrangedSubviews.compactMap { $0 as? UIButton }, benefitTitles).forEach { item, title in
             var configuration = item.configuration ?? .tinted()
+            configuration.title = title
             configuration.baseForegroundColor = themeStyle.accentColor
             configuration.baseBackgroundColor = themeStyle.accentColor.withAlphaComponent(0.12)
             item.configuration = configuration
         }
         var loginConfiguration = loginButton.configuration ?? .filled()
+        loginConfiguration.title = String(localized: "home.login_prompt")
         loginConfiguration.baseBackgroundColor = themeStyle.accentColor
         loginConfiguration.baseForegroundColor = .white
         loginButton.configuration = loginConfiguration

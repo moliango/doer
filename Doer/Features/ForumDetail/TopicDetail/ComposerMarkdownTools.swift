@@ -29,7 +29,7 @@ enum ComposerMarkdownTool: CaseIterable {
         switch self {
         case .image: return String(localized: "reply.tool.image")
         case .attachment: return String(localized: "reply.tool.attachment")
-        case .media: return "音视频"
+        case .media: return String(localized: "reply.tool.media", defaultValue: "音视频")
         case .heading: return String(localized: "reply.tool.heading")
         case .bold: return String(localized: "reply.tool.bold")
         case .italic: return String(localized: "reply.tool.italic")
@@ -40,12 +40,12 @@ enum ComposerMarkdownTool: CaseIterable {
         case .quote: return String(localized: "reply.tool.quote")
         case .callout: return String(localized: "reply.tool.note")
         case .template: return String(localized: "reply.tool.template")
-        case .inlineCode: return "行内代码"
-        case .codeBlock: return "代码块"
-        case .insertBlock: return "插入块"
+        case .inlineCode: return String(localized: "reply.tool.inline_code", defaultValue: "行内代码")
+        case .codeBlock: return String(localized: "reply.tool.code_block", defaultValue: "代码块")
+        case .insertBlock: return String(localized: "reply.tool.insert_block", defaultValue: "插入块")
         case .toc: return String(localized: "reply.tool.toc", defaultValue: "目录")
-        case .spoiler: return "剧透"
-        case .imageGrid: return "图片网格"
+        case .spoiler: return String(localized: "reply.tool.spoiler", defaultValue: "剧透")
+        case .imageGrid: return String(localized: "reply.tool.image_grid", defaultValue: "图片网格")
         case .poll: return String(localized: "reply.tool.poll", defaultValue: "投票")
         case .encrypt: return String(localized: "crypto.encrypt.action", defaultValue: "加密")
         case .aiReview: return String(localized: "reply.tool.ai_review", defaultValue: "AI 预审")

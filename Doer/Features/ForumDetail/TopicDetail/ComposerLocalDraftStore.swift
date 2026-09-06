@@ -348,9 +348,18 @@ enum ComposerLocalDraftStore {
         guard !trimmed.isEmpty else { return nil }
         let title: String
         if let postNumber {
-            title = "回复话题 #\(topicId) · 楼层 \(postNumber)"
+            title = String(
+                format: String(localized: "draft.reply.topic_floor", defaultValue: "回复话题 #%1$lld · 楼层 %2$lld"),
+                locale: .current,
+                topicId,
+                postNumber
+            )
         } else {
-            title = "回复话题 #\(topicId)"
+            title = String(
+                format: String(localized: "draft.reply.topic", defaultValue: "回复话题 #%lld"),
+                locale: .current,
+                topicId
+            )
         }
         return ListedDraft(
             storageKey: storageKey,

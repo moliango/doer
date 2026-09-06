@@ -751,7 +751,7 @@ private final class NewAPISummaryCell: UITableViewCell {
 
     private let titleLabel: UILabel = {
         let label = UILabel()
-        label.text = "总览"
+        label.text = String(localized: "plugins.newapi.overview", defaultValue: "总览")
         label.font = .systemFont(ofSize: 17, weight: .semibold)
         label.textColor = .label
         return label
@@ -837,7 +837,11 @@ private final class NewAPISummaryCell: UITableViewCell {
         totalUsedText: String,
         totalRequestsText: String
     ) {
-        platformCountLabel.text = "\(platformCount) 平台"
+        titleLabel.text = String(localized: "plugins.newapi.overview", defaultValue: "总览")
+        platformCountLabel.text = String(
+            format: String(localized: "plugins.newapi.summary.total", defaultValue: "共 %d 个平台"),
+            platformCount
+        )
         balanceChip.setValue(totalBalanceText)
         usedChip.setValue(totalUsedText)
         requestChip.setValue(totalRequestsText)
