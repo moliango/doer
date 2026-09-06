@@ -8,6 +8,7 @@ enum DoerDeepLinkRouter {
         case readLater
         case notifications
         case trustLevel
+        case chat(channelId: Int?)
     }
 
     static func destination(from url: URL) -> Destination? {
@@ -62,11 +63,17 @@ enum DoerDeepLinkRouter {
                 DoerInAppRoutePresenter.presentPendingIfNeeded()
             }
             return true
+        case .chat(let channelId):
+            Task { @MainActor in
+                DoerInAppRouteStore.shared.enqueue(.chat(channelId: channelId))
+                DoerInAppRoutePresenter.presentPendingIfNeeded()
+            }
+            return true
         }
     }
 
     private static func parseAppScheme(_ url: URL) -> Destination? {
-        // doer://topic/123/4  | doer://t/123/4 | doer://read-later | doer://notifications
+        // doer://topic/123/4  | doer://t/123/4 | doer://read-later | doer://notifications | doer://chat/9
         let host = (url.host ?? "").lowercased()
         let parts = url.path.split(separator: "/").map(String.init)
         let head = host.isEmpty ? parts.first?.lowercased() : host
@@ -88,6 +95,11 @@ enum DoerDeepLinkRouter {
             return .notifications
         case "trust", "trust-level", "trustlevel":
             return .trustLevel
+        case "chat", "c":
+            if let idString = rest.first, let channelId = Int(idString), channelId > 0 {
+                return .chat(channelId: channelId)
+            }
+            return .chat(channelId: nil)
         default:
             // dexo://123/4  bare id
             if let topicId = Int(head ?? ""), topicId > 0 {
@@ -123,6 +135,7 @@ enum DoerDeepLinkRouter {
 enum DoerInAppRoute: Equatable {
     case readLater
     case trustLevel
+    case chat(channelId: Int?)
 }
 
 @MainActor

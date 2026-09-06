@@ -554,6 +554,63 @@ final class ForumTabBarController: UITabBarController {
         selectedViewController?.view.layoutIfNeeded()
     }
 
+    /// Prefer the chat tab. If that tab is hidden, fall back to Me (same as the Me chat row).
+    func openChat(channelId: Int? = nil, channelTitle: String? = nil, animated: Bool = true) {
+        let channel = channelId.map { DiscourseChatChannel(id: $0, title: channelTitle) }
+        let chatID = AppSettings.ForumDynamicTabItem.chat.rawValue
+        if let index = tabIdentifiers.firstIndex(of: chatID), index < navigationControllers.count {
+            selectedIndex = index
+            showChat(on: navigationControllers[index], channel: channel, chatIsTabRoot: true, animated: animated)
+            return
+        }
+        guard let meIndex = tabIdentifiers.firstIndex(of: "me"), meIndex < navigationControllers.count else { return }
+        selectedIndex = meIndex
+        showChat(on: navigationControllers[meIndex], channel: channel, chatIsTabRoot: false, animated: animated)
+    }
+
+    private func showChat(
+        on navigationController: UINavigationController,
+        channel: DiscourseChatChannel?,
+        chatIsTabRoot: Bool,
+        animated: Bool
+    ) {
+        if let channel,
+           let room = navigationController.topViewController as? ChatRoomViewController,
+           room.channelId == channel.id {
+            return
+        }
+        if chatIsTabRoot {
+            navigationController.popToRootViewController(animated: channel == nil ? animated : false)
+            if let channel {
+                navigationController.pushViewController(
+                    ChatRoomViewController(api: api, channel: channel),
+                    animated: animated
+                )
+            }
+            return
+        }
+        if let list = navigationController.viewControllers.first(where: { $0 is ChatChannelsViewController }) {
+            if let channel {
+                navigationController.popToViewController(list, animated: false)
+                navigationController.pushViewController(
+                    ChatRoomViewController(api: api, channel: channel),
+                    animated: animated
+                )
+            } else {
+                navigationController.popToViewController(list, animated: animated)
+            }
+            return
+        }
+        if let channel {
+            var stack = navigationController.viewControllers
+            stack.append(ChatChannelsViewController(api: api))
+            stack.append(ChatRoomViewController(api: api, channel: channel))
+            navigationController.setViewControllers(stack, animated: animated)
+        } else {
+            navigationController.pushViewController(ChatChannelsViewController(api: api), animated: animated)
+        }
+    }
+
 }
 
 private extension ForumTabBarController {

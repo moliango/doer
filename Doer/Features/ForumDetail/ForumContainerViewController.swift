@@ -368,6 +368,12 @@ final class ForumContainerViewController: UIViewController, AuthGating {
                 TrustRequirementsViewController(api: api, username: username, trustLevel: trustLevel),
                 animated: true
             )
+        case .chat(let channelId):
+            guard let tabBarViewController else {
+                DoerInAppRouteStore.shared.enqueue(route)
+                return
+            }
+            tabBarViewController.openChat(channelId: channelId)
         }
     }
 

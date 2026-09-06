@@ -546,12 +546,8 @@ final class MeViewController: ObservableViewController {
             authGate?.requireAuth { [weak self] in self?.openChat() }
             return
         }
-        let chatTabID = "forum.tab.\(AppSettings.ForumDynamicTabItem.chat.rawValue)"
-        if let tabBar = tabBarController,
-           let index = tabBar.viewControllers?.firstIndex(where: {
-               $0.tabBarItem.accessibilityIdentifier == chatTabID
-           }) {
-            tabBar.selectedIndex = index
+        if let tabBar = tabBarController as? ForumTabBarController {
+            tabBar.openChat()
             return
         }
         navigationController?.pushViewController(ChatChannelsViewController(api: api), animated: true)

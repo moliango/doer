@@ -37,6 +37,12 @@
   snapshot; fall through to `/u/{username}/summary.json`.
 - Tap: `doer://trust` → `DoerInAppRoute.trustLevel` → Me tab +
   `TrustRequirementsViewController`.
+- Chat: `doer://chat` / `doer://chat/{id}` → `DoerInAppRoute.chat` →
+  `ForumTabBarController.openChat`. Visible chat tab is selected (room
+  pushed on that stack so Back is the channel list). If the chat tab is
+  hidden, Me is selected and the list/room is pushed there. Chat
+  notification rows use the same opener and must not push onto the
+  notifications stack.
 
 ### 4. Validation & Error Matrix
 - App Group `UserDefaults(suiteName:)` is nil → save/load no-ops (unsigned /
@@ -55,6 +61,7 @@
 - Snapshot encode/decode via injected `UserDefaults`; headline prefers 帖/post/读.
 - `parseBarCurrentAndTarget("5,000 / 20,000")` → `(5000, 20000)`.
 - `doer://trust` and `doer://trust-level` → `.trustLevel`.
+- `doer://chat` → `.chat(nil)`; `doer://chat/9` / `doer://c/9` → `.chat(9)`.
 
 ### 7. Wrong vs Correct
 #### Wrong

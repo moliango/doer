@@ -188,4 +188,27 @@ final class DailyForumUXTests: XCTestCase {
             .trustLevel
         )
     }
+
+    func testChatDeepLinkRoutesToChatTab() {
+        XCTAssertEqual(
+            DoerDeepLinkRouter.destination(from: URL(string: "doer://chat")!),
+            .chat(channelId: nil)
+        )
+        XCTAssertEqual(
+            DoerDeepLinkRouter.destination(from: URL(string: "doer://chat/9")!),
+            .chat(channelId: 9)
+        )
+        XCTAssertEqual(
+            DoerDeepLinkRouter.destination(from: URL(string: "dexo://c/12")!),
+            .chat(channelId: 12)
+        )
+        XCTAssertEqual(
+            DoerDeepLinkRouter.destination(from: URL(string: "doer://chat/0")!),
+            .chat(channelId: nil)
+        )
+        XCTAssertEqual(
+            DoerInAppRoute.chat(channelId: 9),
+            .chat(channelId: 9)
+        )
+    }
 }

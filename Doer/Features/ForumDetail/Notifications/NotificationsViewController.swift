@@ -438,21 +438,51 @@ final class NotificationsViewController: ObservableViewController {
     }
 
     private func openChatNotification(_ notification: DiscourseNotification) {
-        guard let channelId = notification.data.chatChannelId else {
-            navigationController?.pushViewController(
-                ChatChannelsViewController(api: api),
-                animated: true
-            )
-            return
+        let channelId = notification.data.chatChannelId
+        let channelTitle = notification.data.chatChannelTitle
+        let open = { [weak self] in
+            guard let self else { return }
+            if let tabBar = self.forumTabBarController() {
+                tabBar.openChat(channelId: channelId, channelTitle: channelTitle)
+                return
+            }
+            if let channelId {
+                self.navigationController?.pushViewController(
+                    ChatRoomViewController(
+                        api: self.api,
+                        channel: DiscourseChatChannel(id: channelId, title: channelTitle)
+                    ),
+                    animated: true
+                )
+            } else {
+                self.navigationController?.pushViewController(
+                    ChatChannelsViewController(api: self.api),
+                    animated: true
+                )
+            }
         }
-        let channel = DiscourseChatChannel(
-            id: channelId,
-            title: notification.data.chatChannelTitle
-        )
-        navigationController?.pushViewController(
-            ChatRoomViewController(api: api, channel: channel),
-            animated: true
-        )
+        if presentingViewController != nil {
+            dismiss(animated: true, completion: open)
+        } else {
+            open()
+        }
+    }
+
+    private func forumTabBarController() -> ForumTabBarController? {
+        if let tabBar = tabBarController as? ForumTabBarController {
+            return tabBar
+        }
+        var presenter = presentingViewController
+        while let current = presenter {
+            if let tabBar = current as? ForumTabBarController {
+                return tabBar
+            }
+            if let tabBar = current.tabBarController as? ForumTabBarController {
+                return tabBar
+            }
+            presenter = current.presentingViewController
+        }
+        return nil
     }
 }
 

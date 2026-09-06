@@ -185,6 +185,7 @@ extension ChatChannelsViewController: UITableViewDataSource, UITableViewDelegate
 final class ChatRoomViewController: ObservableViewController, UITableViewDataSource, UITableViewDelegate {
     private let api: DiscourseAPI
     private let channel: DiscourseChatChannel
+    var channelId: Int { channel.id }
     private var messages: [DiscourseChatMessage] = []
     private var isLoading = false
     private var isSending = false
