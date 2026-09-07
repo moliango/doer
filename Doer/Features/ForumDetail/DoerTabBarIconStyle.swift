@@ -14,7 +14,12 @@ enum DoerTabBarIconStyle {
 
     static func image(identifier: String, fallbackSymbolName: String, selected: Bool) -> UIImage? {
         let symbolName = filledSymbolName(for: identifier, fallback: fallbackSymbolName)
-        return image(named: symbolName, fallbackSymbolName: fallbackSymbolName, selected: selected)
+        return image(
+            named: symbolName,
+            fallbackSymbolName: fallbackSymbolName,
+            selected: selected,
+            configuration: configuration(for: identifier, selected: selected)
+        )
     }
 
     static func image(named symbolName: String, selected: Bool) -> UIImage? {
@@ -47,13 +52,30 @@ enum DoerTabBarIconStyle {
         }.withRenderingMode(.alwaysOriginal)
     }
 
-    private static func image(named symbolName: String, fallbackSymbolName: String, selected: Bool) -> UIImage? {
-        let configuration = selected ? selectedConfiguration : normalConfiguration
+    private static func image(
+        named symbolName: String,
+        fallbackSymbolName: String,
+        selected: Bool,
+        configuration: UIImage.SymbolConfiguration? = nil
+    ) -> UIImage? {
+        let configuration = configuration ?? (selected ? selectedConfiguration : normalConfiguration)
         return UIImage(systemName: symbolName, withConfiguration: configuration)?
             .withRenderingMode(.alwaysTemplate)
             ?? UIImage(systemName: fallbackSymbolName, withConfiguration: configuration)?
             .withRenderingMode(.alwaysTemplate)
             ?? UIImage(named: fallbackSymbolName)?.withRenderingMode(.alwaysOriginal)
+    }
+
+    /// Dual-bubble chat glyph reads larger than house/bell at the same point size.
+    private static func configuration(for identifier: String, selected: Bool) -> UIImage.SymbolConfiguration {
+        if identifier == "chat" {
+            return UIImage.SymbolConfiguration(
+                pointSize: selected ? 16 : 15,
+                weight: selected ? .heavy : .bold,
+                scale: .medium
+            )
+        }
+        return selected ? selectedConfiguration : normalConfiguration
     }
 
     private static func filledSymbolName(for identifier: String, fallback: String) -> String {
