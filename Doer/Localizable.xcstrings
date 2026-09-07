@@ -6300,6 +6300,28 @@
         }
       }
     },
+    "composer.warden.progress %lld %lld" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld / %2$lld"
+          }
+        }
+      }
+    },
+    "composer.warden.remaining %lld" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "还需 %lld 字"
+          }
+        }
+      }
+    },
     "crypto.algo.caesar" : {
       "localizations" : {
         "en" : {
@@ -29146,6 +29168,28 @@
         }
       }
     },
+    "reply.cost.confirm.message %lld" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "本次回复将扣除 %lld 积分，确认发送？"
+          }
+        }
+      }
+    },
+    "reply.cost.confirm.title" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "回复将扣除积分"
+          }
+        }
+      }
+    },
     "reply.customize" : {
       "localizations" : {
         "en" : {
@@ -40590,6 +40634,28 @@
         }
       }
     },
+    "settings.reading.filter_hint" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "显示过滤提示"
+          }
+        }
+      }
+    },
+    "settings.reading.filter_hint.subtitle" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "只看题主、只看某人或只看顶层时，在话题顶部显示提示条"
+          }
+        }
+      }
+    },
     "settings.reading.hide_scroll_indicators" : {
       "localizations" : {
         "en" : {
@@ -46225,6 +46291,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "取消篩選"
+          }
+        }
+      }
+    },
+    "topic.filter_hint.op" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "正在查看题主"
+          }
+        }
+      }
+    },
+    "topic.filter_hint.top_level" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "正在查看顶层回复"
+          }
+        }
+      }
+    },
+    "topic.filter_hint.user %@" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "正在查看 %@"
           }
         }
       }

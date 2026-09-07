@@ -301,7 +301,15 @@ final class DraftsViewController: ObservableViewController {
         }
         if postNumber != nil, replyTarget == nil { throw DraftOpenError.missingReplyTarget }
         ComposerLocalDraftStore.saveSequence(baseURL: api.baseURL, draftKey: draft.draftKey, sequence: draft.sequence)
-        let composer = ReplyComposerViewController(api: api, topicId: topicId, replyToPost: replyTarget, baseURL: api.baseURL, initialText: draft.data.reply ?? draft.excerpt, draftKey: draft.draftKey)
+        let composer = ReplyComposerViewController(
+            api: api,
+            topicId: topicId,
+            replyToPost: replyTarget,
+            baseURL: api.baseURL,
+            initialText: draft.data.reply ?? draft.excerpt,
+            draftKey: draft.draftKey,
+            categoryId: detail.categoryId
+        )
         composer.onPostCreated = { [weak self] in Task { await self?.deleteDraft(draft, showError: false) } }
         composer.onDraftDeleted = { [weak self] in self?.drafts.removeAll { $0.draftKey == draft.draftKey }; self?.updateState() }
         presentComposer(NavigationController: UINavigationController(rootViewController: composer))

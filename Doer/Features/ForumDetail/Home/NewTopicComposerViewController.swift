@@ -122,6 +122,8 @@ final class NewTopicComposerViewController: UIViewController {
         return label
     }()
 
+    private let lengthHintView = ComposerLengthHintView()
+
     private let textView: ComposerBodyTextView = {
         let view = ComposerBodyTextView()
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -327,6 +329,8 @@ final class NewTopicComposerViewController: UIViewController {
             placeholderLabel.isHidden = true
             view.bringSubviewToFront(previewView)
             view.bringSubviewToFront(bottomStackView)
+            view.bringSubviewToFront(lengthHintView)
+            view.bringSubviewToFront(mentionController.picker)
         }
         categoryButton.addTarget(self, action: #selector(categoryButtonPressed), for: .touchDown)
         emojiToggleButton.addTarget(self, action: #selector(toggleEmojiPicker), for: .touchUpInside)
@@ -396,6 +400,7 @@ final class NewTopicComposerViewController: UIViewController {
         view.addSubview(previewView)
         view.addSubview(placeholderLabel)
         view.addSubview(bottomStackView)
+        view.addSubview(lengthHintView)
         mentionController.install(in: view, editor: textView, baseURL: api.baseURL)
         view.bringSubviewToFront(mentionController.picker)
     }
@@ -444,6 +449,9 @@ final class NewTopicComposerViewController: UIViewController {
             bottomStackView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomStackView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bottomStackView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+
+            lengthHintView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            lengthHintView.bottomAnchor.constraint(equalTo: bottomStackView.topAnchor, constant: -8),
         ])
     }
 
@@ -481,6 +489,14 @@ final class NewTopicComposerViewController: UIViewController {
 
     private func parentCategory(for category: DiscourseCategory) -> DiscourseCategory? {
         category.parentCategoryId.flatMap { categoriesById[$0] }
+    }
+
+    private var selectedForumRules: ComposerForumRules {
+        let selected = selectedCategoryId.flatMap { categoriesById[$0] }
+        return ComposerForumRules.resolve(
+            category: selected,
+            parent: selected.flatMap { parentCategory(for: $0) }
+        )
     }
 
     private func updateCategoryButton() {
@@ -597,13 +613,18 @@ final class NewTopicComposerViewController: UIViewController {
             format: String(localized: "new_topic.character_count_format", defaultValue: "%lld 字符"),
             Int64(bodyRaw.count)
         )
+        let progress = ComposerWardenPolicy.progress(
+            raw: bodyRaw,
+            minimum: selectedForumRules.minFirstPostLength
+        )
+        lengthHintView.apply(progress)
         let submission = NewTopicSubmission.make(
             title: titleField.text ?? "",
             raw: bodyRaw,
             categoryId: selectedCategoryId,
             tags: selectedTags
         )
-        publishButton.isEnabled = submission != nil && !isUploading && !isSubmitting
+        publishButton.isEnabled = submission != nil && progress.meetsMinimum && !isUploading && !isSubmitting
         publishButton.alpha = 1
         if isPreviewingMarkdown {
             previewView.update(markdown: ComposerPangu.applyToOutgoing(bodyRaw))
@@ -929,6 +950,11 @@ final class NewTopicComposerViewController: UIViewController {
                   tags: selectedTags
               )
         else { return }
+        let progress = ComposerWardenPolicy.progress(
+            raw: submission.raw,
+            minimum: selectedForumRules.minFirstPostLength
+        )
+        guard progress.meetsMinimum else { return }
 
         isSubmitting = true
         draftSaveTask?.cancel()

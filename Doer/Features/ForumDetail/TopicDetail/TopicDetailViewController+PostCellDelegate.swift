@@ -283,7 +283,8 @@ func presentBoostInput(for post: DiscourseTopicDetail.Post) {
             replyToPost: post,
             baseURL: baseURL,
             initialText: initialText,
-            mentionSeedUsers: mentionSeedUsersFromLoadedPosts()
+            mentionSeedUsers: mentionSeedUsersFromLoadedPosts(),
+            categoryId: viewModel.topic?.categoryId
         )
         composer.onPostCreated = { [weak self] in
             guard let self else { return }
@@ -336,7 +337,8 @@ func presentBoostInput(for post: DiscourseTopicDetail.Post) {
                     baseURL: baseURL,
                     initialText: raw,
                     submissionMode: .edit(postId: postId),
-                    mentionSeedUsers: self.mentionSeedUsersFromLoadedPosts()
+                    mentionSeedUsers: self.mentionSeedUsersFromLoadedPosts(),
+                    categoryId: self.viewModel.topic?.categoryId
                 )
                 composer.onPostUpdated = { [weak self] updatedPostId in
                     guard let self else { return }

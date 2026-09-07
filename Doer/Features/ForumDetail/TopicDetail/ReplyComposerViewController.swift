@@ -7,6 +7,7 @@ final class ReplyComposerViewController: UIViewController {
 
     private let api: DiscourseAPI
     private let topicId: Int
+    private let categoryId: Int?
     private let replyToPost: DiscourseTopicDetail.Post?
     private let baseURL: String
     private let initialText: String?
@@ -110,6 +111,8 @@ final class ReplyComposerViewController: UIViewController {
         button.isEnabled = false
         return button
     }()
+
+    private let lengthHintView = ComposerLengthHintView()
 
     private let separatorView: UIView = {
         let view = UIView()
@@ -243,10 +246,12 @@ final class ReplyComposerViewController: UIViewController {
         initialText: String? = nil,
         submissionMode: ReplyComposerSubmissionMode = .reply,
         mentionSeedUsers: [DiscourseMentionUser] = [],
-        draftKey: String? = nil
+        draftKey: String? = nil,
+        categoryId: Int? = nil
     ) {
         self.api = api
         self.topicId = topicId
+        self.categoryId = categoryId
         self.replyToPost = replyToPost
         self.baseURL = baseURL
         self.initialText = initialText
@@ -315,6 +320,7 @@ final class ReplyComposerViewController: UIViewController {
             view.insertSubview(experimental, belowSubview: previewView)
         }
         view.addSubview(bottomStackView)
+        view.addSubview(lengthHintView)
         // Above text, below chrome — so @ list is tappable over the editor.
         view.addSubview(mentionPickerView)
 
@@ -375,6 +381,9 @@ final class ReplyComposerViewController: UIViewController {
             bottomStackView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomStackView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bottomStackView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+
+            lengthHintView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            lengthHintView.bottomAnchor.constraint(equalTo: bottomStackView.topAnchor, constant: -8),
 
             mentionLeading,
             mentionTop,
@@ -1144,9 +1153,16 @@ final class ReplyComposerViewController: UIViewController {
         closeButton.showsMenuAsPrimaryAction = false
     }
 
+    private var forumRules: ComposerForumRules {
+        ComposerForumRules.resolve(baseURL: baseURL, categoryId: categoryId)
+    }
+
     private func updateSendButton() {
-        let enabled = !composerRawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        sendButton.isEnabled = enabled && !isUploading
+        let raw = composerRawText
+        let progress = ComposerWardenPolicy.progress(raw: raw, minimum: forumRules.minReplyLength)
+        lengthHintView.apply(progress)
+        let hasText = !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        sendButton.isEnabled = hasText && progress.meetsMinimum && !isUploading
         sendButton.alpha = 1
     }
 
@@ -1231,7 +1247,47 @@ final class ReplyComposerViewController: UIViewController {
             composerRawText.trimmingCharacters(in: .whitespacesAndNewlines)
         )
         guard !raw.isEmpty, !isSubmitting else { return }
+        let rules = forumRules
+        let progress = ComposerWardenPolicy.progress(raw: raw, minimum: rules.minReplyLength)
+        guard progress.meetsMinimum else { return }
 
+        let isReply: Bool
+        if case .reply = submissionMode {
+            isReply = true
+        } else {
+            isReply = false
+        }
+        if ComposerReplyCostPolicy.shouldConfirm(cost: rules.replyCost, isReply: isReply) {
+            present(makeReplyCostAlert(cost: rules.replyCost, raw: raw), animated: true)
+            return
+        }
+        performSend(raw: raw)
+    }
+
+    private func makeReplyCostAlert(cost: Int, raw: String) -> UIAlertController {
+        let alert = UIAlertController(
+            title: String(localized: "reply.cost.confirm.title", defaultValue: "回复将扣除积分"),
+            message: String(
+                format: String(
+                    localized: "reply.cost.confirm.message %lld",
+                    defaultValue: "本次回复将扣除 %lld 积分，确认发送？"
+                ),
+                Int64(cost)
+            ),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: "common.cancel"), style: .cancel))
+        alert.addAction(UIAlertAction(
+            title: String(localized: "reply.send"),
+            style: .default
+        ) { [weak self] _ in
+            self?.performSend(raw: raw)
+        })
+        return alert
+    }
+
+    private func performSend(raw: String) {
+        guard !isSubmitting else { return }
         isSubmitting = true
         // Stop any in-flight autosave so it cannot re-write the draft after we clear it.
         draftSaveTask?.cancel()

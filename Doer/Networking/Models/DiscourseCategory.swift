@@ -86,6 +86,7 @@ struct DiscourseCategory: Decodable, Identifiable {
     let allowGlobalTags: Bool
     let permission: Int?
     let notificationLevel: Int?
+    let customFields: DiscourseCustomFields
 
     enum CodingKeys: String, CodingKey {
         case id, name, color, slug, description, icon, permission
@@ -103,6 +104,7 @@ struct DiscourseCategory: Decodable, Identifiable {
         case allowedTagGroups = "allowed_tag_groups"
         case allowGlobalTags = "allow_global_tags"
         case notificationLevel = "notification_level"
+        case customFields = "custom_fields"
     }
 
     init(from decoder: Decoder) throws {
@@ -128,6 +130,7 @@ struct DiscourseCategory: Decodable, Identifiable {
         allowGlobalTags = Self.decodeBool(from: container, forKey: .allowGlobalTags) ?? true
         permission = Self.decodeInt(from: container, forKey: .permission)
         notificationLevel = Self.decodeInt(from: container, forKey: .notificationLevel)
+        customFields = (try? container.decodeIfPresent(DiscourseCustomFields.self, forKey: .customFields)) ?? .empty
     }
 
     init(
@@ -151,7 +154,8 @@ struct DiscourseCategory: Decodable, Identifiable {
         allowedTagGroups: [String] = [],
         allowGlobalTags: Bool = true,
         permission: Int? = nil,
-        notificationLevel: Int? = nil
+        notificationLevel: Int? = nil,
+        customFields: DiscourseCustomFields = .empty
     ) {
         self.id = id
         self.name = name
@@ -174,6 +178,7 @@ struct DiscourseCategory: Decodable, Identifiable {
         self.allowGlobalTags = allowGlobalTags
         self.permission = permission
         self.notificationLevel = notificationLevel
+        self.customFields = customFields
     }
 
     var serverLevelName: String? {
@@ -254,7 +259,8 @@ struct DiscourseCategory: Decodable, Identifiable {
                 allowedTagGroups: category.allowedTagGroups,
                 allowGlobalTags: category.allowGlobalTags,
                 permission: category.permission,
-                notificationLevel: category.notificationLevel
+                notificationLevel: category.notificationLevel,
+                customFields: category.customFields
             )
         }
 
@@ -305,7 +311,8 @@ struct DiscourseCategory: Decodable, Identifiable {
             allowedTagGroups: allowedTagGroups,
             allowGlobalTags: allowGlobalTags,
             permission: permission,
-            notificationLevel: notificationLevel
+            notificationLevel: notificationLevel,
+            customFields: customFields
         )
     }
 
