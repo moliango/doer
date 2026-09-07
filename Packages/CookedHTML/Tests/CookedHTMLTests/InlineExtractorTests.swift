@@ -272,12 +272,28 @@ final class InlineExtractorTests: XCTestCase {
 
     func testHashtagCooked() {
         let inlines = parseInlines("<a class=\"hashtag-cooked\" href=\"/c/feature\" data-type=\"category\">#feature</a>")
-        XCTAssertEqual(inlines, [.hashtag(text: "feature", href: "/c/feature", type: "category")])
+        XCTAssertEqual(inlines, [.hashtag(text: "feature", href: "/c/feature", type: "category", icon: nil)])
     }
 
     func testHashtagLegacy() {
         let inlines = parseInlines("<a class=\"hashtag\" href=\"/tag/swift\">#swift</a>")
-        XCTAssertEqual(inlines, [.hashtag(text: "swift", href: "/tag/swift", type: nil)])
+        XCTAssertEqual(inlines, [.hashtag(text: "swift", href: "/tag/swift", type: nil, icon: nil)])
+    }
+
+    func testHashtagCookedExtractsDiscourseIcon() {
+        let html = """
+        <a class="hashtag-cooked" href="/tag/%E6%8A%BD%E5%A5%96" data-type="tag">
+          <span class="hashtag-icon-placeholder" data-icon="shuffle">
+            <svg class="fa d-icon d-icon-shuffle svg-icon"><use href="#shuffle"></use></svg>
+          </span>
+          <span>抽奖</span>
+        </a>
+        """
+        let inlines = parseInlines(html)
+        XCTAssertEqual(
+            inlines,
+            [.hashtag(text: "抽奖", href: "/tag/%E6%8A%BD%E5%A5%96", type: "tag", icon: "shuffle")]
+        )
     }
 
     // MARK: - Spoiler

@@ -376,16 +376,30 @@ final class PostContentRenderer: NSObject {
         aside.onebox .onebox-body .aspect-image-full-size {
             margin: 0 0 6px;
         }
-        /* Hashtag — force inline, hide decorative square/icon */
+        /* Hashtag chips — keep Discourse icon + name, hide the raw # */
         a.hashtag-cooked {
-            display: inline !important;
-            margin: 0 !important;
-            padding: 0 !important;
+            display: inline-flex !important;
+            align-items: center;
+            gap: 4px;
+            vertical-align: middle;
+            text-decoration: none !important;
+            font-weight: 600;
+            line-height: 1.2;
         }
         a.hashtag-cooked svg,
-        .hashtag-category-square,
-        .hashtag-icon {
-            display: none !important;
+        .hashtag-icon,
+        .hashtag-icon-placeholder svg {
+            display: inline-block !important;
+            width: 0.9em;
+            height: 0.9em;
+            flex: 0 0 auto;
+        }
+        .hashtag-category-square {
+            display: inline-block !important;
+            width: 0.75em;
+            height: 0.75em;
+            border-radius: 2px;
+            flex: 0 0 auto;
         }
         /* Details / collapsible */
         details {

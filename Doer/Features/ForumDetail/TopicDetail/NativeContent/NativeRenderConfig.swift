@@ -127,10 +127,10 @@ struct NativeRenderConfig {
     }
 
     private func attributedString(for inline: InlineNode) -> NSAttributedString {
-        let taxonomy: (text: String, href: String, type: String?)?
+        let taxonomy: (text: String, href: String, type: String?, icon: String?)?
         switch inline {
-        case .hashtag(let text, let href, let type):
-            taxonomy = (text, href, type)
+        case .hashtag(let text, let href, let type, let icon):
+            taxonomy = (text, href, type, icon)
         case .link(let href, let children):
             let linkedText = plainText(from: children).trimmingCharacters(in: .whitespacesAndNewlines)
             guard linkedText.hasPrefix("#"), linkedText.count > 1 else {
@@ -139,31 +139,14 @@ struct NativeRenderConfig {
             let text = String(linkedText.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
             let path = URL(string: href)?.path.lowercased() ?? href.lowercased()
             let type = path.contains("/c/") ? "category" : (path.contains("/tag/") ? "tag" : nil)
-            taxonomy = (text, href, type)
+            taxonomy = (text, href, type, nil)
         default:
             taxonomy = nil
         }
         guard let taxonomy else {
             return inline.attributedString(config: attributedStringConfig)
         }
-        let (text, href, type) = taxonomy
-
-        if HeadingPresentationPolicy.shouldRenderTagBadge(
-            level: 1,
-            text: text,
-            topicTagNames: topicTagNames
-        ) {
-            let tagPresentation = TopicTagIconCatalog.presentation(for: text)
-            return inlineTaxonomyString(
-                text: text,
-                href: href,
-                iconName: tagPresentation?.iconName,
-                textColor: TopicTagVisualStyle.color(for: text),
-                iconColor: tagPresentation
-                    .flatMap { TopicTaxonomyColor.resolve(hex: $0.colorHex) }
-                    ?? TopicTagVisualStyle.color(for: text)
-            )
-        }
+        let (text, href, type, htmlIcon) = taxonomy
 
         if type?.lowercased() == "category",
            let category = topicCategoryPresentation,
@@ -181,9 +164,23 @@ struct NativeRenderConfig {
             return inlineTaxonomyString(
                 text: text,
                 href: href,
-                iconName: iconName,
+                iconName: htmlIcon ?? iconName,
                 textColor: linkColor,
                 iconColor: linkColor
+            )
+        }
+
+        if InlineHashtagPresentationPolicy.shouldRenderChip(text: text, type: type, href: href) {
+            let tagPresentation = TopicTagIconCatalog.presentation(for: text)
+            let color = TopicTagVisualStyle.color(for: text)
+            return inlineTaxonomyString(
+                text: text,
+                href: href,
+                iconName: htmlIcon ?? tagPresentation?.iconName ?? "tag",
+                textColor: color,
+                iconColor: tagPresentation
+                    .flatMap { TopicTaxonomyColor.resolve(hex: $0.colorHex) }
+                    ?? color
             )
         }
 
@@ -201,7 +198,7 @@ struct NativeRenderConfig {
                 return "@\(username)"
             case .mentionGroup(let name, _):
                 return "@\(name)"
-            case .hashtag(let text, _, _):
+            case .hashtag(let text, _, _, _):
                 return "#\(text)"
             case .image(_, let alt, _, _, _):
                 return alt ?? ""
@@ -261,6 +258,17 @@ struct NativeRenderConfig {
             range: NSRange(location: linkedTextStart, length: result.length - linkedTextStart)
         )
         return result
+    }
+}
+
+enum InlineHashtagPresentationPolicy {
+    static func shouldRenderChip(text: String, type: String?, href: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if type?.lowercased() == "tag" { return true }
+        let path = URL(string: href)?.path.lowercased() ?? href.lowercased()
+        if path.contains("/tag/") { return true }
+        return TopicTagIconCatalog.presentation(for: trimmed) != nil
     }
 }
 

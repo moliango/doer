@@ -25,6 +25,23 @@ final class TopicTaxonomyPresentationTests: XCTestCase {
         XCTAssertNil(TopicTagIconCatalog.presentation(for: "未配置标签"))
     }
 
+    func testWeChatTelegramListSubtitleRendersTagIcon() throws {
+        XCTAssertEqual(TopicTagVisualStyle.iconName(for: "抽奖"), "shuffle")
+        XCTAssertEqual(TopicTagVisualStyle.iconName(for: "未知标签"), "tag")
+        let subtitle = try XCTUnwrap(
+            TopicListTagSubtitle.make(
+                categoryName: "开发调优",
+                tags: ["抽奖"],
+                font: .systemFont(ofSize: 13),
+                categoryColor: .secondaryLabel
+            )
+        )
+        XCTAssertTrue(subtitle.string.contains("开发调优"))
+        XCTAssertTrue(subtitle.string.contains("抽奖"))
+        XCTAssertFalse(subtitle.string.contains("#抽奖"))
+        XCTAssertGreaterThan(subtitle.length, "开发调优 · 抽奖".utf16.count)
+    }
+
     func testCurrentLinuxDoCategoryAndFluxDoTagIconsExistInBundledFontMap() {
         let currentCategoryIcons = [
             "code", "seedling", "square-share-nodes", "hard-drive", "book",

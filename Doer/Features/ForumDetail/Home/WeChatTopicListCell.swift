@@ -233,18 +233,19 @@ final class WeChatTopicListCell: UITableViewCell {
         renderedTitle = plain
         applyTitle(plain)
 
-        var parts: [String] = []
-        if let categoryName, !categoryName.isEmpty {
-            parts.append(categoryName)
-        }
-        if let tag = tags.first, !tag.isEmpty {
-            parts.append(tag)
-        }
-        if parts.isEmpty, let excerpt = topic.excerpt?.trimmingCharacters(in: .whitespacesAndNewlines), !excerpt.isEmpty {
-            parts.append(excerpt)
-        }
-        subtitleLabel.text = parts.isEmpty ? " " : parts.joined(separator: " · ")
         subtitleLabel.textColor = .secondaryLabel
+        if let attributed = TopicListTagSubtitle.make(
+            categoryName: categoryName,
+            tags: tags,
+            font: subtitleLabel.font ?? TopicListTypography.font(for: .subtitle, weight: .regular),
+            categoryColor: .secondaryLabel
+        ) {
+            subtitleLabel.attributedText = attributed
+        } else if let excerpt = topic.excerpt?.trimmingCharacters(in: .whitespacesAndNewlines), !excerpt.isEmpty {
+            subtitleLabel.text = excerpt
+        } else {
+            subtitleLabel.text = " "
+        }
 
         timeLabel.text = TopicCell.formatDate(topic.lastPostedAt ?? topic.createdAt)
         let replies = max(topic.postsCount - 1, 0)

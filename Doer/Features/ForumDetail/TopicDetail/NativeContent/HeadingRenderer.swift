@@ -12,7 +12,10 @@ enum HeadingPresentationPolicy {
         guard level == 1 else { return false }
         let normalizedText = normalize(text)
         guard !normalizedText.isEmpty else { return false }
-        return topicTagNames.contains { normalize($0) == normalizedText }
+        if topicTagNames.contains(where: { normalize($0) == normalizedText }) {
+            return true
+        }
+        return TopicTagIconCatalog.presentation(for: normalizedText) != nil
     }
 
     static func shouldRenderCategoryBadge(
@@ -68,10 +71,11 @@ enum HeadingRenderer: BlockRenderer {
             text: headingText,
             topicTagNames: config.topicTagNames
         ) {
-            let badge = HeadingTagBadgeView(
-                text: headingText,
+            let badge = TopicTaxonomyBadgeView(
+                tag: headingText,
                 color: TopicTagVisualStyle.color(for: headingText),
-                font: config.baseFont.withRelativeSize(1).weighted(.semibold)
+                variant: .regular,
+                isInteractive: true
             )
             if let url = ForumInternalLinkParser.tagURL(name: headingText, baseURL: config.baseURL ?? "") {
                 badge.addAction(UIAction { [weak delegate] _ in
@@ -157,7 +161,7 @@ enum HeadingRenderer: BlockRenderer {
                 return "@\(username)"
             case .mentionGroup(let name, _):
                 return "@\(name)"
-            case .hashtag(let text, _, _):
+            case .hashtag(let text, _, _, _):
                 return text
             case .image(_, let alt, _, _, _):
                 return alt ?? ""
@@ -196,61 +200,3 @@ final class HeadingBlockView: UIView {
     }
 }
 
-private final class HeadingTagBadgeView: UIControl {
-    init(text: String, color: UIColor, font: UIFont) {
-        super.init(frame: .zero)
-        isUserInteractionEnabled = true
-        accessibilityTraits = .button
-        translatesAutoresizingMaskIntoConstraints = false
-        backgroundColor = color.withAlphaComponent(0.10)
-        layer.cornerRadius = 14
-        layer.cornerCurve = .continuous
-        layer.borderWidth = 1
-        layer.borderColor = color.withAlphaComponent(0.22).cgColor
-
-        let iconView = UIImageView(image: UIImage(systemName: "tag.fill"))
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.tintColor = color
-        iconView.contentMode = .scaleAspectFit
-
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.text = text
-        label.textColor = color
-        label.font = font
-        label.adjustsFontForContentSizeCategory = true
-
-        addSubview(iconView)
-        addSubview(label)
-
-        NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 11),
-            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 13),
-            iconView.heightAnchor.constraint(equalToConstant: 13),
-
-            label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            label.topAnchor.constraint(equalTo: topAnchor, constant: 5),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-}
-
-private extension UIFont {
-    func withRelativeSize(_ offset: CGFloat) -> UIFont {
-        withSize(max(pointSize + offset, 1))
-    }
-
-    func weighted(_ weight: UIFont.Weight) -> UIFont {
-        let descriptor = fontDescriptor.addingAttributes([
-            .traits: [UIFontDescriptor.TraitKey.weight: weight],
-        ])
-        return UIFont(descriptor: descriptor, size: pointSize)
-    }
-}

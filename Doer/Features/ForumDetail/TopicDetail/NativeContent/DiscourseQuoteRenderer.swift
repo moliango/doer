@@ -214,7 +214,7 @@ enum DiscourseQuoteRenderer: BlockRenderer {
             case .link(_, let children), .spoiler(let children): return plainText(children)
             case .mention(let username, _): return "@\(username)"
             case .mentionGroup(let name, _): return "@\(name)"
-            case .hashtag(let text, _, _): return "#\(text)"
+            case .hashtag(let text, _, _, _): return "#\(text)"
             case .image(_, let alt, _, _, _): return alt ?? ""
             case .lineBreak: return "\n"
             }

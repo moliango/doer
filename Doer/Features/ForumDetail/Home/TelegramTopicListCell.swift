@@ -344,13 +344,27 @@ final class TelegramTopicListCell: UITableViewCell {
         pinIcon.tintColor = timeLabel.textColor
         verifiedIcon.tintColor = timeLabel.textColor
 
-        // Last-message style preview: excerpt first, then category · tag.
-        previewLabel.text = Self.previewText(
-            topic: topic,
-            categoryName: categoryName,
-            tags: tags
-        )
+        // Last-message style preview: excerpt first, then category · tag chip.
         previewLabel.numberOfLines = 2
+        if let excerpt = topic.excerpt?
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !excerpt.isEmpty {
+            previewLabel.text = excerpt
+        } else if let attributed = TopicListTagSubtitle.make(
+            categoryName: categoryName,
+            tags: tags,
+            font: previewLabel.font ?? TopicListTypography.font(for: .subtitle, weight: .regular),
+            categoryColor: previewLabel.textColor
+        ) {
+            previewLabel.attributedText = attributed
+        } else {
+            previewLabel.text = Self.previewText(
+                topic: topic,
+                categoryName: categoryName,
+                tags: tags
+            )
+        }
 
         timeLabel.text = Self.formatTelegramDate(topic.lastPostedAt ?? topic.createdAt)
 

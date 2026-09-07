@@ -10,7 +10,7 @@ public enum InlineNode: Sendable, Equatable {
     case lineBreak
     case mention(username: String, href: String)
     case mentionGroup(name: String, href: String)
-    case hashtag(text: String, href: String, type: String?)
+    case hashtag(text: String, href: String, type: String?, icon: String?)
     case spoiler(children: [InlineNode])
 }
 

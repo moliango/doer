@@ -14,12 +14,75 @@ enum TopicTagVisualStyle {
         return .secondaryLabel
     }
 
+    static func iconName(for tag: String) -> String {
+        TopicTagIconCatalog.presentation(for: tag)?.iconName ?? "tag"
+    }
+
+    static func iconColor(for tag: String) -> UIColor {
+        if let hex = TopicTagIconCatalog.presentation(for: tag)?.colorHex,
+           let color = TopicTaxonomyColor.resolve(hex: hex) {
+            return color
+        }
+        return color(for: tag)
+    }
+
     static func categoryColor(for name: String?, fallback: UIColor?) -> UIColor {
         let settings = AppSettings.shared
         if settings.themeTaxonomyColorsEnabled {
             return settings.themeStyle.topicCategoryColor(for: name, fallback: fallback)
         }
         return fallback ?? .systemGray
+    }
+}
+
+/// One-line `分类 · [icon]标签` used by WeChat / Telegram session rows.
+enum TopicListTagSubtitle {
+    static func make(
+        categoryName: String?,
+        tags: [String],
+        font: UIFont,
+        categoryColor: UIColor
+    ) -> NSAttributedString? {
+        let result = NSMutableAttributedString()
+        let categoryAttrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: categoryColor,
+        ]
+        if let categoryName, !categoryName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            result.append(NSAttributedString(string: categoryName, attributes: categoryAttrs))
+        }
+        if let tag = tags.first, !tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if result.length > 0 {
+                result.append(NSAttributedString(string: " · ", attributes: categoryAttrs))
+            }
+            appendTag(tag, to: result, font: font)
+        }
+        return result.length > 0 ? result : nil
+    }
+
+    static func appendTag(_ tag: String, to result: NSMutableAttributedString, font: UIFont) {
+        let color = TopicTagVisualStyle.color(for: tag)
+        let iconColor = TopicTagVisualStyle.iconColor(for: tag)
+        if let glyph = DiscourseFontAwesomeIcon.glyph(for: TopicTagVisualStyle.iconName(for: tag)),
+           let iconFont = UIFont(
+               name: DiscourseFontAwesomeIcon.fontName,
+               size: max(font.pointSize - 1, 1)
+           ) {
+            result.append(NSAttributedString(
+                string: "\(glyph) ",
+                attributes: [
+                    .font: iconFont,
+                    .foregroundColor: iconColor,
+                ]
+            ))
+        }
+        result.append(NSAttributedString(
+            string: tag,
+            attributes: [
+                .font: font,
+                .foregroundColor: color,
+            ]
+        ))
     }
 }
 

@@ -139,7 +139,7 @@ public extension InlineNode {
                 .link: href,
             ])
 
-        case .hashtag(let text, let href, _):
+        case .hashtag(let text, let href, _, _):
             return NSAttributedString(string: "#\(text)", attributes: [
                 .font: config.baseFont,
                 .foregroundColor: config.hashtagColor,

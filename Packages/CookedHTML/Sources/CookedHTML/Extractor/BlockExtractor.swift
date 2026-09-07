@@ -1232,7 +1232,7 @@ enum BlockExtractor {
                 return "@\(username)"
             case .mentionGroup(let name, _):
                 return "@\(name)"
-            case .hashtag(let text, _, _):
+            case .hashtag(let text, _, _, _):
                 return "#\(text)"
             case .image(_, let alt, _, _, _):
                 return alt ?? ""

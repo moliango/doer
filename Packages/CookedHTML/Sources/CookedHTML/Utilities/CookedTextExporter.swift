@@ -195,7 +195,7 @@ public enum CookedTextExporter {
                 return "@\(username)"
             case .mentionGroup(let name, _):
                 return "@\(name)"
-            case .hashtag(let text, _, _):
+            case .hashtag(let text, _, _, _):
                 return text.hasPrefix("#") ? text : "#\(text)"
             }
         }

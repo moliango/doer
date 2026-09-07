@@ -649,7 +649,7 @@ final class BoostStripView: UIView {
                     appendText("@\(username)")
                 case .mentionGroup(let name, _):
                     appendText("@\(name)")
-                case .hashtag(let value, _, _):
+                case .hashtag(let value, _, _, _):
                     appendText("#\(value)")
                 case .image(let src, let alt, _, _, let isEmoji):
                     guard isEmoji || isTinyEmojiURL(src) else {

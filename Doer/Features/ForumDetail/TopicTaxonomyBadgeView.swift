@@ -83,16 +83,11 @@ final class TopicTaxonomyBadgeView: UIControl {
         let iconColor = tagPresentation
             .flatMap { TopicTaxonomyColor.resolve(hex: $0.colorHex) }
             ?? color
-        let iconView: UIView?
-        if let tagPresentation {
-            iconView = makeFontAwesomeIcon(
-                name: tagPresentation.iconName,
-                color: iconColor,
-                size: variant.iconSize
-            )
-        } else {
-            iconView = nil
-        }
+        let iconView = makeFontAwesomeIcon(
+            name: tagPresentation?.iconName ?? "tag",
+            color: iconColor,
+            size: variant.iconSize
+        )
         setup(
             text: tag,
             color: color,

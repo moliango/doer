@@ -257,7 +257,12 @@ enum InlineExtractor {
                 let displayText = text.hasPrefix("#") ? String(text.dropFirst()) : text
                 let dataType = try? element.attr("data-type")
                 let type = (dataType?.isEmpty == false) ? dataType : nil
-                return [.hashtag(text: displayText, href: href, type: type)]
+                return [.hashtag(
+                    text: displayText.trimmingCharacters(in: .whitespacesAndNewlines),
+                    href: href,
+                    type: type,
+                    icon: extractHashtagIcon(from: element)
+                )]
             }
             let children = extract(from: element, options: options, style: style)
             return [.link(href: href, children: children)]
@@ -350,5 +355,52 @@ enum InlineExtractor {
             default: return true
             }
         }
+    }
+
+    /// Discourse 3 hashtag chips: `data-icon`, `d-icon-shuffle`, or `<use href="#shuffle">`.
+    static func extractHashtagIcon(from element: Element) -> String? {
+        if let value = nonEmptyIconAttr(element, "data-icon") {
+            return value
+        }
+        let descendants = (try? element.getAllElements())?.array() ?? []
+        for child in descendants {
+            if let value = nonEmptyIconAttr(child, "data-icon") {
+                return value
+            }
+            if let name = dIconName(fromClass: (try? child.attr("class")) ?? "") {
+                return name
+            }
+            if child.tagName().lowercased() == "use" {
+                let href = (try? child.attr("href"))
+                    ?? (try? child.attr("xlink:href"))
+                    ?? ""
+                if href.hasPrefix("#"), href.count > 1 {
+                    return normalizeIconName(String(href.dropFirst()))
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func nonEmptyIconAttr(_ element: Element, _ name: String) -> String? {
+        let value = (try? element.attr(name))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? nil : normalizeIconName(value)
+    }
+
+    private static func dIconName(fromClass classAttr: String) -> String? {
+        for part in classAttr.split(whereSeparator: \.isWhitespace).map(String.init) {
+            guard part.hasPrefix("d-icon-") else { continue }
+            let name = String(part.dropFirst("d-icon-".count))
+            if !name.isEmpty { return normalizeIconName(name) }
+        }
+        return nil
+    }
+
+    private static func normalizeIconName(_ raw: String) -> String {
+        var name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.hasPrefix("fa-") {
+            name = String(name.dropFirst(3))
+        }
+        return name
     }
 }
