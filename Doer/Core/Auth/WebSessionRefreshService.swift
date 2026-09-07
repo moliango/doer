@@ -141,11 +141,18 @@ final class WebSessionRefreshService: NSObject {
         DohDebugLog.record("web session refresh started reason=\(reason)", subsystem: "Auth")
 
         let dataStore = WKWebsiteDataStore.default()
-        await WebCookieStore.shared.primeBrowserSession(
+        let primed = await WebCookieStore.shared.primeBrowserSession(
             to: dataStore,
             forumURL: baseURL,
             pageURL: baseURL
         )
+        if !primed {
+            DohDebugLog.record(
+                "web session refresh skipped WK path reason=\(reason) cookie_store_timeout=true",
+                subsystem: "Auth"
+            )
+            return false
+        }
 
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore

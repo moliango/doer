@@ -8,6 +8,7 @@ enum DoerLaunchAppearance {
 
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
+    private var foregroundSessionRefreshTask: Task<Void, Never>?
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = (scene as? UIWindowScene) else { return }
@@ -68,7 +69,6 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     func sceneDidDisconnect(_ scene: UIScene) {}
     func sceneDidBecomeActive(_ scene: UIScene) {
-        refreshWebSessionAfterForeground(reason: "scene_did_become_active")
         if let window {
             ForumNotificationRoutePresenter.presentPendingRouteIfNeeded(in: window)
             if let container = window.rootViewController as? ForumContainerViewController {
@@ -85,7 +85,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func sceneWillEnterForeground(_ scene: UIScene) {
         LightweightDohProxyService.shared.ensureProxyAlive()
         ConnectivityService.shared.check()
-        refreshWebSessionAfterForeground(reason: "scene_will_enter_foreground")
+        scheduleForegroundSessionRefresh()
     }
 
     func sceneDidEnterBackground(_ scene: UIScene) {
@@ -93,9 +93,14 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         BackgroundNotificationRefreshService.shared.scheduleIfNeeded()
     }
 
-    private func refreshWebSessionAfterForeground(reason: String) {
-        let forum = DatabaseManager.shared.defaultForum()
-        guard AuthManager.shared.hasWebSession(for: forum.baseURL) else { return }
-        WebSessionRefreshService.shared.ensureInBackground(forum: forum, reason: reason)
+    private func scheduleForegroundSessionRefresh() {
+        foregroundSessionRefreshTask?.cancel()
+        foregroundSessionRefreshTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+            let forum = DatabaseManager.shared.defaultForum()
+            guard AuthManager.shared.hasWebSession(for: forum.baseURL) else { return }
+            WebSessionRefreshService.shared.ensureInBackground(forum: forum, reason: "scene_enter_foreground")
+        }
     }
 }

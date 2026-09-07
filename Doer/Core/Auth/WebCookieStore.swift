@@ -1,6 +1,70 @@
 import Foundation
 import WebKit
 
+/// Bound WK cookie-store waits so a dead WebKit process cannot freeze resume.
+/// WKHTTPCookieStore must be used on the main thread; do not cancel an in-flight
+/// continuation (TaskGroup cancel + late callback crashes).
+enum WKCookieStoreIO {
+    static let timeoutNanoseconds: UInt64 = 1_200_000_000
+
+    @MainActor
+    static func getAllCookies(_ store: WKHTTPCookieStore) async -> [HTTPCookie]? {
+        await withCheckedContinuation { continuation in
+            let once = ResumeOnce<[HTTPCookie]?>()
+            store.getAllCookies { cookies in
+                once.resume(continuation, cookies)
+            }
+            Task.detached {
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                once.resume(continuation, nil)
+            }
+        }
+    }
+
+    @MainActor
+    static func setCookie(_ cookie: HTTPCookie, on store: WKHTTPCookieStore) async {
+        await withCheckedContinuation { continuation in
+            let once = ResumeOnce<Void>()
+            store.setCookie(cookie) {
+                once.resume(continuation, ())
+            }
+            Task.detached {
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                once.resume(continuation, ())
+            }
+        }
+    }
+
+    @MainActor
+    static func deleteCookie(_ cookie: HTTPCookie, on store: WKHTTPCookieStore) async {
+        await withCheckedContinuation { continuation in
+            let once = ResumeOnce<Void>()
+            store.delete(cookie) {
+                once.resume(continuation, ())
+            }
+            Task.detached {
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                once.resume(continuation, ())
+            }
+        }
+    }
+}
+
+private final class ResumeOnce<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didResume = false
+
+    func resume(_ continuation: CheckedContinuation<Value, Never>, _ value: Value) {
+        lock.lock()
+        let shouldResume = !didResume
+        didResume = true
+        lock.unlock()
+        if shouldResume {
+            continuation.resume(returning: value)
+        }
+    }
+}
+
 private enum CookieDeletionKind {
     case emptyValue
     case deletionSentinel
@@ -245,8 +309,9 @@ final class WebCookieStore {
 
     @MainActor
     func syncFromWebView(_ dataStore: WKWebsiteDataStore, names: Set<String>? = nil, for url: URL? = nil) async {
-        let webViewCookies = await withCheckedContinuation { cont in
-            dataStore.httpCookieStore.getAllCookies { cont.resume(returning: $0) }
+        guard let webViewCookies = await WKCookieStoreIO.getAllCookies(dataStore.httpCookieStore) else {
+            DohDebugLog.record("syncFromWebView skipped: cookie store timed out", subsystem: "Auth")
+            return
         }
         let now = Date()
         var skippedAuthDeletions: [String] = []
@@ -291,16 +356,18 @@ final class WebCookieStore {
     /// Inject every cookie that belongs to the site family (e.g. `linux.do` + `*.linux.do`).
     /// Used so mini-programs / in-app browser reuse the app's Discourse login without a second sign-in.
     @MainActor
-    func syncSiteSession(to dataStore: WKWebsiteDataStore, siteURL: URL) async {
-        guard let host = siteURL.host?.lowercased() else { return }
+    @discardableResult
+    func syncSiteSession(to dataStore: WKWebsiteDataStore, siteURL: URL) async -> Bool {
+        guard let host = siteURL.host?.lowercased() else { return false }
         let cookies = siteCookiesForInjection(forHost: host)
-        await injectCookies(cookies, into: dataStore, replacingAuthOnHost: host)
-        if !cookies.isEmpty {
+        let ok = await injectCookies(cookies, into: dataStore, replacingAuthOnHost: host)
+        if ok, !cookies.isEmpty {
             DohDebugLog.record(
                 "primed site session host=\(host) root=\(Self.siteRootDomain(host)) count=\(cookies.count) names=\(Self.cookieSummary(cookies))",
                 subsystem: "Auth"
             )
         }
+        return ok
     }
 
     /// Prime WK with the forum login jar **and** any host-specific cookies for `pageURL`.
@@ -310,16 +377,19 @@ final class WebCookieStore {
     /// Only pushes jar → WK (does not pull WK → jar first). Pulling first is unsafe: an expired
     /// leftover `_t` in WK would be treated as a deletion cookie and wipe a still-valid jar session.
     @MainActor
+    @discardableResult
     func primeBrowserSession(
         to dataStore: WKWebsiteDataStore,
         forumURL: URL,
         pageURL: URL?
-    ) async {
-        await syncSiteSession(to: dataStore, siteURL: forumURL)
+    ) async -> Bool {
+        let primedForum = await syncSiteSession(to: dataStore, siteURL: forumURL)
+        var primedPage = true
         if let pageURL, let pageHost = pageURL.host?.lowercased(),
            pageHost != forumURL.host?.lowercased() {
-            await syncSiteSession(to: dataStore, siteURL: pageURL)
+            primedPage = await syncSiteSession(to: dataStore, siteURL: pageURL)
         }
+        return primedForum && primedPage
     }
 
     /// Cookies suitable for an outgoing HTTP request to `host` (auth cookies stay host-only).
@@ -386,11 +456,12 @@ final class WebCookieStore {
     }
 
     @MainActor
+    @discardableResult
     private func injectCookies(
         _ cookies: [HTTPCookie],
         into dataStore: WKWebsiteDataStore,
         replacingAuthOnHost host: String
-    ) async {
+    ) async -> Bool {
         let cookieStore = dataStore.httpCookieStore
         let prepared = cookies.map(Self.webKitReadyCookie(from:))
         let authCookieNames = Set(
@@ -398,8 +469,9 @@ final class WebCookieStore {
         )
 
         if !authCookieNames.isEmpty {
-            let existingCookies = await withCheckedContinuation { continuation in
-                cookieStore.getAllCookies { continuation.resume(returning: $0) }
+            guard let existingCookies = await WKCookieStoreIO.getAllCookies(cookieStore) else {
+                DohDebugLog.record("injectCookies aborted: cookie store timed out host=\(host)", subsystem: "Auth")
+                return false
             }
             for cookie in existingCookies {
                 guard authCookieNames.contains(cookie.name),
@@ -409,31 +481,21 @@ final class WebCookieStore {
                         root: Self.siteRootDomain(host)
                       )
                 else { continue }
-                await withCheckedContinuation { continuation in
-                    cookieStore.delete(cookie) {
-                        continuation.resume()
-                    }
-                }
+                await WKCookieStoreIO.deleteCookie(cookie, on: cookieStore)
             }
         }
 
         for cookie in prepared {
-            await withCheckedContinuation { continuation in
-                cookieStore.setCookie(cookie) {
-                    continuation.resume()
-                }
-            }
+            await WKCookieStoreIO.setCookie(cookie, on: cookieStore)
         }
-        // Round-trip getAllCookies so WebKit commits the jar before the next navigation.
-        // Without this, the first document request can race and go out logged-out.
         if !prepared.isEmpty {
-            _ = await withCheckedContinuation { continuation in
-                cookieStore.getAllCookies { cookies in
-                    continuation.resume(returning: cookies)
-                }
+            guard await WKCookieStoreIO.getAllCookies(cookieStore) != nil else {
+                DohDebugLog.record("injectCookies commit timed out host=\(host)", subsystem: "Auth")
+                return false
             }
             DohDebugLog.record("primed WebView cookies: \(Self.cookieSummary(prepared))", subsystem: "Auth")
         }
+        return true
     }
 
     func clearAll() {
@@ -465,15 +527,9 @@ final class WebCookieStore {
     func clearWebViewCookies(for baseURL: String) async {
         guard let host = URL(string: baseURL)?.host?.lowercased() else { return }
         let cookieStore = WKWebsiteDataStore.default().httpCookieStore
-        let cookies = await withCheckedContinuation { continuation in
-            cookieStore.getAllCookies { continuation.resume(returning: $0) }
-        }
+        guard let cookies = await WKCookieStoreIO.getAllCookies(cookieStore) else { return }
         for cookie in cookies where Self.domainMatches(host: host, cookieDomain: cookie.domain) {
-            await withCheckedContinuation { continuation in
-                cookieStore.delete(cookie) {
-                    continuation.resume()
-                }
-            }
+            await WKCookieStoreIO.deleteCookie(cookie, on: cookieStore)
         }
     }
 
@@ -481,16 +537,10 @@ final class WebCookieStore {
     func clearWebViewAuthCookies(for baseURL: String) async {
         guard let host = URL(string: baseURL)?.host?.lowercased() else { return }
         let cookieStore = WKWebsiteDataStore.default().httpCookieStore
-        let cookies = await withCheckedContinuation { continuation in
-            cookieStore.getAllCookies { continuation.resume(returning: $0) }
-        }
+        guard let cookies = await WKCookieStoreIO.getAllCookies(cookieStore) else { return }
         for cookie in cookies where Self.domainMatches(host: host, cookieDomain: cookie.domain)
             && Self.isAuthCookieName(cookie.name) {
-            await withCheckedContinuation { continuation in
-                cookieStore.delete(cookie) {
-                    continuation.resume()
-                }
-            }
+            await WKCookieStoreIO.deleteCookie(cookie, on: cookieStore)
         }
     }
 
