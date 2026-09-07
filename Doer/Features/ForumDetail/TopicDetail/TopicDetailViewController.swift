@@ -261,6 +261,7 @@ final class TopicDetailViewController: ObservableViewController {
     }()
 
     let bottomBar = TopicDetailBottomBar()
+    let filterHintBanner = TopicFilterHintBannerView()
 
     lazy var floatingReplyButton: UIButton = {
         let button = UIButton(type: .system)
@@ -434,8 +435,14 @@ final class TopicDetailViewController: ObservableViewController {
         view.addSubview(tocFabButton)
         view.addSubview(newRepliesBanner)
         view.addSubview(topLoadingBar)
+        view.addSubview(filterHintBanner)
 
         bottomBar.delegate = self
+        filterHintBanner.onClear = { [weak self] in
+            guard let self else { return }
+            AppSettings.shared.nestedReplyViewEnabled = false
+            self.viewModel.clearTopicFilters()
+        }
         tableView.tableFooterView = footerSpinner
         installTopicFindBar()
 
@@ -477,6 +484,11 @@ final class TopicDetailViewController: ObservableViewController {
             topLoadingBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topLoadingBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topLoadingBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+
+            filterHintBanner.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            filterHintBanner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            filterHintBanner.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+            filterHintBanner.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
         ])
 
         Task {
@@ -641,6 +653,7 @@ final class TopicDetailViewController: ObservableViewController {
         lastThemeStyle = settings.themeStyle
         lastCategoryPresentation = viewModel.categoryPresentation
         configureTopicActions()
+        updateFilterHintBanner()
         if didChangeThemeStyle || didChangeCategoryPresentation {
             hasTitleHeader = false
         }
@@ -827,6 +840,20 @@ final class TopicDetailViewController: ObservableViewController {
         tocConfig.baseForegroundColor = accentColor
         tocConfig.baseBackgroundColor = UIColor.secondarySystemGroupedBackground
         tocFabButton.configuration = tocConfig
+        filterHintBanner.applyTheme()
+    }
+
+    func updateFilterHintBanner() {
+        let title = TopicFilterHintPolicy.bannerTitle(
+            showHint: AppSettings.shared.showTopicFilterHint,
+            isFilteringByOP: viewModel.isFilteringByOP,
+            filterUsername: viewModel.filterUsername,
+            isFilteringTopLevel: viewModel.isFilteringTopLevel
+        )
+        filterHintBanner.apply(title: title)
+        if !filterHintBanner.isHidden {
+            view.bringSubviewToFront(filterHintBanner)
+        }
     }
 
     func applyRemainderLoadErrorFooter(_ text: String) {

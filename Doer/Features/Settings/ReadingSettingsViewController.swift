@@ -13,6 +13,7 @@ final class ReadingSettingsViewController: ObservableViewController {
         case openExternalLinksInAppBrowser
         case contentImageCarousel
         case nestedReplyView
+        case showTopicFilterHint
         case showTopicCardCategory
         case showTopicCardTags
         case showTopicCardCounts
@@ -29,6 +30,7 @@ final class ReadingSettingsViewController: ObservableViewController {
             case .openExternalLinksInAppBrowser: return String(localized: "settings.reading.in_app_browser")
             case .contentImageCarousel: return String(localized: "settings.reading.image_carousel", defaultValue: "正文图片轮播")
             case .nestedReplyView: return String(localized: "settings.reading.nested", defaultValue: "树形回复视图")
+            case .showTopicFilterHint: return String(localized: "settings.reading.filter_hint", defaultValue: "显示过滤提示")
             case .showTopicCardCategory: return String(localized: "settings.card.category", defaultValue: "卡片显示分类")
             case .showTopicCardTags: return String(localized: "settings.card.tags", defaultValue: "卡片显示标签")
             case .showTopicCardCounts: return String(localized: "settings.card.counts", defaultValue: "卡片显示计数")
@@ -47,6 +49,10 @@ final class ReadingSettingsViewController: ObservableViewController {
             case .openExternalLinksInAppBrowser: return String(localized: "settings.reading.in_app_browser.subtitle")
             case .contentImageCarousel: return String(localized: "settings.reading.image_carousel.subtitle", defaultValue: "新：FluxDo 式轮播；关：沿用原来的单图堆叠")
             case .nestedReplyView: return String(localized: "settings.reading.nested.subtitle", defaultValue: "详情页按回复关系缩进展示")
+            case .showTopicFilterHint: return String(
+                localized: "settings.reading.filter_hint.subtitle",
+                defaultValue: "只看题主、只看某人或只看顶层时，在话题顶部显示提示条"
+            )
             case .showTopicCardCategory: return String(localized: "settings.card.category.subtitle", defaultValue: "列表卡片是否显示分类")
             case .showTopicCardTags: return String(localized: "settings.card.tags.subtitle", defaultValue: "列表卡片是否显示标签")
             case .showTopicCardCounts: return String(localized: "settings.card.counts.subtitle", defaultValue: "列表卡片是否显示回复数")
@@ -65,6 +71,7 @@ final class ReadingSettingsViewController: ObservableViewController {
             case .openExternalLinksInAppBrowser: return "rectangle.portrait.and.arrow.right"
             case .contentImageCarousel: return "rectangle.stack"
             case .nestedReplyView: return "list.bullet.indent"
+            case .showTopicFilterHint: return "line.3.horizontal.decrease.circle"
             case .showTopicCardCategory: return "folder"
             case .showTopicCardTags: return "tag"
             case .showTopicCardCounts: return "number"
@@ -221,6 +228,7 @@ final class ReadingSettingsViewController: ObservableViewController {
         threadedBody.axis = .vertical
         threadedBody.spacing = 12
         threadedBody.addArrangedSubview(makeToggleRow(for: .nestedReplyView))
+        threadedBody.addArrangedSubview(makeToggleRow(for: .showTopicFilterHint))
         contentStack.addArrangedSubview(verticalSection(
             title: String(localized: "settings.reading.section.threaded", defaultValue: "树形回复"),
             symbolName: "list.bullet.indent",
@@ -418,6 +426,8 @@ final class ReadingSettingsViewController: ObservableViewController {
             return settings.contentImageCarouselEnabled
         case .nestedReplyView:
             return settings.nestedReplyViewEnabled
+        case .showTopicFilterHint:
+            return settings.showTopicFilterHint
         case .showTopicCardTags:
             return settings.showTopicCardTags
         case .showTopicCardCategory:
@@ -449,6 +459,8 @@ final class ReadingSettingsViewController: ObservableViewController {
             settings.contentImageCarouselEnabled = isOn
         case .nestedReplyView:
             settings.nestedReplyViewEnabled = isOn
+        case .showTopicFilterHint:
+            settings.showTopicFilterHint = isOn
         case .showTopicCardTags:
             settings.showTopicCardTags = isOn
         case .showTopicCardCategory:

@@ -54,6 +54,8 @@ class ChatTopicDetailViewController: ObservableViewController {
     let tocController = TopicTocController()
     private let holdToTalk = ChatHoldToTalkCoordinator()
 
+    private let filterHintBanner = TopicFilterHintBannerView()
+
     private lazy var tableView: UITableView = {
         let tv = TopicDetailPopAwareTableView(frame: .zero, style: .plain)
         tv.translatesAutoresizingMaskIntoConstraints = false
@@ -144,7 +146,8 @@ class ChatTopicDetailViewController: ObservableViewController {
                 contentDelegate: self,
                 dateSeparatorText: dateSeparator,
                 chatStyle: style,
-                replyQuote: self.makeChatReplyQuote(for: post)
+                replyQuote: self.makeChatReplyQuote(for: post),
+                validReactions: self.viewModel.topic?.validReactions ?? []
             )
             return cell
         }
@@ -299,6 +302,7 @@ class ChatTopicDetailViewController: ObservableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         observe(viewModel)
+        observe(AppSettings.shared)
         startObservingCloudflareVerification()
         applyChatCanvasBackground()
         chatInputBar.applyChatStyle()
@@ -311,7 +315,13 @@ class ChatTopicDetailViewController: ObservableViewController {
         view.addSubview(chatInputBar)
         view.addSubview(loadingSkeletonView)
         view.addSubview(errorLabel)
+        view.addSubview(filterHintBanner)
         installTopicFindBar()
+        filterHintBanner.onClear = { [weak self] in
+            guard let self else { return }
+            AppSettings.shared.nestedReplyViewEnabled = false
+            self.viewModel.clearTopicFilters()
+        }
 
         let inputBottom = chatInputBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         chatInputBarBottomConstraint = inputBottom
@@ -333,6 +343,11 @@ class ChatTopicDetailViewController: ObservableViewController {
             errorLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
             errorLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
             errorLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+
+            filterHintBanner.topAnchor.constraint(equalTo: findController.bar.bottomAnchor, constant: 8),
+            filterHintBanner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            filterHintBanner.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+            filterHintBanner.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
         ])
         holdToTalk.installOverlay(in: self)
         holdToTalk.onTranscribed = { [weak self] text in
@@ -454,6 +469,7 @@ class ChatTopicDetailViewController: ObservableViewController {
             navigationItem.title = display
         }
         configureTopicActions()
+        updateFilterHintBanner()
 
         let settings = AppSettings.shared
         let shouldReloadVisibleContent = lastReadingComfortMode != settings.readingComfortMode
@@ -492,6 +508,19 @@ class ChatTopicDetailViewController: ObservableViewController {
                 tableView.reloadData()
             }
             updateSuggestedTopicsFooter()
+        }
+    }
+
+    private func updateFilterHintBanner() {
+        let title = TopicFilterHintPolicy.bannerTitle(
+            showHint: AppSettings.shared.showTopicFilterHint,
+            isFilteringByOP: viewModel.isFilteringByOP,
+            filterUsername: viewModel.filterUsername,
+            isFilteringTopLevel: viewModel.isFilteringTopLevel
+        )
+        filterHintBanner.apply(title: title)
+        if !filterHintBanner.isHidden {
+            view.bringSubviewToFront(filterHintBanner)
         }
     }
 
@@ -973,7 +1002,8 @@ class ChatTopicDetailViewController: ObservableViewController {
             baseURL: baseURL,
             initialText: initialText,
             submissionMode: submissionMode,
-            mentionSeedUsers: mentionSeedUsers()
+            mentionSeedUsers: mentionSeedUsers(),
+            categoryId: viewModel.topic?.categoryId
         )
         composer.onPostCreated = { [weak self] in
             guard let self else { return }

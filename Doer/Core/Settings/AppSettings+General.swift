@@ -91,6 +91,7 @@ extension AppSettings {
                 clipboardTopicLinkPromptEnabled: clipboardTopicLinkPromptEnabled,
                 showUserSignatures: showUserSignatures,
                 nestedReplyViewEnabled: nestedReplyViewEnabled,
+                showTopicFilterHint: showTopicFilterHint,
                 showTopicCardExcerpt: showTopicCardExcerpt,
                 showTopicCardTags: showTopicCardTags,
                 showTopicCardCategory: showTopicCardCategory,
@@ -258,6 +259,9 @@ extension AppSettings {
         }
         if let value = preferences.nestedReplyViewEnabled {
             nestedReplyViewEnabled = value
+        }
+        if let value = preferences.showTopicFilterHint {
+            showTopicFilterHint = value
         }
         if let value = preferences.showTopicCardExcerpt {
             showTopicCardExcerpt = value
@@ -460,6 +464,7 @@ extension AppSettings {
         let clipboardTopicLinkPromptEnabled: Bool?
         let showUserSignatures: Bool?
         let nestedReplyViewEnabled: Bool?
+        let showTopicFilterHint: Bool?
         let showTopicCardExcerpt: Bool?
         let showTopicCardTags: Bool?
         let showTopicCardCategory: Bool?

@@ -92,6 +92,15 @@ extension AppSettings {
         }
     }
 
+    /// FluxDo: show a chip while OP / user / top-level filters are on.
+    var showTopicFilterHint: Bool {
+        get { bool(forKey: "showTopicFilterHint", defaultValue: true) }
+        set {
+            defaults.set(newValue, forKey: "showTopicFilterHint")
+            notifyChanged()
+        }
+    }
+
     var showTopicCardExcerpt: Bool {
         get { bool(forKey: "showTopicCardExcerpt", defaultValue: false) }
         set {
