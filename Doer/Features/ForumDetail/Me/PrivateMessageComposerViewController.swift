@@ -9,12 +9,15 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
     private let draftKey: String
     /// Empty means user must type/search a recipient (new-PM entry).
     private var recipient: String
-    private let allowsEditingRecipient: Bool
     private var draftSaveTask: Task<Void, Never>?
     private var serverDraftSaveTask: Task<Void, Never>?
 
     private let recipientLabel = UILabel()
-    private let recipientField = UITextField()
+    private lazy var recipientEditor: PrivateMessageRecipientField = {
+        let field = PrivateMessageRecipientField(api: api)
+        field.onChange = { [weak self] _ in self?.inputChanged() }
+        return field
+    }()
     private let titleField = UITextField()
     private let textView = ComposerBodyTextView()
     private var experimentalComposerView: ExperimentalComposerView?
@@ -68,7 +71,6 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         self.api = api
         self.draftKey = draftKey
         self.recipient = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.allowsEditingRecipient = self.recipient.isEmpty
         self.initialRaw = initialRaw
         super.init(nibName: nil, bundle: nil)
         titleField.text = initialTitle
@@ -157,24 +159,9 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         recipientLabel.textColor = .secondaryLabel
         recipientLabel.adjustsFontForContentSizeCategory = true
 
-        recipientField.translatesAutoresizingMaskIntoConstraints = false
-        recipientField.borderStyle = .roundedRect
-        recipientField.placeholder = String(localized: "messages.compose.recipient_placeholder", defaultValue: "收件人用户名")
-        recipientField.autocapitalizationType = .none
-        recipientField.autocorrectionType = .no
-        recipientField.returnKeyType = .next
-        recipientField.delegate = self
-        recipientField.addTarget(self, action: #selector(inputChanged), for: .editingChanged)
-        recipientField.font = .preferredFont(forTextStyle: .body)
-        recipientField.adjustsFontForContentSizeCategory = true
-        recipientField.isHidden = !allowsEditingRecipient
-
-        if allowsEditingRecipient {
-            recipientLabel.text = String(localized: "messages.compose.recipient", defaultValue: "收件人")
-            recipientField.text = recipient
-        } else {
-            recipientLabel.text = "@\(recipient)"
-            recipientField.isHidden = true
+        recipientLabel.text = String(localized: "messages.compose.recipient", defaultValue: "收件人")
+        for name in recipient.split(separator: ",") {
+            recipientEditor.addInitialRecipient(String(name))
         }
 
         titleField.translatesAutoresizingMaskIntoConstraints = false
@@ -202,7 +189,7 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         placeholderLabel.isHidden = true
 
         view.addSubview(recipientLabel)
-        view.addSubview(recipientField)
+        view.addSubview(recipientEditor)
         view.addSubview(titleField)
         view.addSubview(textView)
         view.addSubview(previewView)
@@ -211,21 +198,16 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         mentionController.install(in: view, editor: textView, baseURL: api.baseURL)
         view.bringSubviewToFront(mentionController.picker)
 
-        let titleTop = allowsEditingRecipient
-            ? titleField.topAnchor.constraint(equalTo: recipientField.bottomAnchor, constant: 10)
-            : titleField.topAnchor.constraint(equalTo: recipientLabel.bottomAnchor, constant: 10)
-
         NSLayoutConstraint.activate([
             recipientLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 14),
             recipientLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 18),
             recipientLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
 
-            recipientField.topAnchor.constraint(equalTo: recipientLabel.bottomAnchor, constant: 8),
-            recipientField.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            recipientField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            recipientField.heightAnchor.constraint(equalToConstant: 40),
+            recipientEditor.topAnchor.constraint(equalTo: recipientLabel.bottomAnchor, constant: 8),
+            recipientEditor.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            recipientEditor.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
-            titleTop,
+            titleField.topAnchor.constraint(equalTo: recipientEditor.bottomAnchor, constant: 10),
             titleField.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             titleField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             titleField.heightAnchor.constraint(equalToConstant: 40),
@@ -250,12 +232,10 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
     }
 
     private var resolvedRecipient: String {
-        if allowsEditingRecipient {
-            return (recipientField.text ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
-        }
-        return recipient
+        recipientEditor.selection.names
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ",")
     }
 
     private var bodyRaw: String {
@@ -419,9 +399,17 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
                 let hit = recipients.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalized }
                 guard hit else { return }
             }
-            if allowsEditingRecipient, let firstRecipient = recipients.first, recipient.isEmpty {
-                recipient = firstRecipient.trimmingCharacters(in: .whitespacesAndNewlines)
-                recipientField.text = recipient
+            if recipient.isEmpty {
+                var selection = PrivateMessageRecipientSelection.empty
+                for item in recipients {
+                    let name = item.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !name.isEmpty else { continue }
+                    selection.names.append(name)
+                }
+                if !selection.isEmpty {
+                    recipientEditor.setSelection(selection)
+                    recipient = selection.names.joined(separator: ",")
+                }
             }
             titleField.text = serverTitle
             applyBodyMarkdown(serverRaw)
@@ -441,7 +429,7 @@ final class PrivateMessageComposerViewController: UIViewController, UITextViewDe
         closeButton.isEnabled = !isSending && !isUploading
         modeBarItem?.isEnabled = !isSending && !isUploading
         titleField.isEnabled = !isSending && !isUploading
-        recipientField.isEnabled = !isSending && !isUploading
+        recipientEditor.isUserInteractionEnabled = !isSending && !isUploading
         textView.isEditable = !isSending && !isUploading
     }
 

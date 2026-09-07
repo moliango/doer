@@ -55,6 +55,9 @@ class ChatTopicDetailViewController: ObservableViewController {
     private let holdToTalk = ChatHoldToTalkCoordinator()
 
     private let filterHintBanner = TopicFilterHintBannerView()
+    private let headerParticipantsView = PrivateMessageParticipantsView()
+    private var removingPrivateMessageUserId: Int?
+    private var removingPrivateMessageGroupName: String?
 
     private lazy var tableView: UITableView = {
         let tv = TopicDetailPopAwareTableView(frame: .zero, style: .plain)
@@ -470,6 +473,7 @@ class ChatTopicDetailViewController: ObservableViewController {
         }
         configureTopicActions()
         updateFilterHintBanner()
+        updatePrivateMessageParticipants()
 
         let settings = AppSettings.shared
         let shouldReloadVisibleContent = lastReadingComfortMode != settings.readingComfortMode
@@ -522,6 +526,76 @@ class ChatTopicDetailViewController: ObservableViewController {
         if !filterHintBanner.isHidden {
             view.bringSubviewToFront(filterHintBanner)
         }
+    }
+
+    private func updatePrivateMessageParticipants() {
+        let locked = removingPrivateMessageUserId != nil || removingPrivateMessageGroupName != nil
+        headerParticipantsView.onInvite = { [weak self] in
+            guard let self else { return }
+            PrivateMessageParticipantsFlow.presentInvite(from: self, api: self.api, viewModel: self.viewModel)
+        }
+        headerParticipantsView.onSelectUser = { [weak self] user in
+            self?.presentUserProfilePreview(username: user.username)
+        }
+        headerParticipantsView.onRemoveUser = { [weak self] user in
+            guard let self else { return }
+            PrivateMessageParticipantsFlow.confirmRemoveUser(
+                user,
+                from: self,
+                api: self.api,
+                viewModel: self.viewModel,
+                topicId: self.topicId,
+                setRemovingUserId: { [weak self] id in
+                    self?.removingPrivateMessageUserId = id
+                    self?.updatePrivateMessageParticipants()
+                },
+                onLeave: { [weak self] in
+                    guard let self else { return }
+                    PrivateMessageParticipantsFlow.leavePage(self)
+                }
+            )
+        }
+        headerParticipantsView.onRemoveGroup = { [weak self] group in
+            guard let self else { return }
+            PrivateMessageParticipantsFlow.confirmRemoveGroup(
+                group,
+                from: self,
+                api: self.api,
+                viewModel: self.viewModel,
+                topicId: self.topicId,
+                setRemovingGroupName: { [weak self] name in
+                    self?.removingPrivateMessageGroupName = name
+                    self?.updatePrivateMessageParticipants()
+                }
+            )
+        }
+        headerParticipantsView.apply(
+            topic: viewModel.topic,
+            baseURL: baseURL,
+            location: .firstPost,
+            removingUserId: removingPrivateMessageUserId,
+            removingGroupName: removingPrivateMessageGroupName,
+            controlsLocked: locked
+        )
+        guard !headerParticipantsView.isHidden else {
+            if tableView.tableHeaderView === headerParticipantsView || tableView.tableHeaderView?.subviews.contains(headerParticipantsView) == true {
+                tableView.tableHeaderView = nil
+            }
+            return
+        }
+        let width = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 0))
+        headerParticipantsView.removeFromSuperview()
+        container.addSubview(headerParticipantsView)
+        headerParticipantsView.frame = CGRect(x: 12, y: 8, width: max(0, width - 24), height: 0)
+        let size = headerParticipantsView.systemLayoutSizeFitting(
+            CGSize(width: max(0, width - 24), height: 0),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        headerParticipantsView.frame.size = size
+        container.frame.size = CGSize(width: width, height: size.height + 16)
+        tableView.tableHeaderView = container
     }
 
     private func applyRemainderLoadErrorFooter(_ text: String) {

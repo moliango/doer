@@ -576,14 +576,43 @@ struct DiscourseInviteLink: Decodable, Identifiable {
 
 struct DiscourseUserSearchResponse: Decodable {
     let users: [DiscourseMentionUser]
+    let groups: [DiscourseMentionGroup]
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         users = (try? container.decodeIfPresent([DiscourseMentionUser].self, forKey: .users)) ?? []
+        groups = (try? container.decodeIfPresent([DiscourseMentionGroup].self, forKey: .groups)) ?? []
     }
 
     private enum CodingKeys: String, CodingKey {
-        case users
+        case users, groups
+    }
+}
+
+struct DiscourseMentionGroup: Decodable, Hashable, Identifiable {
+    var id: String { name.lowercased() }
+    let name: String
+    let fullName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case fullName = "full_name"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = (try? container.decodeIfPresent(String.self, forKey: .name)) ?? ""
+        fullName = try? container.decodeIfPresent(String.self, forKey: .fullName)
+    }
+
+    init(name: String, fullName: String? = nil) {
+        self.name = name
+        self.fullName = fullName
+    }
+
+    var displayName: String {
+        let trimmed = fullName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? name : trimmed
     }
 }
 

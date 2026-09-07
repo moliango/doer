@@ -172,7 +172,9 @@ extension TopicDetailViewController {
             assignedToUsername: topic?.assignedToUsername,
             currentFloor: currentVisibleFloor(),
             totalFloors: max(viewModel.totalFloors, 1),
-            hasTableOfContents: tocController.hasToc
+            hasTableOfContents: tocController.hasToc,
+            isPrivateMessage: topic?.isPrivateMessage == true,
+            messageArchived: topic?.messageArchived == true
         )
         let barItem = navigationItem.rightBarButtonItems?.first
         TopicMoreMenuPresenter.present(from: self, barButtonItem: barItem, model: model) { [weak self] action in
@@ -262,6 +264,17 @@ extension TopicDetailViewController {
                     DoerFeedback.presentToast(error.localizedDescription, on: self)
                 }
             }
+        case .archivePrivateMessage:
+            PrivateMessageParticipantsFlow.toggleArchive(
+                from: self,
+                api: api,
+                viewModel: viewModel,
+                topicId: topicId,
+                onArchivedLeave: { [weak self] in
+                    guard let self else { return }
+                    PrivateMessageParticipantsFlow.leavePage(self)
+                }
+            )
         }
     }
 

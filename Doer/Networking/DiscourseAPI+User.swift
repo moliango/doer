@@ -85,6 +85,10 @@ extension DiscourseAPI {
         return response.users
     }
 
+    func searchPrivateMessageRecipients(term: String) async throws -> DiscourseUserSearchResponse {
+        try await request(route: .userSearch(term: term, topicId: nil))
+    }
+
     func fetchUserActions(username: String, filter: String, offset: Int = 0) async throws -> [DiscourseUserAction] {
         let response: DiscourseUserActionResponse = try await request(
             route: .userActions(username: username, filter: filter, offset: offset)

@@ -56,6 +56,73 @@ struct DiscourseTopicDetail: Decodable {
         case suggestedTopics = "suggested_topics"
         case relatedTopics = "related_topics"
         case details
+        case archetype
+        case messageArchived = "message_archived"
+    }
+
+    struct AllowedUser: Decodable, Equatable {
+        let id: Int
+        let username: String
+        let name: String?
+        let avatarTemplate: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id, username, name
+            case avatarTemplate = "avatar_template"
+        }
+
+        init(id: Int, username: String, name: String?, avatarTemplate: String?) {
+            self.id = id
+            self.username = username
+            self.name = name
+            self.avatarTemplate = avatarTemplate
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = container.decodeLossyInt(forKey: .id) ?? 0
+            username = (try? container.decodeIfPresent(String.self, forKey: .username)) ?? ""
+            name = try? container.decodeIfPresent(String.self, forKey: .name)
+            avatarTemplate = try? container.decodeIfPresent(String.self, forKey: .avatarTemplate)
+        }
+
+        var displayName: String {
+            let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? username : trimmed
+        }
+    }
+
+    struct AllowedGroup: Decodable, Equatable {
+        let id: Int?
+        let name: String
+        let fullName: String?
+        let userCount: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case id, name
+            case fullName = "full_name"
+            case userCount = "user_count"
+        }
+
+        init(id: Int? = nil, name: String, fullName: String? = nil, userCount: Int? = nil) {
+            self.id = id
+            self.name = name
+            self.fullName = fullName
+            self.userCount = userCount
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = container.decodeLossyInt(forKey: .id)
+            name = (try? container.decodeIfPresent(String.self, forKey: .name)) ?? ""
+            fullName = try? container.decodeIfPresent(String.self, forKey: .fullName)
+            userCount = container.decodeLossyInt(forKey: .userCount)
+        }
+
+        var displayName: String {
+            let trimmed = fullName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? name : trimmed
+        }
     }
 
     struct SuggestedTopic: Decodable, Equatable {
@@ -233,13 +300,60 @@ struct DiscourseTopicDetail: Decodable {
         let related = (try? container.decodeIfPresent([SuggestedTopic].self, forKey: .relatedTopics)) ?? []
         suggestedTopics = suggested
         relatedTopics = related
+        archetype = (try? container.decodeIfPresent(String.self, forKey: .archetype)) ?? "regular"
+        messageArchived = (try? container.decodeIfPresent(Bool.self, forKey: .messageArchived)) ?? false
         let details = try? container.decodeIfPresent(Details.self, forKey: .details)
         notificationLevel = NotificationLevel(rawValue: details?.notificationLevel ?? 1) ?? .regular
         canEdit = details?.canEdit ?? false
         canAssign = details?.canAssign ?? false
         assignedToUsername = details?.assignedToUser?.username
             ?? details?.assignedToUser?.name
+        allowedUsers = details?.allowedUsers ?? []
+        allowedGroups = details?.allowedGroups ?? []
+        canRemoveAllowedUsers = details?.canRemoveAllowedUsers ?? false
+        canRemoveSelfId = details?.canRemoveSelfId
+        canInviteTo = details?.canInviteTo ?? false
         injectGrantedBadges()
+    }
+
+    let archetype: String
+    var isPrivateMessage: Bool { archetype == "private_message" }
+    private(set) var messageArchived: Bool
+    private(set) var allowedUsers: [AllowedUser]
+    private(set) var allowedGroups: [AllowedGroup]
+    let canRemoveAllowedUsers: Bool
+    private(set) var canRemoveSelfId: Int?
+    let canInviteTo: Bool
+
+    mutating func removeAllowedUser(id: Int) {
+        allowedUsers.removeAll { $0.id == id }
+        if canRemoveSelfId == id {
+            canRemoveSelfId = nil
+        }
+    }
+
+    mutating func removeAllowedGroup(named name: String) {
+        allowedGroups.removeAll { $0.name.compare(name, options: .caseInsensitive) == .orderedSame }
+    }
+
+    mutating func addAllowedUser(_ user: AllowedUser) {
+        let exists = allowedUsers.contains {
+            $0.id == user.id || $0.username.compare(user.username, options: .caseInsensitive) == .orderedSame
+        }
+        guard !exists, !user.username.isEmpty else { return }
+        allowedUsers.append(user)
+    }
+
+    mutating func addAllowedGroup(_ group: AllowedGroup) {
+        let exists = allowedGroups.contains {
+            $0.name.compare(group.name, options: .caseInsensitive) == .orderedSame
+        }
+        guard !exists, !group.name.isEmpty else { return }
+        allowedGroups.append(group)
+    }
+
+    mutating func setMessageArchived(_ archived: Bool) {
+        messageArchived = archived
     }
 
     private struct Details: Decodable {
@@ -247,6 +361,11 @@ struct DiscourseTopicDetail: Decodable {
         let canEdit: Bool
         let canAssign: Bool
         let assignedToUser: AssignedUser?
+        let allowedUsers: [AllowedUser]
+        let allowedGroups: [AllowedGroup]
+        let canRemoveAllowedUsers: Bool
+        let canRemoveSelfId: Int?
+        let canInviteTo: Bool
 
         struct AssignedUser: Decodable {
             let username: String?
@@ -264,6 +383,11 @@ struct DiscourseTopicDetail: Decodable {
             case canEdit = "can_edit"
             case canAssign = "can_assign"
             case assignedToUser = "assigned_to_user"
+            case allowedUsers = "allowed_users"
+            case allowedGroups = "allowed_groups"
+            case canRemoveAllowedUsers = "can_remove_allowed_users"
+            case canRemoveSelfId = "can_remove_self_id"
+            case canInviteTo = "can_invite_to"
         }
 
         init(from decoder: Decoder) throws {
@@ -272,6 +396,11 @@ struct DiscourseTopicDetail: Decodable {
             canEdit = (try? container.decodeIfPresent(Bool.self, forKey: .canEdit)) ?? false
             canAssign = (try? container.decodeIfPresent(Bool.self, forKey: .canAssign)) ?? false
             assignedToUser = try? container.decodeIfPresent(AssignedUser.self, forKey: .assignedToUser)
+            allowedUsers = (try? container.decodeIfPresent([AllowedUser].self, forKey: .allowedUsers)) ?? []
+            allowedGroups = (try? container.decodeIfPresent([AllowedGroup].self, forKey: .allowedGroups)) ?? []
+            canRemoveAllowedUsers = (try? container.decodeIfPresent(Bool.self, forKey: .canRemoveAllowedUsers)) ?? false
+            canRemoveSelfId = container.decodeLossyInt(forKey: .canRemoveSelfId)
+            canInviteTo = (try? container.decodeIfPresent(Bool.self, forKey: .canInviteTo)) ?? false
         }
     }
 

@@ -18,6 +18,8 @@ final class TopicMoreMenuViewController: UIViewController {
         var currentFloor: Int = 1
         var totalFloors: Int = 1
         var hasTableOfContents: Bool = false
+        var isPrivateMessage: Bool = false
+        var messageArchived: Bool = false
     }
 
     enum Action: Equatable {
@@ -43,6 +45,7 @@ final class TopicMoreMenuViewController: UIViewController {
         case filterClear
         case notification(DiscourseTopicDetail.NotificationLevel)
         case export(TopicExportFormat, TopicExportRange)
+        case archivePrivateMessage
     }
 
     var onAction: ((Action) -> Void)?
@@ -160,6 +163,15 @@ final class TopicMoreMenuViewController: UIViewController {
             title: String(localized: "topic.open_browser", defaultValue: "在浏览器打开"),
             action: .openBrowser
         ))
+        if model.isPrivateMessage {
+            stack.addArrangedSubview(makeRow(
+                symbol: model.messageArchived ? "tray.and.arrow.down" : "archivebox",
+                title: model.messageArchived
+                    ? String(localized: "pm.move_to_inbox", defaultValue: "Move to inbox")
+                    : String(localized: "pm.archive", defaultValue: "Archive"),
+                action: .archivePrivateMessage
+            ))
+        }
 
         stack.addArrangedSubview(makeSectionDivider(title: String(localized: "topic.menu.section.reading", defaultValue: "阅读")))
         stack.addArrangedSubview(makeTimelineCard())

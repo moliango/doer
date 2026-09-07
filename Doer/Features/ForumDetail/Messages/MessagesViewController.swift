@@ -106,6 +106,13 @@ final class MessagesViewController: ObservableViewController {
         loadMessages()
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        if authGate?.isAuthenticated() == true {
+            loadMessages()
+        }
+    }
+
     @objc private func composeTapped() {
         let presentComposer = { [weak self] in
             guard let self else { return }

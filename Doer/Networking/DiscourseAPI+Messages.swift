@@ -46,4 +46,59 @@ extension DiscourseAPI {
             ]
         )
     }
+
+    func invitePrivateMessageUser(topicId: Int, username: String) async throws -> DiscourseTopicDetail.AllowedUser? {
+        let response = try await performRequest(
+            route: .invitePrivateMessageUser(topicId: topicId),
+            parameters: ["user": username],
+            encoding: URLEncoding.httpBody
+        )
+        guard !response.data.isEmpty else { return nil }
+        return (try? JSONDecoder().decode(DiscourseInvitePrivateMessageUserResponse.self, from: response.data))?.user
+    }
+
+    func invitePrivateMessageGroup(topicId: Int, groupName: String) async throws {
+        try await requestVoid(
+            route: .invitePrivateMessageGroup(topicId: topicId),
+            parameters: ["group": groupName],
+            encoding: URLEncoding.httpBody
+        )
+    }
+
+    func removePrivateMessageUser(topicId: Int, username: String) async throws {
+        try await requestVoid(
+            route: .removePrivateMessageUser(topicId: topicId),
+            parameters: ["username": username],
+            encoding: URLEncoding.httpBody
+        )
+    }
+
+    func removePrivateMessageGroup(topicId: Int, groupName: String) async throws {
+        try await requestVoid(
+            route: .removePrivateMessageGroup(topicId: topicId),
+            parameters: ["name": groupName],
+            encoding: URLEncoding.httpBody
+        )
+    }
+
+    func archivePrivateMessage(topicId: Int) async throws {
+        try await requestVoid(route: .archivePrivateMessage(topicId: topicId))
+    }
+
+    func movePrivateMessageToInbox(topicId: Int) async throws {
+        try await requestVoid(route: .movePrivateMessageToInbox(topicId: topicId))
+    }
+}
+
+private struct DiscourseInvitePrivateMessageUserResponse: Decodable {
+    let user: DiscourseTopicDetail.AllowedUser?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        user = try? container.decodeIfPresent(DiscourseTopicDetail.AllowedUser.self, forKey: .user)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case user
+    }
 }

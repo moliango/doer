@@ -547,6 +547,13 @@ enum TopicDetailSnapshotPolicy {
 
 final class TopicDetailViewModel: DoerObservableObject {
     var topic: DiscourseTopicDetail?
+
+    func mutateTopic(_ body: (inout DiscourseTopicDetail) -> Void) {
+        guard var topic else { return }
+        body(&topic)
+        self.topic = topic
+        notifyChanged()
+    }
     private(set) var category: DiscourseCategory?
     private(set) var categoryPresentation: TopicCategoryBadgePresentation?
     var parsedBlocks: [Int: [AnnotatedBlock]] = [:]

@@ -87,14 +87,22 @@ enum DiscourseRouter {
     case unassignTopic
     case acceptPolicy
     case unacceptPolicy
+    case invitePrivateMessageUser(topicId: Int)
+    case invitePrivateMessageGroup(topicId: Int)
+    case removePrivateMessageUser(topicId: Int)
+    case removePrivateMessageGroup(topicId: Int)
+    case archivePrivateMessage(topicId: Int)
+    case movePrivateMessageToInbox(topicId: Int)
     
     var method: HTTPMethod {
         switch self {
         case .createTopic, .createBookmark, .createInvite, .toggleSharedIssue, .createBoost, .flagBoost, .upload,
-             .topicNotificationLevel, .presenceUpdate, .saveDraft, .assignTopic, .useDiscourseTemplate:
+             .topicNotificationLevel, .presenceUpdate, .saveDraft, .assignTopic, .useDiscourseTemplate,
+             .invitePrivateMessageUser, .invitePrivateMessageGroup:
             return .post
         case .toggleReaction, .votePoll, .follow, .userNotificationLevel, .updateTopic, .updatePost,
-             .acceptPolicy, .unacceptPolicy:
+             .acceptPolicy, .unacceptPolicy, .removePrivateMessageUser, .removePrivateMessageGroup,
+             .archivePrivateMessage, .movePrivateMessageToInbox:
             return .put
         case .deleteBookmark, .unfollow, .deleteDraft, .clearRecentSearches, .deleteBoost, .unassignTopic:
             return .delete
@@ -297,6 +305,18 @@ enum DiscourseRouter {
             return "/policy/accept"
         case .unacceptPolicy:
             return "/policy/unaccept"
+        case .invitePrivateMessageUser(let topicId):
+            return "/t/\(topicId)/invite.json"
+        case .invitePrivateMessageGroup(let topicId):
+            return "/t/\(topicId)/invite-group.json"
+        case .removePrivateMessageUser(let topicId):
+            return "/t/\(topicId)/remove-allowed-user.json"
+        case .removePrivateMessageGroup(let topicId):
+            return "/t/\(topicId)/remove-allowed-group.json"
+        case .archivePrivateMessage(let topicId):
+            return "/t/\(topicId)/archive-message.json"
+        case .movePrivateMessageToInbox(let topicId):
+            return "/t/\(topicId)/move-to-inbox.json"
         }
     }
 

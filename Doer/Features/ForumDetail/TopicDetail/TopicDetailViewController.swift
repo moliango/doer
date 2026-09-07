@@ -262,6 +262,11 @@ final class TopicDetailViewController: ObservableViewController {
 
     let bottomBar = TopicDetailBottomBar()
     let filterHintBanner = TopicFilterHintBannerView()
+    let headerParticipantsView = PrivateMessageParticipantsView()
+    let footerParticipantsView = PrivateMessageParticipantsView()
+    private let listFooterHost = UIView()
+    private var removingPrivateMessageUserId: Int?
+    private var removingPrivateMessageGroupName: String?
 
     lazy var floatingReplyButton: UIButton = {
         let button = UIButton(type: .system)
@@ -654,6 +659,7 @@ final class TopicDetailViewController: ObservableViewController {
         lastCategoryPresentation = viewModel.categoryPresentation
         configureTopicActions()
         updateFilterHintBanner()
+        updatePrivateMessageParticipants()
         if didChangeThemeStyle || didChangeCategoryPresentation {
             hasTitleHeader = false
         }
@@ -856,6 +862,86 @@ final class TopicDetailViewController: ObservableViewController {
         }
     }
 
+    func updatePrivateMessageParticipants() {
+        let locked = removingPrivateMessageUserId != nil || removingPrivateMessageGroupName != nil
+        headerParticipantsView.apply(
+            topic: viewModel.topic,
+            baseURL: baseURL,
+            location: .firstPost,
+            removingUserId: removingPrivateMessageUserId,
+            removingGroupName: removingPrivateMessageGroupName,
+            controlsLocked: locked
+        )
+        footerParticipantsView.apply(
+            topic: viewModel.topic,
+            baseURL: baseURL,
+            location: .bottom,
+            removingUserId: removingPrivateMessageUserId,
+            removingGroupName: removingPrivateMessageGroupName,
+            controlsLocked: locked
+        )
+        if hasTitleHeader, tableView.tableHeaderView != nil {
+            let header = tableView.tableHeaderView
+            header?.setNeedsLayout()
+            header?.layoutIfNeeded()
+            let width = tableView.bounds.width
+            if let header, width > 0 {
+                let size = header.systemLayoutSizeFitting(
+                    CGSize(width: width, height: 0),
+                    withHorizontalFittingPriority: .required,
+                    verticalFittingPriority: .fittingSizeLevel
+                )
+                if header.frame.size != size {
+                    header.frame.size = size
+                    tableView.tableHeaderView = header
+                }
+            }
+        }
+        updateSuggestedTopicsFooter()
+    }
+
+    func installPrivateMessageParticipantsHandlers(on panel: PrivateMessageParticipantsView) {
+        panel.onInvite = { [weak self] in
+            guard let self else { return }
+            PrivateMessageParticipantsFlow.presentInvite(from: self, api: self.api, viewModel: self.viewModel)
+        }
+        panel.onSelectUser = { [weak self] user in
+            self?.presentUserProfilePreview(username: user.username)
+        }
+        panel.onRemoveUser = { [weak self] user in
+            guard let self else { return }
+            PrivateMessageParticipantsFlow.confirmRemoveUser(
+                user,
+                from: self,
+                api: self.api,
+                viewModel: self.viewModel,
+                topicId: self.topicId,
+                setRemovingUserId: { [weak self] id in
+                    self?.removingPrivateMessageUserId = id
+                    self?.updatePrivateMessageParticipants()
+                },
+                onLeave: { [weak self] in
+                    guard let self else { return }
+                    PrivateMessageParticipantsFlow.leavePage(self)
+                }
+            )
+        }
+        panel.onRemoveGroup = { [weak self] group in
+            guard let self else { return }
+            PrivateMessageParticipantsFlow.confirmRemoveGroup(
+                group,
+                from: self,
+                api: self.api,
+                viewModel: self.viewModel,
+                topicId: self.topicId,
+                setRemovingGroupName: { [weak self] name in
+                    self?.removingPrivateMessageGroupName = name
+                    self?.updatePrivateMessageParticipants()
+                }
+            )
+        }
+    }
+
     func applyRemainderLoadErrorFooter(_ text: String) {
         remainderErrorFooter.text = text
         remainderErrorFooter.font = TopicDetailTypography.chromeFont(.error, weight: .regular)
@@ -877,14 +963,16 @@ final class TopicDetailViewController: ObservableViewController {
     let relatedTopics = viewModel.topic?.relatedTopics ?? []
     let suggestedTopics = viewModel.topic?.suggestedTopics ?? []
     // Hide when still loading more, or when the user disabled the recommendation preference.
-    let show = viewModel.isReady
+    let showSuggested = viewModel.isReady
         && !viewModel.canLoadMore
         && (!relatedTopics.isEmpty || !suggestedTopics.isEmpty)
         && AppSettings.shared.showSuggestedTopics
-    guard show else {
+    let showParticipants = !footerParticipantsView.isHidden
+    guard showSuggested || showParticipants else {
         if tableView.tableFooterView === suggestedTopicsFooter
             || tableView.tableFooterView === footerSpinner
-            || tableView.tableFooterView === remainderErrorFooter {
+            || tableView.tableFooterView === remainderErrorFooter
+            || tableView.tableFooterView === listFooterHost {
             tableView.tableFooterView = UIView(
                 frame: CGRect(x: 0, y: 0, width: 0, height: CGFloat.leastNormalMagnitude)
             )
@@ -915,10 +1003,32 @@ final class TopicDetailViewController: ObservableViewController {
         categoryName: viewModel.category?.name
     )
     let width = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
-    let height = suggestedTopicsFooter.preferredHeight(forWidth: width)
-    suggestedTopicsFooter.frame = CGRect(x: 0, y: 0, width: width, height: height)
-    // Re-assign footer so UITableView picks up the new frame.
-    tableView.tableFooterView = suggestedTopicsFooter
+    suggestedTopicsFooter.isHidden = !showSuggested
+    installPrivateMessageParticipantsHandlers(on: footerParticipantsView)
+    footerParticipantsView.removeFromSuperview()
+    suggestedTopicsFooter.removeFromSuperview()
+    listFooterHost.subviews.forEach { $0.removeFromSuperview() }
+    var y: CGFloat = 8
+    if showParticipants {
+        listFooterHost.addSubview(footerParticipantsView)
+        footerParticipantsView.frame = CGRect(x: 16, y: y, width: max(0, width - 32), height: 0)
+        footerParticipantsView.layoutIfNeeded()
+        let size = footerParticipantsView.systemLayoutSizeFitting(
+            CGSize(width: max(0, width - 32), height: 0),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        footerParticipantsView.frame.size = size
+        y += size.height + 8
+    }
+    if showSuggested {
+        listFooterHost.addSubview(suggestedTopicsFooter)
+        let height = suggestedTopicsFooter.preferredHeight(forWidth: width)
+        suggestedTopicsFooter.frame = CGRect(x: 0, y: y, width: width, height: height)
+        y += height
+    }
+    listFooterHost.frame = CGRect(x: 0, y: 0, width: width, height: y)
+    tableView.tableFooterView = listFooterHost
     }
 
 
@@ -1079,14 +1189,18 @@ final class TopicDetailViewController: ObservableViewController {
         guard let topic = viewModel.topic else { return }
         let container = UIView()
         let metadataRow = makeTopicMetadataRow(topic)
+        headerParticipantsView.removeFromSuperview()
         container.addSubview(titleLabel)
         container.addSubview(tagsContainer)
         container.addSubview(metadataRow)
+        container.addSubview(headerParticipantsView)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        installPrivateMessageParticipantsHandlers(on: headerParticipantsView)
 
         let tags = topic.tags
         configureTaxonomy(tags: tags, category: viewModel.categoryPresentation)
         let hasVisibleTaxonomy = viewModel.categoryPresentation != nil || !tags.isEmpty
+        updatePrivateMessageParticipants()
 
         NSLayoutConstraint.activate([
             titleLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
@@ -1098,7 +1212,10 @@ final class TopicDetailViewController: ObservableViewController {
             metadataRow.topAnchor.constraint(equalTo: tagsContainer.bottomAnchor, constant: 10),
             metadataRow.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
             metadataRow.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -16),
-            metadataRow.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -14),
+            headerParticipantsView.topAnchor.constraint(equalTo: metadataRow.bottomAnchor, constant: headerParticipantsView.isHidden ? 0 : 12),
+            headerParticipantsView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            headerParticipantsView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+            headerParticipantsView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -14),
         ])
         let targetSize = CGSize(width: tableView.bounds.width, height: UIView.layoutFittingCompressedSize.height)
         let size = container.systemLayoutSizeFitting(targetSize, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)

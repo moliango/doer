@@ -54,7 +54,9 @@ extension ChatTopicDetailViewController {
             assignedToUsername: topic?.assignedToUsername,
             currentFloor: currentVisibleFloor(),
             totalFloors: max(viewModel.totalFloors, 1),
-            hasTableOfContents: tocController.hasToc
+            hasTableOfContents: tocController.hasToc,
+            isPrivateMessage: topic?.isPrivateMessage == true,
+            messageArchived: topic?.messageArchived == true
         )
         TopicMoreMenuPresenter.present(
             from: self,
@@ -139,6 +141,17 @@ extension ChatTopicDetailViewController {
             configureTopicActions()
         case .notification(let level):
             setNotificationLevel(level)
+        case .archivePrivateMessage:
+            PrivateMessageParticipantsFlow.toggleArchive(
+                from: self,
+                api: api,
+                viewModel: viewModel,
+                topicId: topicId,
+                onArchivedLeave: { [weak self] in
+                    guard let self else { return }
+                    PrivateMessageParticipantsFlow.leavePage(self)
+                }
+            )
         }
     }
 
