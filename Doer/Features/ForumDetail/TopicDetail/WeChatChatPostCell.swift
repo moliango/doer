@@ -103,6 +103,7 @@ class WeChatChatPostCell: UITableViewCell {
     private var currentTopicId = 0
     private var currentReplyQuote: ChatReplyQuote?
     private var imageBaseURL: String?
+    private var validReactions: [String] = []
     private var isMine = false
     private var heightReconcileGeneration = 0
     private var lastReconciledHeight: CGFloat = 0
@@ -572,6 +573,9 @@ class WeChatChatPostCell: UITableViewCell {
             reactionSummaryStack.trailingAnchor.constraint(equalTo: reactionSummaryControl.trailingAnchor, constant: -7),
         ])
         actionBar.addArrangedSubview(reactionSummaryControl)
+        let summaryLongPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLikeLongPressed(_:)))
+        summaryLongPress.minimumPressDuration = 0.35
+        reactionSummaryControl.addGestureRecognizer(summaryLongPress)
         for (button, image, sel) in buttons {
             button.translatesAutoresizingMaskIntoConstraints = false
             var config = UIButton.Configuration.plain()
@@ -583,6 +587,11 @@ class WeChatChatPostCell: UITableViewCell {
                 button.showsMenuAsPrimaryAction = true
             } else {
                 button.addTarget(self, action: sel, for: .touchUpInside)
+            }
+            if button === likeButton {
+                let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLikeLongPressed(_:)))
+                longPress.minimumPressDuration = 0.35
+                button.addGestureRecognizer(longPress)
             }
             button.setContentHuggingPriority(.required, for: .horizontal)
             NSLayoutConstraint.activate([
@@ -609,13 +618,15 @@ class WeChatChatPostCell: UITableViewCell {
         contentDelegate: PostCellDelegate?,
         dateSeparatorText: String? = nil,
         chatStyle: ChatTopicStyle,
-        replyQuote: ChatReplyQuote? = nil
+        replyQuote: ChatReplyQuote? = nil,
+        validReactions: [String] = []
     ) {
         currentPost = post
         currentTopicId = topicId
         currentReplyQuote = replyQuote
         self.contentDelegate = contentDelegate
         imageBaseURL = baseURL
+        self.validReactions = validReactions
         isMine = post.yours
         appliedChatStyle = chatStyle
         let style = appliedChatStyle
@@ -1280,7 +1291,8 @@ class WeChatChatPostCell: UITableViewCell {
             return false
         }
         if view is TappableImageContainer || view is BoostStripView || view is OneboxCardView
-            || view is FallbackBlockView || view is BadgeCardView || view is VideoCardView {
+            || view is FallbackBlockView || view is BadgeCardView || view is VideoCardView
+            || view is TopicTaxonomyBadgeView {
             return false
         }
         // Plain UIView with no meaningful subviews / no intrinsic height.
@@ -1352,6 +1364,27 @@ class WeChatChatPostCell: UITableViewCell {
         guard let post = currentPost, !post.yours else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         actionDelegate?.weChatChatPostCell(self, didRequestLike: post)
+    }
+
+    @objc private func handleLikeLongPressed(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began else { return }
+        presentReactionPicker(from: gesture.view ?? likeButton)
+    }
+
+    private func presentReactionPicker(from sourceView: UIView) {
+        guard let post = currentPost else { return }
+        guard ChatBubbleInteractionPolicy.canPresentReactionPicker(
+            isOwnPost: post.yours,
+            validReactions: validReactions
+        ) else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        PostReactionPickerViewController.present(
+            reactionIds: validReactions,
+            from: sourceView
+        ) { [weak self] reactionId in
+            guard let self, let current = self.currentPost else { return }
+            self.contentDelegate?.postCell(didTapReaction: reactionId, forPost: current)
+        }
     }
 
     @objc private func handleBookmarkTapped() {
@@ -1519,6 +1552,7 @@ class WeChatChatPostCell: UITableViewCell {
         currentTopicId = 0
         currentReplyQuote = nil
         imageBaseURL = nil
+        validReactions = []
         heightReconcileGeneration += 1
         lastReconciledHeight = 0
         contentStack.arrangedSubviews.forEach { $0.removeFromSuperview() }

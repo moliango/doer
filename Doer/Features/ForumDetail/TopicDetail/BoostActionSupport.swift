@@ -181,8 +181,9 @@ enum BoostActionPolicy {
     }
 }
 
-/// WeChat / Telegram chat bubbles: like / reply / bookmark live on the
-/// under-bubble action bar. Tap and long-press must not open reaction sheets.
+/// WeChat / Telegram: like lives on the under-bubble action bar.
+/// Bubble tap / like tap toggle the current reaction. Long-press on like
+/// opens the personality reaction strip (classic topic-detail parity).
 enum ChatBubbleInteractionPolicy {
     enum Trigger {
         case tap
@@ -192,8 +193,16 @@ enum ChatBubbleInteractionPolicy {
 
     static func shouldPresentReactionSheet(on trigger: Trigger) -> Bool {
         switch trigger {
-        case .tap, .longPress, .actionButton:
+        case .longPress:
+            return true
+        case .tap, .actionButton:
             return false
         }
+    }
+
+    static func canPresentReactionPicker(isOwnPost: Bool, validReactions: [String]) -> Bool {
+        shouldPresentReactionSheet(on: .longPress)
+            && !isOwnPost
+            && !validReactions.isEmpty
     }
 }

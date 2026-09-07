@@ -282,6 +282,24 @@ final class TopicDetailNativeLayoutTests: XCTestCase {
         XCTAssertFalse(ChatBubbleInteractionPolicy.shouldPresentReactionSheet(on: .tap))
         XCTAssertTrue(ChatBubbleInteractionPolicy.shouldPresentReactionSheet(on: .longPress))
         XCTAssertFalse(ChatBubbleInteractionPolicy.shouldPresentReactionSheet(on: .actionButton))
+        XCTAssertTrue(
+            ChatBubbleInteractionPolicy.canPresentReactionPicker(
+                isOwnPost: false,
+                validReactions: ["heart", "plus_one"]
+            )
+        )
+        XCTAssertFalse(
+            ChatBubbleInteractionPolicy.canPresentReactionPicker(
+                isOwnPost: true,
+                validReactions: ["heart"]
+            )
+        )
+        XCTAssertFalse(
+            ChatBubbleInteractionPolicy.canPresentReactionPicker(
+                isOwnPost: false,
+                validReactions: []
+            )
+        )
     }
 
     func testEarlierLoadAnchorIsConsumedOnlyAfterLoadingFinishes() {
@@ -335,6 +353,33 @@ final class TopicDetailNativeLayoutTests: XCTestCase {
                 topicTagNames: topicTags
             )
         )
+        XCTAssertTrue(
+            HeadingPresentationPolicy.shouldRenderTagBadge(
+                level: 1,
+                text: "抽奖",
+                topicTagNames: []
+            )
+        )
+    }
+
+    func testInlineLotteryHashtagRendersCatalogIconWithoutTopicTag() {
+        XCTAssertTrue(
+            InlineHashtagPresentationPolicy.shouldRenderChip(
+                text: "抽奖",
+                type: "tag",
+                href: "/tag/抽奖"
+            )
+        )
+        let config = NativeRenderConfig.default(
+            contentWidth: 320,
+            baseURL: "https://linux.do"
+        )
+        let attributed = config.styledAttributedString(from: [
+            .hashtag(text: "抽奖", href: "/tag/抽奖", type: "tag", icon: "shuffle"),
+        ])
+        XCTAssertFalse(attributed.string.hasPrefix("#"))
+        XCTAssertTrue(attributed.string.hasSuffix("抽奖"))
+        XCTAssertGreaterThan(attributed.length, "抽奖".utf16.count)
     }
 
     func testRegularHeadingDoesNotUseQuoteStyleAccentRail() {
@@ -402,14 +447,14 @@ final class TopicDetailNativeLayoutTests: XCTestCase {
     func testInlineTopicHashtagUsesIconAndTextInsteadOfHashPrefix() {
         let config = NativeRenderConfig.default(
             contentWidth: 320,
-            baseURL: "https://linux.do",
-            topicTagNames: ["公益推广"]
+            baseURL: "https://linux.do"
         )
         let attributed = config.styledAttributedString(from: [
             .hashtag(
                 text: "公益推广",
                 href: "https://linux.do/tag/公益推广",
-                type: "tag"
+                type: "tag",
+                icon: nil
             ),
         ])
 
@@ -422,8 +467,7 @@ final class TopicDetailNativeLayoutTests: XCTestCase {
     func testLinkedHashTextUsesTopicTagIconRendering() {
         let config = NativeRenderConfig.default(
             contentWidth: 320,
-            baseURL: "https://linux.do",
-            topicTagNames: ["公益推广"]
+            baseURL: "https://linux.do"
         )
         let attributed = config.styledAttributedString(from: [
             .link(
@@ -444,8 +488,7 @@ final class TopicDetailNativeLayoutTests: XCTestCase {
     func testListRendererAppliesInlineTopicTagIconRendering() throws {
         let config = NativeRenderConfig.default(
             contentWidth: 320,
-            baseURL: "https://linux.do",
-            topicTagNames: ["公益推广"]
+            baseURL: "https://linux.do"
         )
         let block = ContentBlock.list(
             ordered: false,
