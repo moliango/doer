@@ -99,16 +99,15 @@ final class StickerPickerView: UIView {
     func reloadFromStore() {
         recent = StickerMarketStore.shared.recentStickers()
         let ids = StickerMarketStore.shared.subscribedGroupIds()
+        let localById = Dictionary(uniqueKeysWithValues: StickerMarketStore.shared.loadPersistedDetails().map { ($0.id, $0) })
+        details = ids.compactMap { localById[$0] }
         emptyStack.isHidden = !(ids.isEmpty && recent.isEmpty)
         collectionView.isHidden = ids.isEmpty && recent.isEmpty
-        guard !ids.isEmpty else {
-            details = []
-            collectionView.reloadData()
-            return
-        }
+        collectionView.reloadData()
+        guard !ids.isEmpty else { return }
         loadingIndicator.startAnimating()
         Task {
-            let loaded = (try? await StickerMarketStore.shared.loadSubscribedDetails()) ?? []
+            let loaded = (try? await StickerMarketStore.shared.loadSubscribedDetails()) ?? details
             await MainActor.run {
                 self.loadingIndicator.stopAnimating()
                 self.details = loaded

@@ -32,6 +32,15 @@ final class EmojiStickerPanelView: UIView {
         return control
     }()
 
+    private lazy var marketButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setImage(UIImage(systemName: "plus.square.on.square"), for: .normal)
+        button.accessibilityLabel = String(localized: "sticker.market.title", defaultValue: "表情包市场")
+        button.addTarget(self, action: #selector(marketButtonTapped), for: .touchUpInside)
+        return button
+    }()
+
     private let modeChrome: UIView = {
         let view = UIView()
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -55,6 +64,7 @@ final class EmojiStickerPanelView: UIView {
         addSubview(stickerPicker)
         addSubview(modeChrome)
         modeChrome.addSubview(modeControl)
+        modeChrome.addSubview(marketButton)
 
         NSLayoutConstraint.activate([
             emojiPicker.topAnchor.constraint(equalTo: topAnchor),
@@ -75,6 +85,11 @@ final class EmojiStickerPanelView: UIView {
             modeControl.centerXAnchor.constraint(equalTo: modeChrome.centerXAnchor),
             modeControl.centerYAnchor.constraint(equalTo: modeChrome.centerYAnchor),
             modeControl.widthAnchor.constraint(equalToConstant: 220),
+
+            marketButton.centerYAnchor.constraint(equalTo: modeChrome.centerYAnchor),
+            marketButton.trailingAnchor.constraint(equalTo: modeChrome.trailingAnchor, constant: -16),
+            marketButton.widthAnchor.constraint(equalToConstant: 36),
+            marketButton.heightAnchor.constraint(equalToConstant: 36),
         ])
         applyMode()
     }
@@ -105,6 +120,11 @@ final class EmojiStickerPanelView: UIView {
         emojiPicker.isHidden = mode != .emoji
         stickerPicker.isHidden = mode != .sticker
         modeControl.selectedSegmentIndex = mode.rawValue
+        marketButton.isHidden = mode != .sticker
+    }
+
+    @objc private func marketButtonTapped() {
+        openMarket()
     }
 
     private func openMarket() {

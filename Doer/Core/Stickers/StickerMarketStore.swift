@@ -14,13 +14,25 @@ final class StickerMarketStore {
     private let cachePrefix = "sticker_market_cache_"
     private let subscribedKey = "sticker_subscribed_groups"
     private let recentKey = "sticker_recent_items"
+    private let fileManager: FileManager
+    private let storageDirectory: URL
 
     init(
         defaults: UserDefaults = .standard,
-        session: URLSession = .shared
+        session: URLSession = .shared,
+        fileManager: FileManager = .default,
+        storageDirectory: URL? = nil
     ) {
         self.defaults = defaults
         self.session = session
+        self.fileManager = fileManager
+        if let storageDirectory {
+            self.storageDirectory = storageDirectory
+        } else {
+            self.storageDirectory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("StickerMarket", isDirectory: true)
+        }
+        try? fileManager.createDirectory(at: self.storageDirectory, withIntermediateDirectories: true)
     }
 
     var baseURL: String {
@@ -58,12 +70,16 @@ final class StickerMarketStore {
         guard !ids.contains(groupId) else { return }
         ids.append(groupId)
         defaults.set(ids, forKey: subscribedKey)
+        Task {
+            _ = try? await refreshAndPersistDetail(groupId)
+        }
     }
 
     func unsubscribe(_ groupId: String) {
         var ids = subscribedGroupIds()
         ids.removeAll { $0 == groupId }
         defaults.set(ids, forKey: subscribedKey)
+        removePersistedDetail(groupId)
     }
 
     func recentStickers() -> [StickerItem] {
@@ -128,15 +144,23 @@ final class StickerMarketStore {
     }
 
     func loadSubscribedDetails() async throws -> [StickerGroupDetail] {
-        var details: [StickerGroupDetail] = []
-        for id in subscribedGroupIds() {
-            do {
-                details.append(try await fetchGroupDetail(id))
-            } catch {
-                continue
+        let ids = subscribedGroupIds()
+        var byId = Dictionary(uniqueKeysWithValues: loadPersistedDetails().map { ($0.id, $0) })
+        for id in ids {
+            if let remote = try? await fetchGroupDetail(id) {
+                byId[id] = remote
+                persistDetail(remote)
             }
         }
-        return details
+        prunePersistedDetails(keeping: Set(ids))
+        return ids.compactMap { byId[$0] }
+    }
+
+    @discardableResult
+    func refreshAndPersistDetail(_ groupId: String) async throws -> StickerGroupDetail {
+        let detail = try await fetchGroupDetail(groupId)
+        persistDetail(detail)
+        return detail
     }
 
     // MARK: - Cache helpers
@@ -182,5 +206,39 @@ final class StickerMarketStore {
         for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(cachePrefix) {
             defaults.removeObject(forKey: key)
         }
+    }
+
+    // MARK: - Local subscribed packs
+
+    private var subscribedDetailsURL: URL {
+        storageDirectory.appendingPathComponent("subscribed-details.json")
+    }
+
+    func loadPersistedDetails() -> [StickerGroupDetail] {
+        guard let data = try? Data(contentsOf: subscribedDetailsURL) else { return [] }
+        return (try? JSONDecoder().decode([StickerGroupDetail].self, from: data)) ?? []
+    }
+
+    private func persistDetail(_ detail: StickerGroupDetail) {
+        var details = loadPersistedDetails()
+        details.removeAll { $0.id == detail.id }
+        details.append(detail)
+        savePersistedDetails(details)
+    }
+
+    private func removePersistedDetail(_ groupId: String) {
+        var details = loadPersistedDetails()
+        details.removeAll { $0.id == groupId }
+        savePersistedDetails(details)
+    }
+
+    private func prunePersistedDetails(keeping ids: Set<String>) {
+        let details = loadPersistedDetails().filter { ids.contains($0.id) }
+        savePersistedDetails(details)
+    }
+
+    private func savePersistedDetails(_ details: [StickerGroupDetail]) {
+        guard let data = try? JSONEncoder().encode(details) else { return }
+        try? data.write(to: subscribedDetailsURL, options: .atomic)
     }
 }
