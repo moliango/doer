@@ -3,11 +3,22 @@ import SDWebImage
 /// List chrome follows Home topic rows via `TopicListCellFactory` when WeChat/Telegram is active.
 final class ChatChannelsViewController: ObservableViewController {
     private let api: DiscourseAPI
-    private var channels: [DiscourseChatChannel] = []
     private var channelList: DiscourseChatChannelsResponse?
+    private var selectedTab: ChatListTab = .channels
     private var isLoading = false
     private var errorMessage: String?
     private var loadGeneration = 0
+
+    private var visibleChannels: [DiscourseChatChannel] {
+        ChatListFilterPolicy.visible(in: channelList, tab: selectedTab)
+    }
+
+    private let segmentedControl: UISegmentedControl = {
+        let control = UISegmentedControl(items: ChatListTab.allCases.map(\.title))
+        control.selectedSegmentIndex = ChatListTab.channels.rawValue
+        control.translatesAutoresizingMaskIntoConstraints = false
+        return control
+    }()
 
     private lazy var tableView: UITableView = {
         let table = UITableView(frame: .zero, style: .plain)
@@ -51,10 +62,38 @@ final class ChatChannelsViewController: ObservableViewController {
         observe(AppSettings.shared)
         title = String(localized: "chat.title", defaultValue: "站内聊天")
         applyTheme()
+        segmentedControl.addTarget(self, action: #selector(tabChanged), for: .valueChanged)
+        navigationItem.rightBarButtonItems = [
+            UIBarButtonItem(
+                image: UIImage(systemName: "plus"),
+                style: .plain,
+                target: self,
+                action: #selector(newChatTapped)
+            ),
+            UIBarButtonItem(
+                image: UIImage(systemName: "rectangle.stack.badge.plus"),
+                style: .plain,
+                target: self,
+                action: #selector(browseChannelsTapped)
+            ),
+        ]
+        navigationItem.rightBarButtonItems?.first?.accessibilityLabel = String(
+            localized: "chat.new.title",
+            defaultValue: "新建聊天"
+        )
+        navigationItem.rightBarButtonItems?.last?.accessibilityLabel = String(
+            localized: "chat.browse.title",
+            defaultValue: "浏览频道"
+        )
+        view.addSubview(segmentedControl)
         view.addSubview(tableView)
         view.addSubview(emptyLabel)
         NSLayoutConstraint.activate([
-            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            segmentedControl.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            segmentedControl.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            segmentedControl.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+
+            tableView.topAnchor.constraint(equalTo: segmentedControl.bottomAnchor, constant: 12),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -74,16 +113,25 @@ final class ChatChannelsViewController: ObservableViewController {
         applyTheme()
         tableView.reloadData()
         tableView.refreshControl?.endRefreshing()
-        if isLoading && channels.isEmpty {
+        if isLoading && visibleChannels.isEmpty && channelList == nil {
             emptyLabel.isHidden = true
         } else if let errorMessage {
             emptyLabel.isHidden = false
             emptyLabel.text = errorMessage
-        } else if channels.isEmpty {
+        } else if visibleChannels.isEmpty {
             emptyLabel.isHidden = false
-            emptyLabel.text = String(localized: "chat.empty", defaultValue: "暂无聊天频道（站点可能未开启 Chat）")
+            emptyLabel.text = emptyText
         } else {
             emptyLabel.isHidden = true
+        }
+    }
+
+    private var emptyText: String {
+        switch selectedTab {
+        case .channels:
+            return String(localized: "chat.empty.channels", defaultValue: "暂无频道，点右上角浏览并加入")
+        case .directMessages:
+            return String(localized: "chat.empty.direct", defaultValue: "暂无私聊，点右上角 + 新建")
         }
     }
 
@@ -101,6 +149,42 @@ final class ChatChannelsViewController: ObservableViewController {
         Task { await loadChannels() }
     }
 
+    @objc private func tabChanged() {
+        selectedTab = ChatListTab(rawValue: segmentedControl.selectedSegmentIndex) ?? .channels
+        updateUI()
+    }
+
+    @objc private func newChatTapped() {
+        let composer = ChatNewConversationViewController(api: api)
+        composer.onCreated = { [weak self] channel in
+            guard let self else { return }
+            self.selectedTab = .directMessages
+            self.segmentedControl.selectedSegmentIndex = ChatListTab.directMessages.rawValue
+            self.openChannel(channel)
+        }
+        present(UINavigationController(rootViewController: composer), animated: true)
+    }
+
+    @objc private func browseChannelsTapped() {
+        let browse = ChatBrowseChannelsViewController(
+            api: api,
+            joinedChannelIds: (channelList?.publicChannels ?? []).map(\.id)
+        )
+        browse.onOpenChannel = { [weak self] channel in
+            guard let self else { return }
+            self.navigationController?.popToViewController(self, animated: false)
+            self.openChannel(channel)
+        }
+        navigationController?.pushViewController(browse, animated: true)
+    }
+
+    private func openChannel(_ channel: DiscourseChatChannel) {
+        navigationController?.pushViewController(
+            ChatRoomViewController(api: api, channel: channel),
+            animated: true
+        )
+    }
+
     private func loadChannels() async {
         loadGeneration += 1
         let generation = loadGeneration
@@ -111,16 +195,11 @@ final class ChatChannelsViewController: ObservableViewController {
             let response = try await api.fetchChatChannels()
             guard generation == loadGeneration else { return }
             channelList = response
-            channels = response.all.sorted {
-                (response.unreadCount(for: $0), $0.displayTitle)
-                    > (response.unreadCount(for: $1), $1.displayTitle)
-            }
             applyEntryTabBadge(response.entryBadgeCount)
         } catch {
             guard generation == loadGeneration else { return }
             errorMessage = error.localizedDescription
             channelList = nil
-            channels = []
         }
         isLoading = false
         updateUI()
@@ -135,11 +214,11 @@ final class ChatChannelsViewController: ObservableViewController {
 
 extension ChatChannelsViewController: UITableViewDataSource, UITableViewDelegate {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        channels.count
+        visibleChannels.count
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let channel = channels[indexPath.row]
+        let channel = visibleChannels[indexPath.row]
         let layout = TopicListLayoutKind.current
         let time = channel.lastMessageSentAt.map { TopicCell.formatDate($0) }
         let unread = channelList?.unreadCount(for: channel) ?? channel.unreadCount
@@ -172,11 +251,7 @@ extension ChatChannelsViewController: UITableViewDataSource, UITableViewDelegate
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        let channel = channels[indexPath.row]
-        navigationController?.pushViewController(
-            ChatRoomViewController(api: api, channel: channel),
-            animated: true
-        )
+        openChannel(visibleChannels[indexPath.row])
     }
 }
 
@@ -184,7 +259,7 @@ extension ChatChannelsViewController: UITableViewDataSource, UITableViewDelegate
 
 final class ChatRoomViewController: ObservableViewController, UITableViewDataSource, UITableViewDelegate {
     private let api: DiscourseAPI
-    private let channel: DiscourseChatChannel
+    private var channel: DiscourseChatChannel
     var channelId: Int { channel.id }
     private var messages: [DiscourseChatMessage] = []
     private var isLoading = false
@@ -248,6 +323,16 @@ final class ChatRoomViewController: ObservableViewController, UITableViewDataSou
         super.viewDidLoad()
         observe(AppSettings.shared)
         title = channel.displayTitle
+        navigationItem.rightBarButtonItem = UIBarButtonItem(
+            image: UIImage(systemName: "ellipsis.circle"),
+            style: .plain,
+            target: self,
+            action: #selector(openChannelInfo)
+        )
+        navigationItem.rightBarButtonItem?.accessibilityLabel = String(
+            localized: "chat.info.title",
+            defaultValue: "频道信息"
+        )
         chatInputBar.onSend = { [weak self] text in
             self?.sendMessage(text)
         }
@@ -501,6 +586,18 @@ final class ChatRoomViewController: ObservableViewController, UITableViewDataSou
         }
         isLoading = false
         updateUI()
+    }
+
+    @objc private func openChannelInfo() {
+        let info = ChatChannelInfoViewController(api: api, channel: channel)
+        info.onChannelUpdated = { [weak self] updated in
+            self?.channel = updated
+            self?.title = updated.displayTitle
+        }
+        info.onLeftChannel = { [weak self] in
+            self?.navigationController?.popToRootViewController(animated: true)
+        }
+        navigationController?.pushViewController(info, animated: true)
     }
 
     @objc private func sendMessage(_ text: String) {

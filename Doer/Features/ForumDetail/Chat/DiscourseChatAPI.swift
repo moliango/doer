@@ -6,10 +6,10 @@ import UIKit
 
 struct DiscourseChatChannel: Decodable, Identifiable, Equatable {
     let id: Int
-    let title: String?
+    var title: String?
     let slug: String?
     let lastMessageSentAt: String?
-    let currentUserMembership: Membership?
+    var currentUserMembership: Membership?
     let iconUploadURL: String?
     /// Nested upload object used by some Discourse chat serializers.
     let iconUpload: IconUpload?
@@ -20,10 +20,11 @@ struct DiscourseChatChannel: Decodable, Identifiable, Equatable {
 
     struct Membership: Decodable, Equatable {
         let following: Bool?
-        let muted: Bool?
+        var muted: Bool?
         let unreadCount: Int?
         let unreadMentions: Int?
         let lastReadMessageId: Int?
+        var notificationLevel: String?
 
         enum CodingKeys: String, CodingKey {
             case following
@@ -31,6 +32,7 @@ struct DiscourseChatChannel: Decodable, Identifiable, Equatable {
             case unreadCount = "unread_count"
             case unreadMentions = "unread_mentions"
             case lastReadMessageId = "last_read_message_id"
+            case notificationLevel = "notification_level"
         }
     }
 
@@ -72,6 +74,7 @@ struct DiscourseChatChannel: Decodable, Identifiable, Equatable {
         let color: String?
         let name: String?
         let uploadedLogo: IconUpload?
+        let group: Bool?
 
         struct ChatUser: Decodable, Equatable {
             let id: Int?
@@ -86,15 +89,22 @@ struct DiscourseChatChannel: Decodable, Identifiable, Equatable {
         }
 
         enum CodingKeys: String, CodingKey {
-            case users, color, name
+            case users, color, name, group
             case uploadedLogo = "uploaded_logo"
         }
 
-        init(users: [ChatUser]? = nil, color: String? = nil, name: String? = nil, uploadedLogo: IconUpload? = nil) {
+        init(
+            users: [ChatUser]? = nil,
+            color: String? = nil,
+            name: String? = nil,
+            uploadedLogo: IconUpload? = nil,
+            group: Bool? = nil
+        ) {
             self.users = users
             self.color = color
             self.name = name
             self.uploadedLogo = uploadedLogo
+            self.group = group
         }
 
         init(from decoder: Decoder) throws {
@@ -105,6 +115,7 @@ struct DiscourseChatChannel: Decodable, Identifiable, Equatable {
             color = try c.decodeIfPresent(String.self, forKey: .color)
             name = try c.decodeIfPresent(String.self, forKey: .name)
             uploadedLogo = try? c.decodeIfPresent(IconUpload.self, forKey: .uploadedLogo) ?? nil
+            group = try c.decodeIfPresent(Bool.self, forKey: .group)
         }
     }
 
@@ -116,6 +127,10 @@ struct DiscourseChatChannel: Decodable, Identifiable, Equatable {
         case iconUpload = "icon_upload"
         case chatableType = "chatable_type"
         case chatable
+        case description
+        case threadingEnabled = "threading_enabled"
+        case membershipsCount = "memberships_count"
+        case meta
     }
 
     init(
@@ -128,7 +143,11 @@ struct DiscourseChatChannel: Decodable, Identifiable, Equatable {
         iconUpload: IconUpload? = nil,
         emoji: String? = nil,
         chatableType: String? = nil,
-        chatable: Chatable? = nil
+        chatable: Chatable? = nil,
+        description: String? = nil,
+        threadingEnabled: Bool = false,
+        membershipsCount: Int? = nil,
+        canRemoveMembers: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -140,6 +159,10 @@ struct DiscourseChatChannel: Decodable, Identifiable, Equatable {
         self.emoji = emoji
         self.chatableType = chatableType
         self.chatable = chatable
+        self.description = description
+        self.threadingEnabled = threadingEnabled
+        self.membershipsCount = membershipsCount
+        self.canRemoveMembers = canRemoveMembers
     }
 
     init(from decoder: Decoder) throws {
@@ -156,7 +179,25 @@ struct DiscourseChatChannel: Decodable, Identifiable, Equatable {
         emoji = try c.decodeIfPresent(String.self, forKey: .emoji)
         chatableType = try c.decodeIfPresent(String.self, forKey: .chatableType)
         chatable = try? c.decodeIfPresent(Chatable.self, forKey: .chatable) ?? nil
+        description = try c.decodeIfPresent(String.self, forKey: .description)
+        threadingEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .threadingEnabled)) ?? false
+        membershipsCount = try c.decodeIfPresent(Int.self, forKey: .membershipsCount)
+        canRemoveMembers = (try? c.decodeIfPresent(Meta.self, forKey: .meta))?.canRemoveMembers ?? false
     }
+
+    private struct Meta: Decodable {
+        let canRemoveMembers: Bool
+        enum CodingKeys: String, CodingKey { case canRemoveMembers = "can_remove_members" }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            canRemoveMembers = (try? c.decodeIfPresent(Bool.self, forKey: .canRemoveMembers)) ?? false
+        }
+    }
+
+    var description: String?
+    var threadingEnabled: Bool = false
+    var membershipsCount: Int?
+    var canRemoveMembers: Bool = false
 
     var displayTitle: String {
         let t = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -187,6 +228,26 @@ struct DiscourseChatChannel: Decodable, Identifiable, Equatable {
 
     var isDirectMessage: Bool {
         (chatableType ?? "").caseInsensitiveCompare("DirectMessage") == .orderedSame
+    }
+
+    /// Official `chatable.group`; fall back to 2+ peers on a DM.
+    var isGroupDm: Bool {
+        if chatable?.group == true { return true }
+        guard isDirectMessage else { return false }
+        return (chatable?.users?.count ?? 0) >= 2
+    }
+
+    var isFollowing: Bool {
+        currentUserMembership?.following == true
+    }
+
+    var isMuted: Bool {
+        currentUserMembership?.muted == true
+    }
+
+    var notificationLevel: String {
+        let raw = currentUserMembership?.notificationLevel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return raw.isEmpty ? "mention" : raw
     }
 
     /// Best-effort channel avatar: custom icon → emoji PNG → category logo → first DM peer → nil.
@@ -673,6 +734,48 @@ struct DiscourseChatMessagesResponse: Decodable {
 enum DiscourseChatEndpoint {
     static func channels() -> String { "/chat/api/me/channels" }
 
+    static func browseChannels(filter: String?, offset: Int, limit: Int) -> String {
+        var path = "/chat/api/channels?offset=\(offset)&limit=\(limit)&status=open"
+        let trimmed = filter?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmed.isEmpty {
+            let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? trimmed
+            path += "&filter=\(encoded)"
+        }
+        return path
+    }
+
+    static func directMessageChannels() -> String {
+        "/chat/api/direct-message-channels"
+    }
+
+    static func joinChannel(channelId: Int) -> String {
+        "/chat/api/channels/\(channelId)/memberships/me"
+    }
+
+    static func channel(channelId: Int) -> String {
+        "/chat/api/channels/\(channelId)"
+    }
+
+    static func channelMemberships(channelId: Int, offset: Int, limit: Int) -> String {
+        "/chat/api/channels/\(channelId)/memberships?offset=\(offset)&limit=\(limit)"
+    }
+
+    static func addChannelMemberships(channelId: Int) -> String {
+        "/chat/api/channels/\(channelId)/memberships"
+    }
+
+    static func removeChannelMember(channelId: Int, userId: Int) -> String {
+        "/chat/api/channels/\(channelId)/memberships/\(userId)"
+    }
+
+    static func leaveChannel(channelId: Int) -> String {
+        "/chat/api/channels/\(channelId)/memberships/me/follows"
+    }
+
+    static func channelNotificationSettings(channelId: Int) -> String {
+        "/chat/api/channels/\(channelId)/notifications-settings/me"
+    }
+
     static func messages(channelId: Int, pageSize: Int) -> String {
         "/chat/api/channels/\(channelId)/messages?page_size=\(pageSize)"
     }
@@ -686,9 +789,279 @@ enum DiscourseChatEndpoint {
     }
 }
 
+struct DiscourseChatChannelCreateResponse: Decodable {
+    let channel: DiscourseChatChannel
+
+    enum CodingKeys: String, CodingKey {
+        case channel
+    }
+
+    init(from decoder: Decoder) throws {
+        if let nested = try? decoder.container(keyedBy: CodingKeys.self),
+           let channel = try? nested.decodeIfPresent(DiscourseChatChannel.self, forKey: .channel) {
+            self.channel = channel
+            return
+        }
+        channel = try DiscourseChatChannel(from: decoder)
+    }
+}
+
+struct DiscourseChatChannelMember: Decodable, Equatable, Identifiable {
+    var id: Int { user?.id ?? username.hashValue }
+    let user: DiscourseChatChannel.Chatable.ChatUser?
+    let following: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case user, following
+    }
+
+    var username: String {
+        user?.username?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    var displayName: String {
+        let name = user?.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return name.isEmpty ? username : name
+    }
+}
+
+struct DiscourseChatMembershipsResponse: Decodable {
+    let memberships: [DiscourseChatChannelMember]
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        memberships = (try? c.decodeIfPresent([DiscourseChatChannelMember].self, forKey: .memberships)) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case memberships
+    }
+}
+
+enum ChatNotificationLevel: String, CaseIterable {
+    case never
+    case mention
+    case always
+
+    var title: String {
+        switch self {
+        case .never:
+            return String(localized: "chat.notify.never", defaultValue: "从不")
+        case .mention:
+            return String(localized: "chat.notify.mention", defaultValue: "仅提及")
+        case .always:
+            return String(localized: "chat.notify.always", defaultValue: "所有活动")
+        }
+    }
+
+    static func resolved(_ raw: String?) -> ChatNotificationLevel {
+        ChatNotificationLevel(rawValue: raw ?? "") ?? .mention
+    }
+}
+
+struct DiscourseChatBrowseResponse: Decodable {
+    let channels: [DiscourseChatChannel]
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        channels = (try? c.decodeIfPresent([DiscourseChatChannel].self, forKey: .channels)) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case channels
+    }
+}
+
+enum ChatListTab: Int, CaseIterable {
+    case channels
+    case directMessages
+
+    var title: String {
+        switch self {
+        case .channels:
+            return String(localized: "chat.tab.channels", defaultValue: "频道")
+        case .directMessages:
+            return String(localized: "chat.tab.direct", defaultValue: "私信")
+        }
+    }
+}
+
+enum ChatListFilterPolicy {
+    static func visible(
+        in response: DiscourseChatChannelsResponse?,
+        tab: ChatListTab
+    ) -> [DiscourseChatChannel] {
+        let source: [DiscourseChatChannel]
+        switch tab {
+        case .channels:
+            source = response?.publicChannels ?? []
+        case .directMessages:
+            source = response?.directMessageChannels ?? []
+        }
+        return source.sorted {
+            let left = response?.unreadCount(for: $0) ?? $0.unreadCount
+            let right = response?.unreadCount(for: $1) ?? $1.unreadCount
+            if left != right { return left > right }
+            return $0.displayTitle.localizedCaseInsensitiveCompare($1.displayTitle) == .orderedAscending
+        }
+    }
+}
+
+enum ChatDirectMessageCreatePolicy {
+    static func canCreate(usernames: [String]) -> Bool {
+        !normalizedUsernames(usernames).isEmpty
+    }
+
+    static func normalizedUsernames(_ usernames: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for raw in usernames {
+            let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+            guard !name.isEmpty else { continue }
+            let key = name.lowercased()
+            guard seen.insert(key).inserted else { continue }
+            result.append(name)
+        }
+        return result
+    }
+}
+
 // MARK: - API
 
 extension DiscourseAPI {
+    func createDirectMessageChannel(usernames: [String], upsert: Bool = true) async throws -> DiscourseChatChannel {
+        let targets = ChatDirectMessageCreatePolicy.normalizedUsernames(usernames)
+        guard ChatDirectMessageCreatePolicy.canCreate(usernames: targets) else {
+            throw DiscourseAPIError(
+                messages: [String(localized: "chat.new.need_user", defaultValue: "请选择至少一个用户")],
+                errorType: "chat_create_invalid"
+            )
+        }
+        var parameters: Parameters = ["target_usernames": targets]
+        if upsert {
+            parameters["upsert"] = true
+        }
+        let response = await session.request(
+            baseURL + DiscourseChatEndpoint.directMessageChannels(),
+            method: .post,
+            parameters: parameters,
+            encoding: JSONEncoding.default
+        ).serializingData().response
+        try throwIfUnsuccessfulChatResponse(response)
+        guard let data = response.data, !data.isEmpty else {
+            throw DiscourseAPIError(
+                messages: [String(localized: "chat.request.failed", defaultValue: "请求失败")],
+                errorType: "chat_request_failed"
+            )
+        }
+        return try JSONDecoder().decode(DiscourseChatChannelCreateResponse.self, from: data).channel
+    }
+
+    func browseChatChannels(filter: String? = nil, offset: Int = 0, limit: Int = 25) async throws -> [DiscourseChatChannel] {
+        let url = baseURL + DiscourseChatEndpoint.browseChannels(filter: filter, offset: offset, limit: limit)
+        let response = await session.request(url, method: .get).serializingData().response
+        try throwIfUnsuccessfulChatResponse(response)
+        guard let data = response.data, !data.isEmpty else { return [] }
+        return (try? JSONDecoder().decode(DiscourseChatBrowseResponse.self, from: data))?.channels ?? []
+    }
+
+    func joinChatChannel(channelId: Int) async throws {
+        let response = await session.request(
+            baseURL + DiscourseChatEndpoint.joinChannel(channelId: channelId),
+            method: .post,
+            encoding: JSONEncoding.default
+        ).serializingData().response
+        try throwIfUnsuccessfulChatResponse(response)
+    }
+
+    func fetchChatChannel(channelId: Int) async throws -> DiscourseChatChannel {
+        let response = await session.request(
+            baseURL + DiscourseChatEndpoint.channel(channelId: channelId),
+            method: .get
+        ).serializingData().response
+        try throwIfUnsuccessfulChatResponse(response)
+        guard let data = response.data, !data.isEmpty else {
+            throw DiscourseAPIError(
+                messages: [String(localized: "chat.request.failed", defaultValue: "请求失败")],
+                errorType: "chat_request_failed"
+            )
+        }
+        return try JSONDecoder().decode(DiscourseChatChannelCreateResponse.self, from: data).channel
+    }
+
+    func updateChatChannel(
+        channelId: Int,
+        name: String? = nil,
+        threadingEnabled: Bool? = nil
+    ) async throws {
+        var parameters: Parameters = [:]
+        if let name { parameters["name"] = name }
+        if let threadingEnabled { parameters["threading_enabled"] = threadingEnabled }
+        let response = await session.request(
+            baseURL + DiscourseChatEndpoint.channel(channelId: channelId),
+            method: .put,
+            parameters: parameters,
+            encoding: JSONEncoding.default
+        ).serializingData().response
+        try throwIfUnsuccessfulChatResponse(response)
+    }
+
+    func updateChatChannelNotifications(
+        channelId: Int,
+        muted: Bool? = nil,
+        notificationLevel: String? = nil
+    ) async throws {
+        var settings: Parameters = [:]
+        if let muted { settings["muted"] = muted }
+        if let notificationLevel { settings["notification_level"] = notificationLevel }
+        let response = await session.request(
+            baseURL + DiscourseChatEndpoint.channelNotificationSettings(channelId: channelId),
+            method: .put,
+            parameters: ["notifications_settings": settings],
+            encoding: JSONEncoding.default
+        ).serializingData().response
+        try throwIfUnsuccessfulChatResponse(response)
+    }
+
+    func fetchChatChannelMembers(channelId: Int, offset: Int = 0, limit: Int = 50) async throws -> [DiscourseChatChannelMember] {
+        let response = await session.request(
+            baseURL + DiscourseChatEndpoint.channelMemberships(channelId: channelId, offset: offset, limit: limit),
+            method: .get
+        ).serializingData().response
+        try throwIfUnsuccessfulChatResponse(response)
+        guard let data = response.data, !data.isEmpty else { return [] }
+        return (try? JSONDecoder().decode(DiscourseChatMembershipsResponse.self, from: data))?.memberships ?? []
+    }
+
+    func addChatChannelMembers(channelId: Int, usernames: [String]) async throws {
+        let names = ChatDirectMessageCreatePolicy.normalizedUsernames(usernames)
+        guard !names.isEmpty else { return }
+        let response = await session.request(
+            baseURL + DiscourseChatEndpoint.addChannelMemberships(channelId: channelId),
+            method: .post,
+            parameters: ["usernames": names],
+            encoding: JSONEncoding.default
+        ).serializingData().response
+        try throwIfUnsuccessfulChatResponse(response)
+    }
+
+    func removeChatChannelMember(channelId: Int, userId: Int) async throws {
+        let response = await session.request(
+            baseURL + DiscourseChatEndpoint.removeChannelMember(channelId: channelId, userId: userId),
+            method: .delete
+        ).serializingData().response
+        try throwIfUnsuccessfulChatResponse(response)
+    }
+
+    func leaveChatChannel(channelId: Int) async throws {
+        let response = await session.request(
+            baseURL + DiscourseChatEndpoint.leaveChannel(channelId: channelId),
+            method: .delete
+        ).serializingData().response
+        try throwIfUnsuccessfulChatResponse(response)
+    }
+
     func fetchChatChannels() async throws -> DiscourseChatChannelsResponse {
         let url = baseURL + DiscourseChatEndpoint.channels()
         let response = await session.request(url, method: .get).serializingData().response

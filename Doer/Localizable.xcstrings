@@ -4899,6 +4899,70 @@
         }
       }
     },
+    "chat.browse.empty" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No channels to join"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有可加入的频道"
+          }
+        }
+      }
+    },
+    "chat.browse.join" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Join"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加入"
+          }
+        }
+      }
+    },
+    "chat.browse.search" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search channels"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索频道"
+          }
+        }
+      }
+    },
+    "chat.browse.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Browse channels"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "浏览频道"
+          }
+        }
+      }
+    },
     "chat.camera.unavailable" : {
       "localizations" : {
         "en" : {
@@ -4976,6 +5040,7 @@
       }
     },
     "chat.empty" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4999,6 +5064,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "暫無聊天頻道（站點可能未開啓 Chat）"
+          }
+        }
+      }
+    },
+    "chat.empty.channels" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No channels yet. Browse from the top-right to join one."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无频道，点右上角浏览并加入"
+          }
+        }
+      }
+    },
+    "chat.empty.direct" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No direct messages yet. Tap + to start one."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无私聊，点右上角 + 新建"
           }
         }
       }
@@ -5063,6 +5160,81 @@
         }
       }
     },
+    "chat.new.group %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create group (%lld)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "创建群聊（%lld）"
+          }
+        }
+      }
+    },
+    "chat.new.need_user" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "请选择至少一个用户"
+          }
+        }
+      }
+    },
+    "chat.new.search" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search people"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索用户"
+          }
+        }
+      }
+    },
+    "chat.new.start" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start chat"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开始聊天"
+          }
+        }
+      }
+    },
+    "chat.new.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New chat"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新建聊天"
+          }
+        }
+      }
+    },
     "chat.no_templates" : {
       "localizations" : {
         "en" : {
@@ -5091,6 +5263,146 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "请求失败"
+          }
+        }
+      }
+    },
+    "chat.info.title" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Channel info" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "频道信息" } }
+      }
+    },
+    "chat.info.settings" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Settings" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "设置" } }
+      }
+    },
+    "chat.info.members" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Members" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "成员" } }
+      }
+    },
+    "chat.info.title_section" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Title" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "标题" } }
+      }
+    },
+    "chat.info.edit" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Edit" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "编辑" } }
+      }
+    },
+    "chat.info.rename" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Edit title" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "编辑标题" } }
+      }
+    },
+    "chat.info.mute" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Mute channel" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "将频道设为免打扰" } }
+      }
+    },
+    "chat.info.notify" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Push notifications" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "发送推送通知" } }
+      }
+    },
+    "chat.info.threading" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Threads" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "消息串" } }
+      }
+    },
+    "chat.info.threading.subtitle" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Replies open in a separate thread" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "启用后，回复会进入独立对话" } }
+      }
+    },
+    "chat.info.leave" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Leave channel" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "退出频道" } }
+      }
+    },
+    "chat.info.leave.confirm" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The conversation may reappear when there is a new message." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "退出后，有新消息时会话会再次出现。" } }
+      }
+    },
+    "chat.notify.never" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Never" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "从不" } }
+      }
+    },
+    "chat.notify.mention" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Mentions only" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "仅提及" } }
+      }
+    },
+    "chat.notify.always" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "All activity" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "所有活动" } }
+      }
+    },
+    "chat.members.add" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Add members" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加成员" } }
+      }
+    },
+    "chat.members.add_count %lld" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Add (%lld)" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加（%lld）" } }
+      }
+    },
+    "chat.members.added" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Members added" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已添加成员" } }
+      }
+    },
+    "chat.tab.channels" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Channels"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "频道"
+          }
+        }
+      }
+    },
+    "chat.tab.direct" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Direct"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "私信"
           }
         }
       }
@@ -16297,25 +16609,25 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Recipient username"
+            "value" : "Username or group"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "收件人用户名"
+            "value" : "用户名或群组"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "收件人用戶名"
+            "value" : "使用者名稱或群組"
           }
         },
         "zh-HK" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "收件人用户名"
+            "value" : "用户名或群组"
           }
         }
       }
@@ -26756,6 +27068,262 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "提供者：%@"
+          }
+        }
+      }
+    },
+    "pm.archive" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Archive"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "归档"
+          }
+        }
+      }
+    },
+    "pm.archived" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Archived"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已归档"
+          }
+        }
+      }
+    },
+    "pm.invite" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invite"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "邀请"
+          }
+        }
+      }
+    },
+    "pm.invite.hint" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search users or groups to add to this message."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索用户或群组，加入此私信。"
+          }
+        }
+      }
+    },
+    "pm.invite.partial_failed %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't invite %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未能邀请 %@"
+          }
+        }
+      }
+    },
+    "pm.invite.success" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invited"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已邀请"
+          }
+        }
+      }
+    },
+    "pm.leave" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Leave"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "退出"
+          }
+        }
+      }
+    },
+    "pm.leave.confirm" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Leave this private message?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "退出此私信？"
+          }
+        }
+      }
+    },
+    "pm.move_to_inbox" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to inbox"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移回收件箱"
+          }
+        }
+      }
+    },
+    "pm.moved_to_inbox" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moved to inbox"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已移回收件箱"
+          }
+        }
+      }
+    },
+    "pm.participants" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Participants"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "成员"
+          }
+        }
+      }
+    },
+    "pm.remove" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除"
+          }
+        }
+      }
+    },
+    "pm.remove.group_confirm %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove @%@ from this message?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将群组 @%@ 移出此私信？"
+          }
+        }
+      }
+    },
+    "pm.remove.user_confirm %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove @%@ from this message?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将 @%@ 移出此私信？"
+          }
+        }
+      }
+    },
+    "pm.removed.group %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Removed @%@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已移除群组 %@"
+          }
+        }
+      }
+    },
+    "pm.removed.user %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Removed @%@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已移除 @%@"
           }
         }
       }
@@ -42931,6 +43499,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "恢復默認"
+          }
+        }
+      }
+    },
+    "sticker.market.search" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "搜索表情包"
+          }
+        }
+      }
+    },
+    "sticker.market.search.empty" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "没有匹配的表情包"
           }
         }
       }

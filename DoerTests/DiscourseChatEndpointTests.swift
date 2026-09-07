@@ -6,6 +6,113 @@ final class DiscourseChatEndpointTests: XCTestCase {
         XCTAssertEqual(DiscourseChatEndpoint.sendMessage(channelId: 42), "/chat/42")
     }
 
+    func testChannelManageRoutes() {
+        XCTAssertEqual(DiscourseChatEndpoint.channel(channelId: 3), "/chat/api/channels/3")
+        XCTAssertEqual(
+            DiscourseChatEndpoint.channelMemberships(channelId: 3, offset: 0, limit: 50),
+            "/chat/api/channels/3/memberships?offset=0&limit=50"
+        )
+        XCTAssertEqual(
+            DiscourseChatEndpoint.removeChannelMember(channelId: 3, userId: 9),
+            "/chat/api/channels/3/memberships/9"
+        )
+        XCTAssertEqual(
+            DiscourseChatEndpoint.leaveChannel(channelId: 3),
+            "/chat/api/channels/3/memberships/me/follows"
+        )
+        XCTAssertEqual(
+            DiscourseChatEndpoint.channelNotificationSettings(channelId: 3),
+            "/chat/api/channels/3/notifications-settings/me"
+        )
+    }
+
+    func testGroupDmFlagReadsChatableGroup() throws {
+        let group = try JSONDecoder().decode(DiscourseChatChannel.self, from: Data("""
+        {
+          "id": 8,
+          "title": "kpbl, 阿香",
+          "chatable_type": "DirectMessage",
+          "chatable": { "group": true, "users": [
+            { "id": 1, "username": "kpbl", "name": "kpbl" },
+            { "id": 2, "username": "axiang", "name": "阿香" }
+          ]}
+        }
+        """.utf8))
+        XCTAssertTrue(group.isGroupDm)
+        XCTAssertEqual(group.displayTitle, "kpbl, 阿香")
+
+        let oneToOne = try JSONDecoder().decode(DiscourseChatChannel.self, from: Data("""
+        { "id": 2, "chatable_type": "DirectMessage", "chatable": { "group": false, "users": [
+          { "id": 1, "username": "alice" }
+        ]}}
+        """.utf8))
+        XCTAssertFalse(oneToOne.isGroupDm)
+    }
+
+    func testCreateAndBrowseRoutes() {
+        XCTAssertEqual(DiscourseChatEndpoint.directMessageChannels(), "/chat/api/direct-message-channels")
+        XCTAssertEqual(
+            DiscourseChatEndpoint.joinChannel(channelId: 7),
+            "/chat/api/channels/7/memberships/me"
+        )
+        XCTAssertEqual(
+            DiscourseChatEndpoint.browseChannels(filter: nil, offset: 0, limit: 25),
+            "/chat/api/channels?offset=0&limit=25&status=open"
+        )
+        let encoded = "公告".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "公告"
+        XCTAssertEqual(
+            DiscourseChatEndpoint.browseChannels(filter: "公告", offset: 0, limit: 25),
+            "/chat/api/channels?offset=0&limit=25&status=open&filter=\(encoded)"
+        )
+    }
+
+    func testDirectMessageCreatePolicyNormalizesUsernames() {
+        XCTAssertFalse(ChatDirectMessageCreatePolicy.canCreate(usernames: [" ", "@"]))
+        XCTAssertEqual(
+            ChatDirectMessageCreatePolicy.normalizedUsernames([" alice ", "@Bob", "alice", ""]),
+            ["alice", "Bob"]
+        )
+        XCTAssertTrue(ChatDirectMessageCreatePolicy.canCreate(usernames: ["alice"]))
+    }
+
+    func testListFilterSplitsPublicAndDirectChannels() throws {
+        let json = """
+        {
+          "public_channels": [
+            { "id": 1, "title": "公告", "chatable_type": "Category" }
+          ],
+          "direct_message_channels": [
+            { "id": 9, "title": "alice", "chatable_type": "DirectMessage" }
+          ]
+        }
+        """.data(using: .utf8)!
+        let response = try JSONDecoder().decode(DiscourseChatChannelsResponse.self, from: json)
+        XCTAssertEqual(
+            ChatListFilterPolicy.visible(in: response, tab: .channels).map(\.id),
+            [1]
+        )
+        XCTAssertEqual(
+            ChatListFilterPolicy.visible(in: response, tab: .directMessages).map(\.id),
+            [9]
+        )
+        XCTAssertEqual(ChatListTab.channels.title.isEmpty, false)
+    }
+
+    func testCreateResponseReadsNestedChannel() throws {
+        let json = """
+        {
+          "channel": {
+            "id": 12,
+            "title": "alice, bob",
+            "chatable_type": "DirectMessage"
+          }
+        }
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(DiscourseChatChannelCreateResponse.self, from: json)
+        XCTAssertEqual(decoded.channel.id, 12)
+        XCTAssertTrue(decoded.channel.isDirectMessage)
+    }
+
     func testModernSendAndReadStayOnChatAPI() {
         XCTAssertEqual(
             DiscourseChatEndpoint.sendMessageModern(channelId: 42),
