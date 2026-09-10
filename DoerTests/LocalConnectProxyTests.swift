@@ -61,6 +61,12 @@ final class LocalConnectProxyTests: XCTestCase {
                 isLive: false
             )
         )
+        XCTAssertFalse(
+            LightweightDohProxyService.DohProxyLiveness.shouldFlushEncryptedDNSOnEnsureAlive(isLive: true)
+        )
+        XCTAssertTrue(
+            LightweightDohProxyService.DohProxyLiveness.shouldFlushEncryptedDNSOnEnsureAlive(isLive: false)
+        )
     }
 
     func testDoHProbeResultSubtitleIncludesLatencyAndIPs() {

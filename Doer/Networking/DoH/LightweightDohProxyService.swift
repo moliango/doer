@@ -6,10 +6,12 @@ import WebKit
 
 nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     static let shared = LightweightDohProxyService()
+    static let didRecoverNotification = Notification.Name("DoerDoHDidRecover")
 
     private let lock = NSLock()
     private let resolver = DohResolver()
     private let startQueue = DispatchQueue(label: "doer.doh.proxy-start")
+    private static let startQueueKey = DispatchSpecificKey<Void>()
     private var proxy: LocalConnectProxy?
     private(set) var lastError: Error?
     private(set) var configurationVersion: Int = 0
@@ -18,7 +20,9 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     private var consecutiveStartFailures = 0
     private var recoverWorkItem: DispatchWorkItem?
 
-    private init() {}
+    private init() {
+        startQueue.setSpecific(key: Self.startQueueKey, value: ())
+    }
 
     enum DohProxyLiveness {
         /// Config changed, or DoH is on but the loopback listener is not ready.
@@ -38,6 +42,12 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         /// changes the signature; path restore must force the same rebuild.
         static func shouldForceRebuildOnReconnect(wasDisconnected: Bool) -> Bool {
             wasDisconnected
+        }
+
+        /// A live listener already has Encrypted DNS. Flushing PrivacyContext
+        /// on every foreground blanks name resolution until DoH returns.
+        static func shouldFlushEncryptedDNSOnEnsureAlive(isLive: Bool) -> Bool {
+            !isLive
         }
     }
 
@@ -124,21 +134,29 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         configurationVersion += 1
         lock.unlock()
 
-        startQueue.async { [weak self] in
+        let apply = { [weak self] in
             self?.applyConfiguration(shouldEnable: shouldEnable, generation: generation)
+        }
+        if DispatchQueue.getSpecific(key: Self.startQueueKey) != nil {
+            apply()
+        } else {
+            startQueue.async {
+                apply()
+            }
         }
     }
 
-    /// FluxDo `ensureProxyAlive`. iOS can drop the loopback listener and
-    /// Encrypted DNS PrivacyContext while suspended; resume must restore
-    /// them without requiring a process kill.
+    /// FluxDo `ensureProxyAlive`. Resume re-installs Encrypted DNS without
+    /// flushing a live resolver. A dead loopback listener still restarts.
     func ensureProxyAlive() {
         guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
         lock.lock()
         consecutiveStartFailures = 0
         let isLive = proxy?.isRunning == true
         lock.unlock()
-        reassertNameResolution()
+        reassertNameResolution(
+            forceFlush: DohProxyLiveness.shouldFlushEncryptedDNSOnEnsureAlive(isLive: isLive)
+        )
         if isLive {
             publishAppClients()
             return
@@ -155,10 +173,23 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         recoverWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
+            guard UserDefaults.standard.bool(forKey: "dohEnabled") else {
+                self.notifyRecovered()
+                return
+            }
             DohDebugLog.record("DoH recovering after network path change")
             self.clearCache()
-            self.ensureProxyAlive()
+            self.reassertNameResolution(forceFlush: true)
+            self.lock.lock()
+            let isLive = self.proxy?.isRunning == true
+            self.lock.unlock()
+            if isLive {
+                self.publishAppClients()
+            } else {
+                DohDebugLog.record("DoH proxy not alive; restarting")
+                self.configureFromSettings()
+            }
+            self.notifyRecovered()
         }
         recoverWorkItem = work
         startQueue.asyncAfter(deadline: .now() + 0.8, execute: work)
@@ -302,11 +333,21 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         }
     }
 
-    private func reassertNameResolution() {
+    private func reassertNameResolution(forceFlush: Bool) {
         if LocalConnectProxy.originECHReady {
             EncryptedDnsService.disable()
-        } else {
+            return
+        }
+        if forceFlush {
             EncryptedDnsService.reassertFromDefaults()
+        } else {
+            EncryptedDnsService.applyFromDefaults()
+        }
+    }
+
+    private func notifyRecovered() {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: Self.didRecoverNotification, object: self)
         }
     }
 

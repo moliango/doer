@@ -25,6 +25,16 @@ final class EncryptedDnsServiceTests: XCTestCase {
         XCTAssertEqual(spec.bootstrapIPs, ["223.5.5.5"])
     }
 
+    func testMergedBootstrapIPsKeepLockedAheadOfSystem() {
+        XCTAssertEqual(
+            EncryptedDnsService.mergedBootstrapIPs(
+                locked: ["1.12.12.12", "120.53.53.53"],
+                system: ["1.1.1.1", "1.12.12.12"]
+            ),
+            ["1.12.12.12", "120.53.53.53", "1.1.1.1"]
+        )
+    }
+
     func testOrderedBootstrapIPsPreferLiveIPv4() {
         XCTAssertEqual(
             EncryptedDnsService.orderedBootstrapIPs(

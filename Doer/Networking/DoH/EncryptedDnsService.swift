@@ -49,13 +49,11 @@ nonisolated enum EncryptedDnsService {
     private static var lastApplied: ResolverSpec?
 
     static func apply(_ spec: ResolverSpec) {
-        var ips = spec.bootstrapIPs
+        var system: [String] = []
         if let host = spec.url.host {
-            for ip in DohBootstrapTransport.systemAddresses(for: host) where !ips.contains(ip) {
-                ips.insert(ip, at: 0)
-            }
+            system = DohBootstrapTransport.systemAddresses(for: host)
         }
-        ips = orderedBootstrapIPs(ips, preferIPv6: false)
+        let ips = mergedBootstrapIPs(locked: spec.bootstrapIPs, system: system)
         let normalized = ResolverSpec(url: spec.url, bootstrapIPs: ips)
         applyLock.lock()
         let alreadyApplied = lastApplied == normalized
@@ -78,8 +76,16 @@ nonisolated enum EncryptedDnsService {
         )
     }
 
-    /// Force-apply after foreground / path restore. `apply` skips flush when
-    /// the spec is unchanged, but iOS can drop PrivacyContext while suspended.
+    /// Locked catalog IPs first. System-resolved extras are only a fallback so
+    /// poisoned DNS cannot jump the Encrypted DNS bootstrap list.
+    static func mergedBootstrapIPs(locked: [String], system: [String]) -> [String] {
+        var seen = Set<String>()
+        let combined = (locked + system).filter { seen.insert($0).inserted }
+        return orderedBootstrapIPs(combined, preferIPv6: false)
+    }
+
+    /// Force-apply after a real path restore. `apply` skips flush when the spec
+    /// is unchanged; iOS can drop PrivacyContext after radio changes.
     static func reassertFromDefaults() {
         applyLock.lock()
         lastApplied = nil

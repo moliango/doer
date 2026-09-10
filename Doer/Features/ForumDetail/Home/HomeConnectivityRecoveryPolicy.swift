@@ -11,4 +11,10 @@ enum HomeConnectivityRecoveryPolicy {
     ) -> Bool {
         topicsEmpty || hasError || isWaitingForNetwork || isLoading
     }
+
+    /// Encrypted DNS is flushed during path restore. Reloading immediately
+    /// races that window and looks like a hard connect failure.
+    static func shouldWaitForDoHRecovery(dohEnabled: Bool) -> Bool {
+        dohEnabled
+    }
 }
