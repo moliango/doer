@@ -30,13 +30,8 @@ build_project_scheme() {
 
 cd "${ROOT_DIR}"
 
-# The generated app project references external Tuist products from BUILT_PRODUCTS_DIR,
-# so package projects must be built first and must share the same derivedDataPath.
-build_project_scheme "Tuist/.build/tuist-derived/Alamofire/Alamofire.xcodeproj" "Alamofire"
-build_project_scheme "Tuist/.build/tuist-derived/GRDB/GRDB.xcodeproj" "GRDB"
-build_project_scheme "Tuist/.build/tuist-derived/SDWebImage/SDWebImage.xcodeproj" "SDWebImage"
-build_project_scheme "Tuist/.build/tuist-derived/SDWebImageSVGCoder/SDWebImageSVGCoder.xcodeproj" "SDWebImageSVGCoder"
-build_project_scheme "Tuist/.build/tuist-derived/Lightbox/Lightbox.xcodeproj" "Lightbox"
+# Swift packages resolve as part of the app project; no Tuist-derived
+# package xcodeprojs need to be built first.
 build_project_scheme "Doer.xcodeproj" "Doer"
 
 APP_PATH="${PRODUCTS_DIR}/Doer.app"

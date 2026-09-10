@@ -10,24 +10,13 @@
 	<true/>
 	<key>CFBundleIcons</key>
 	<dict>
-		<key>CFBundlePrimaryIcon</key>
-		<dict>
-			<key>CFBundleIconName</key>
-			<string>AppIcon</string>
-			<key>CFBundleIconFiles</key>
-			<array>
-				<string>AppIconOriginal</string>
-			</array>
-			<key>UIPrerenderedIcon</key>
-			<false/>
-		</dict>
 		<key>CFBundleAlternateIcons</key>
 		<dict>
-			<key>AppIconPurple</key>
+			<key>AppIconDark</key>
 			<dict>
 				<key>CFBundleIconFiles</key>
 				<array>
-					<string>AppIconPurple</string>
+					<string>AppIconDark</string>
 				</array>
 				<key>UIPrerenderedIcon</key>
 				<false/>
@@ -50,11 +39,11 @@
 				<key>UIPrerenderedIcon</key>
 				<false/>
 			</dict>
-			<key>AppIconDark</key>
+			<key>AppIconPurple</key>
 			<dict>
 				<key>CFBundleIconFiles</key>
 				<array>
-					<string>AppIconDark</string>
+					<string>AppIconPurple</string>
 				</array>
 				<key>UIPrerenderedIcon</key>
 				<false/>
@@ -77,28 +66,28 @@
 				<key>UIPrerenderedIcon</key>
 				<false/>
 			</dict>
+		</dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIconOriginal</string>
+			</array>
+			<key>CFBundleIconName</key>
+			<string>AppIcon</string>
+			<key>UIPrerenderedIcon</key>
+			<false/>
 		</dict>
 	</dict>
 	<key>CFBundleIcons~ipad</key>
 	<dict>
-		<key>CFBundlePrimaryIcon</key>
-		<dict>
-			<key>CFBundleIconName</key>
-			<string>AppIcon</string>
-			<key>CFBundleIconFiles</key>
-			<array>
-				<string>AppIconOriginal</string>
-			</array>
-			<key>UIPrerenderedIcon</key>
-			<false/>
-		</dict>
 		<key>CFBundleAlternateIcons</key>
 		<dict>
-			<key>AppIconPurple</key>
+			<key>AppIconDark</key>
 			<dict>
 				<key>CFBundleIconFiles</key>
 				<array>
-					<string>AppIconPurple</string>
+					<string>AppIconDark</string>
 				</array>
 				<key>UIPrerenderedIcon</key>
 				<false/>
@@ -121,11 +110,11 @@
 				<key>UIPrerenderedIcon</key>
 				<false/>
 			</dict>
-			<key>AppIconDark</key>
+			<key>AppIconPurple</key>
 			<dict>
 				<key>CFBundleIconFiles</key>
 				<array>
-					<string>AppIconDark</string>
+					<string>AppIconPurple</string>
 				</array>
 				<key>UIPrerenderedIcon</key>
 				<false/>
@@ -148,6 +137,17 @@
 				<key>UIPrerenderedIcon</key>
 				<false/>
 			</dict>
+		</dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIconOriginal</string>
+			</array>
+			<key>CFBundleIconName</key>
+			<string>AppIcon</string>
+			<key>UIPrerenderedIcon</key>
+			<false/>
 		</dict>
 	</dict>
 	<key>CFBundleURLTypes</key>

@@ -12,13 +12,38 @@ let project = Project(
         .local(path: "Packages/CookedHTML"),
         .local(path: "Packages/DohProxy"),
         .remote(
+            url: "https://github.com/Alamofire/Alamofire.git",
+            requirement: .upToNextMajor(from: "5.10.0")
+        ),
+        .remote(
+            url: "https://github.com/groue/GRDB.swift.git",
+            requirement: .upToNextMajor(from: "7.0.0")
+        ),
+        .remote(
             url: "https://github.com/scinfu/SwiftSoup.git",
             requirement: .upToNextMajor(from: "2.7.0")
+        ),
+        .remote(
+            url: "https://github.com/hyperoslo/Lightbox.git",
+            requirement: .upToNextMajor(from: "2.5.0")
+        ),
+        .remote(
+            url: "https://github.com/SDWebImage/SDWebImage.git",
+            requirement: .upToNextMajor(from: "5.19.0")
+        ),
+        .remote(
+            url: "https://github.com/SDWebImage/SDWebImageSVGCoder.git",
+            requirement: .upToNextMajor(from: "1.7.0")
         ),
     ],
     settings: .settings(
         base: [
+            "ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS": "YES",
+            "DEAD_CODE_STRIPPING": "YES",
             "DEVELOPMENT_TEAM": .string(developmentTeam),
+            "ENABLE_USER_SCRIPT_SANDBOXING": "YES",
+            "LOCALIZATION_PREFERS_STRING_CATALOGS": "YES",
+            "STRING_CATALOG_GENERATE_SYMBOLS": "YES",
         ],
         configurations: [
             .debug(name: "Debug", settings: [:], xcconfig: nil),
@@ -51,11 +76,11 @@ let project = Project(
             ]),
             entitlements: .file(path: "Doer/Doer.entitlements"),
             dependencies: [
-                .external(name: "Alamofire"),
-                .external(name: "GRDB"),
-                .external(name: "SDWebImage"),
-                .external(name: "SDWebImageSVGCoder"),
-                .external(name: "Lightbox"),
+                .package(product: "Alamofire"),
+                .package(product: "GRDB"),
+                .package(product: "SDWebImage"),
+                .package(product: "SDWebImageSVGCoder"),
+                .package(product: "Lightbox"),
                 .package(product: "CookedHTML"),
                 .package(product: "DohProxy"),
                 .package(product: "SwiftSoup"),
