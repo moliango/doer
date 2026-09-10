@@ -12,9 +12,10 @@ enum HomeConnectivityRecoveryPolicy {
         topicsEmpty || hasError || isWaitingForNetwork || isLoading
     }
 
-    /// Encrypted DNS is flushed during path restore. Reloading immediately
-    /// races that window and looks like a hard connect failure.
+    /// v1.8.4 reloaded as soon as the path was back. Waiting for Encrypted DNS
+    /// left the list on waitNet=true across Wi‑Fi changes.
     static func shouldWaitForDoHRecovery(dohEnabled: Bool) -> Bool {
-        dohEnabled
+        _ = dohEnabled
+        return false
     }
 }

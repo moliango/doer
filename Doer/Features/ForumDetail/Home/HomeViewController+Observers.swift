@@ -115,11 +115,6 @@ extension HomeViewController {
     func handleConnectivityChanged(isConnected: Bool) {
         applyConnectivityUI(isConnected: isConnected, animated: true)
         guard isConnected else { return }
-        if HomeConnectivityRecoveryPolicy.shouldWaitForDoHRecovery(
-            dohEnabled: UserDefaults.standard.bool(forKey: "dohEnabled")
-        ) {
-            return
-        }
         recoverTransportAfterReconnectIfNeeded()
     }
 

@@ -149,6 +149,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             self.consecutiveStartFailures = 0
             let isLive = self.proxy?.isRunning == true
             self.lock.unlock()
+            self.reassertNameResolution()
             if isLive {
                 self.publishAppClients()
                 return
@@ -158,35 +159,21 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         }
     }
 
-    /// Wi‑Fi ↔ cellular and offline→online keep a live loopback listener.
-    /// Clear sticky IPs and reassert Encrypted DNS after the radio settles.
-    /// Do not stop the proxy or disable PrivacyContext.
+    /// Wi‑Fi ↔ cellular keeps the path `.satisfied`, so Encrypted DNS and
+    /// sticky bootstrap IPs from the previous interface must be rebuilt.
+    /// Match v1.8.4: flush resolver cache and reassert, do not disable Encrypted DNS.
     func recoverAfterPathChange() {
         guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
         recoverWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            guard UserDefaults.standard.bool(forKey: "dohEnabled") else {
-                self.notifyRecovered()
-                return
-            }
+            guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
             DohDebugLog.record("DoH recovering after network path change")
             self.clearCache()
-            self.lock.lock()
-            let generation = self.applyGeneration
-            let isLive = self.proxy?.isRunning == true
-            self.lock.unlock()
-            if isLive {
-                self.publishAppClients()
-                self.armEncryptedDNSAfterBootstrap(generation: generation)
-            } else {
-                DohDebugLog.record("DoH proxy not alive; restarting")
-                self.configureFromSettings()
-            }
-            self.notifyRecovered()
+            self.ensureProxyAlive()
         }
         recoverWorkItem = work
-        startQueue.asyncAfter(deadline: .now() + 0.8, execute: work)
+        startQueue.async(execute: work)
     }
 
     private func runOnStartQueue(_ work: @escaping () -> Void) {
@@ -238,16 +225,15 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
                 startWebViewProxyNow()
             } else {
                 stop(clearError: false)
-                EncryptedDnsService.disable()
-                if let warning = DohServerCatalog.bootstrapOwnershipWarning(
-                    serverURL: config.serverURL,
-                    bootstrapIPs: config.bootstrapIPs
-                ) {
-                    DohDebugLog.record(warning)
+                if let spec = EncryptedDnsService.spec(fromDefaults: .standard) {
+                    EncryptedDnsService.apply(spec)
+                    prewarmForumDNS()
+                } else {
+                    EncryptedDnsService.disable()
+                    DohDebugLog.record("Encrypted DNS skipped: no bootstrap IPs")
                 }
                 startWebViewProxyNow()
-                armEncryptedDNSAfterBootstrap(generation: generation)
-                DohDebugLog.record("DoH CONNECT pass-through; Encrypted DNS waits for bootstrap")
+                DohDebugLog.record("DoH Encrypted DNS + CONNECT pass-through for WKWebView")
             }
         } else {
             lock.lock()
@@ -333,46 +319,23 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         }
     }
 
-    private func armEncryptedDNSAfterBootstrap(generation: Int) {
-        guard UserDefaults.standard.bool(forKey: "dohEnabled") else {
+    private func reassertNameResolution() {
+        if LocalConnectProxy.originECHReady {
             EncryptedDnsService.disable()
             return
         }
-        guard EncryptedDnsService.spec(fromDefaults: .standard) != nil else {
-            EncryptedDnsService.disable()
-            DohDebugLog.record("Encrypted DNS skipped: no bootstrap IPs")
-            return
-        }
-        resolver.resolve(host: "linux.do") { [weak self] result in
-            guard let self else { return }
-            self.lock.lock()
-            let current = self.applyGeneration
-            self.lock.unlock()
-            guard current == generation, UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
+        EncryptedDnsService.reassertFromDefaults()
+    }
+
+    private func prewarmForumDNS() {
+        resolver.resolve(host: "linux.do") { result in
             switch result {
             case .success(let answer):
                 DohDebugLog.record(
                     "DoH prewarm linux.do -> \(answer.addresses.prefix(2).joined(separator: ", "))"
                 )
-                guard EncryptedDnsService.Activation.shouldRequireEncryptedDNS(bootstrapSucceeded: true) else {
-                    EncryptedDnsService.disable()
-                    return
-                }
-                if let spec = EncryptedDnsService.spec(fromDefaults: .standard) {
-                    EncryptedDnsService.apply(spec)
-                }
-                self.lock.lock()
-                self.lastError = nil
-                self.lock.unlock()
             case .failure(let error):
-                EncryptedDnsService.disable()
-                self.lock.lock()
-                self.lastError = error
-                self.lock.unlock()
-                DohDebugLog.record(
-                    "Encrypted DNS skipped: bootstrap failed \(error.localizedDescription)"
-                )
-                self.publishAppClients()
+                DohDebugLog.record("DoH prewarm linux.do failed: \(error.localizedDescription)")
             }
         }
     }

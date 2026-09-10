@@ -61,7 +61,7 @@ final class DailyForumUXTests: XCTestCase {
         XCTAssertFalse(
             HomeConnectivityRecoveryPolicy.shouldReloadTopicList(topicsEmpty: false, hasError: false)
         )
-        XCTAssertTrue(HomeConnectivityRecoveryPolicy.shouldWaitForDoHRecovery(dohEnabled: true))
+        XCTAssertFalse(HomeConnectivityRecoveryPolicy.shouldWaitForDoHRecovery(dohEnabled: true))
         XCTAssertFalse(HomeConnectivityRecoveryPolicy.shouldWaitForDoHRecovery(dohEnabled: false))
     }
 

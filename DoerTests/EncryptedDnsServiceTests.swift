@@ -91,8 +91,30 @@ final class EncryptedDnsServiceTests: XCTestCase {
         )
     }
 
-    func testEncryptedDNSWaitsForSuccessfulBootstrap() {
-        XCTAssertFalse(EncryptedDnsService.Activation.shouldRequireEncryptedDNS(bootstrapSucceeded: false))
-        XCTAssertTrue(EncryptedDnsService.Activation.shouldRequireEncryptedDNS(bootstrapSucceeded: true))
+    func testEncryptedDNSDropsForeignCatalogIPsAndIPv6() throws {
+        let spec = EncryptedDnsService.ResolverSpec(
+            url: try XCTUnwrap(URL(string: "https://ld.ddd.oaifree.com/query-dns")),
+            bootstrapIPs: ["119.29.29.29", "223.5.5.5", "104.21.16.56"]
+        )
+        let ips = try XCTUnwrap(
+            EncryptedDnsService.specForEncryptedDNS(
+                spec,
+                systemIPs: ["104.21.16.56", "2606:4700:3037::ac43:d221"]
+            )
+        ).bootstrapIPs
+        XCTAssertEqual(ips, ["104.21.16.56"])
+    }
+
+    func testEncryptedDNSKeepsMatchingProviderIPs() throws {
+        let spec = try XCTUnwrap(
+            EncryptedDnsService.spec(
+                urlString: "https://dns.alidns.com/dns-query",
+                providerRaw: AppSettings.DoHProvider.alidns.rawValue
+            )
+        )
+        let ips = try XCTUnwrap(
+            EncryptedDnsService.specForEncryptedDNS(spec, systemIPs: [])
+        ).bootstrapIPs
+        XCTAssertEqual(ips, ["223.5.5.5", "223.6.6.6"])
     }
 }

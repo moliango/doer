@@ -187,7 +187,7 @@ final class ConnectivityService {
 
         if connected {
             stopRetry()
-            LightweightDohProxyService.shared.recoverAfterPathChange()
+            LightweightDohProxyService.shared.ensureProxyAlive()
         } else {
             startRetry()
         }

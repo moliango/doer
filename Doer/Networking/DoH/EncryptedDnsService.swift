@@ -49,17 +49,9 @@ nonisolated enum EncryptedDnsService {
     private static var lastApplied: ResolverSpec?
 
     static func apply(_ spec: ResolverSpec) {
-        guard var normalized = normalizedSpec(spec) else {
+        guard let normalized = specForEncryptedDNS(spec) else {
             disable()
             return
-        }
-        if let host = spec.url.host {
-            let system = DohBootstrapTransport.systemAddresses(for: host)
-            normalized.bootstrapIPs = DohBootstrapTransport.resolvedBootstrapAddresses(
-                host: host,
-                catalogIPs: normalized.bootstrapIPs,
-                systemIPs: system
-            )
         }
         applyLock.lock()
         let alreadyApplied = lastApplied == normalized
@@ -69,7 +61,7 @@ nonisolated enum EncryptedDnsService {
         applyLock.unlock()
         if alreadyApplied { return }
         let endpoints = bootstrapEndpoints(normalized.bootstrapIPs)
-        performOnMain {
+        let work = {
             let resolver = NWParameters.PrivacyContext.ResolverConfiguration.https(
                 normalized.url,
                 serverAddresses: endpoints
@@ -83,6 +75,32 @@ nonisolated enum EncryptedDnsService {
                 "Encrypted DNS on \(normalized.url.absoluteString) bootstrap=\(normalized.bootstrapIPs.joined(separator: ","))"
             )
         }
+        if Thread.isMainThread {
+            work()
+        } else {
+            DispatchQueue.main.sync(execute: work)
+        }
+    }
+
+    /// v1.8.4 used IPv4-only system+catalog IPs. Foreign catalog anycast
+    /// (e.g. 119.29.29.29 on a custom host) and IPv6 stall Encrypted DNS.
+    static func specForEncryptedDNS(_ spec: ResolverSpec, systemIPs: [String]? = nil) -> ResolverSpec? {
+        let host = spec.url.host ?? ""
+        let system = systemIPs ?? DohBootstrapTransport.systemAddresses(for: host)
+        let ownedCatalog = spec.bootstrapIPs.filter { ip in
+            DohServerCatalog.bootstrapOwnershipWarning(
+                serverURL: spec.url.absoluteString,
+                bootstrapIPs: [ip]
+            ) == nil
+        }
+        let merged = DohBootstrapTransport.resolvedBootstrapAddresses(
+            host: host,
+            catalogIPs: ownedCatalog,
+            systemIPs: system
+        )
+        let ips = orderedBootstrapIPs(merged, preferIPv6: false)
+        guard !ips.isEmpty else { return nil }
+        return ResolverSpec(url: spec.url, bootstrapIPs: ips)
     }
 
     /// Encrypted DNS must not be required until a bootstrap DoH query succeeds.
