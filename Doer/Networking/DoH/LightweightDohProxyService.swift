@@ -134,15 +134,8 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         configurationVersion += 1
         lock.unlock()
 
-        let apply = { [weak self] in
+        runOnStartQueue { [weak self] in
             self?.applyConfiguration(shouldEnable: shouldEnable, generation: generation)
-        }
-        if DispatchQueue.getSpecific(key: Self.startQueueKey) != nil {
-            apply()
-        } else {
-            startQueue.async {
-                apply()
-            }
         }
     }
 
@@ -150,19 +143,22 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     /// flushing a live resolver. A dead loopback listener still restarts.
     func ensureProxyAlive() {
         guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
-        lock.lock()
-        consecutiveStartFailures = 0
-        let isLive = proxy?.isRunning == true
-        lock.unlock()
-        reassertNameResolution(
-            forceFlush: DohProxyLiveness.shouldFlushEncryptedDNSOnEnsureAlive(isLive: isLive)
-        )
-        if isLive {
-            publishAppClients()
-            return
+        runOnStartQueue { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            self.consecutiveStartFailures = 0
+            let isLive = self.proxy?.isRunning == true
+            self.lock.unlock()
+            self.reassertNameResolution(
+                forceFlush: DohProxyLiveness.shouldFlushEncryptedDNSOnEnsureAlive(isLive: isLive)
+            )
+            if isLive {
+                self.publishAppClients()
+                return
+            }
+            DohDebugLog.record("DoH proxy not alive; restarting")
+            self.configureFromSettings()
         }
-        DohDebugLog.record("DoH proxy not alive; restarting")
-        configureFromSettings()
     }
 
     /// Wi‑Fi ↔ cellular and offline→online keep a live loopback listener.
@@ -193,6 +189,14 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         }
         recoverWorkItem = work
         startQueue.asyncAfter(deadline: .now() + 0.8, execute: work)
+    }
+
+    private func runOnStartQueue(_ work: @escaping () -> Void) {
+        if DispatchQueue.getSpecific(key: Self.startQueueKey) != nil {
+            work()
+        } else {
+            startQueue.async(execute: work)
+        }
     }
 
     private func applyConfiguration(shouldEnable: Bool, generation: Int) {

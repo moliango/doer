@@ -17,18 +17,10 @@ public enum DohBootstrapTransport {
             completion(.failure(DohProxyError.bootstrapUnavailable(endpoint.url)))
             return
         }
-        var addresses = endpoint.bootstrapIPs
-        if !DohProxyConfig.looksLikeIPAddress(endpoint.host) {
-            let resolved = systemAddresses(for: endpoint.host)
-            if !resolved.isEmpty {
-                log?("DoH server \(endpoint.host) system DNS -> \(resolved.joined(separator: ", "))")
-                var seen = Set<String>()
-                let merged = (resolved + addresses).filter { seen.insert($0).inserted }
-                let v4 = merged.filter { !$0.contains(":") }
-                let v6 = merged.filter { $0.contains(":") }
-                addresses = v4 + v6
-            }
-        }
+        // Never getaddrinfo the DoH hostname. After Encrypted DNS is on,
+        // system resolution of doh.pub waits on Encrypted DNS which waits
+        // on this bootstrap query (white screen → watchdog).
+        let addresses = connectAddresses(for: endpoint)
         let path = postPath(url: endpoint.url)
         query(
             addresses: addresses,
@@ -197,6 +189,10 @@ public enum DohBootstrapTransport {
         var data = Data(header.utf8)
         data.append(dnsQuery)
         return data
+    }
+
+    public static func connectAddresses(for endpoint: DohEndpoint) -> [String] {
+        endpoint.bootstrapIPs
     }
 
     public static func systemAddresses(for host: String) -> [String] {

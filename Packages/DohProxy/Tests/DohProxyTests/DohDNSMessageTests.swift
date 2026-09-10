@@ -61,4 +61,19 @@ final class DohDNSMessageTests: XCTestCase {
         )
         XCTAssertEqual(endpoint?.bootstrapIPs.first?.contains(":"), true)
     }
+
+    func testConnectAddressesNeverUseSystemDNS() {
+        let endpoint = try XCTUnwrap(
+            DohEndpoint(
+                url: DohServerCatalog.dnsPod.url,
+                bootstrapIPs: DohServerCatalog.dnsPod.bootstrapIPs,
+                preferIPv6: false
+            )
+        )
+        XCTAssertEqual(
+            DohBootstrapTransport.connectAddresses(for: endpoint),
+            endpoint.bootstrapIPs
+        )
+        XCTAssertFalse(endpoint.bootstrapIPs.isEmpty)
+    }
 }

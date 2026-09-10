@@ -22,7 +22,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         UNUserNotificationCenter.current().delegate = self
         APNsPushRegistration.register()
         MitmTrust.installWKWebViewHook()
-        LightweightDohProxyService.shared.configureFromSettings()
+        DispatchQueue.main.async {
+            LightweightDohProxyService.shared.configureFromSettings()
+        }
         AvatarImageLoader.configureGlobalImageLoading()
         // Only wipe caches when the user explicitly enabled "clear on launch".
         // Otherwise process + disk avatar caches persist across launches.

@@ -49,17 +49,15 @@ nonisolated enum EncryptedDnsService {
     private static var lastApplied: ResolverSpec?
 
     static func apply(_ spec: ResolverSpec) {
-        var system: [String] = []
-        if let host = spec.url.host {
-            system = DohBootstrapTransport.systemAddresses(for: host)
+        guard let normalized = normalizedSpec(spec) else {
+            disable()
+            return
         }
-        let ips = mergedBootstrapIPs(locked: spec.bootstrapIPs, system: system)
-        let normalized = ResolverSpec(url: spec.url, bootstrapIPs: ips)
         applyLock.lock()
         let alreadyApplied = lastApplied == normalized
         lastApplied = normalized
         applyLock.unlock()
-        let endpoints = bootstrapEndpoints(ips)
+        let endpoints = bootstrapEndpoints(normalized.bootstrapIPs)
         performOnMain {
             let resolver = NWParameters.PrivacyContext.ResolverConfiguration.https(
                 normalized.url,
@@ -73,9 +71,17 @@ nonisolated enum EncryptedDnsService {
                 NWParameters.PrivacyContext.default.flushCache()
             }
             DohDebugLog.record(
-                "Encrypted DNS on \(normalized.url.absoluteString) bootstrap=\(ips.joined(separator: ","))"
+                "Encrypted DNS on \(normalized.url.absoluteString) bootstrap=\(normalized.bootstrapIPs.joined(separator: ","))"
             )
         }
+    }
+
+    /// Catalog / stored bootstrap IPs only. Never `getaddrinfo` the DoH host —
+    /// that deadlocks once Encrypted DNS is required.
+    static func normalizedSpec(_ spec: ResolverSpec) -> ResolverSpec? {
+        let ips = orderedBootstrapIPs(spec.bootstrapIPs, preferIPv6: false)
+        guard !ips.isEmpty else { return nil }
+        return ResolverSpec(url: spec.url, bootstrapIPs: ips)
     }
 
     /// Locked catalog IPs first. System-resolved extras are only a fallback so
@@ -115,14 +121,10 @@ nonisolated enum EncryptedDnsService {
         }
     }
 
-    /// PrivacyContext is process-wide. Mutating it from the DoH start queue
-    /// while URLSession / WebKit is resolving names aborts on recent iOS.
+    /// Always hop. `requireEncryptedNameResolution` / `getaddrinfo` on the
+    /// scene or launch callback blocks the first frame (white screen).
     private static func performOnMain(_ body: @escaping () -> Void) {
-        if Thread.isMainThread {
-            body()
-        } else {
-            DispatchQueue.main.async(execute: body)
-        }
+        DispatchQueue.main.async(execute: body)
     }
 
     /// Live resolver IPs first, IPv4 before IPv6. Hardcoded anycast like

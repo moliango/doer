@@ -71,4 +71,23 @@ final class EncryptedDnsServiceTests: XCTestCase {
             )
         )
     }
+
+    func testNormalizedSpecKeepsCatalogIPsAndDropsEmpty() throws {
+        let spec = try XCTUnwrap(
+            EncryptedDnsService.spec(
+                urlString: "https://doh.pub/dns-query",
+                providerRaw: AppSettings.DoHProvider.dnspod.rawValue
+            )
+        )
+        let normalized = try XCTUnwrap(EncryptedDnsService.normalizedSpec(spec))
+        XCTAssertEqual(normalized.bootstrapIPs, ["1.12.12.12", "120.53.53.53"])
+        XCTAssertNil(
+            EncryptedDnsService.normalizedSpec(
+                EncryptedDnsService.ResolverSpec(
+                    url: spec.url,
+                    bootstrapIPs: []
+                )
+            )
+        )
+    }
 }
