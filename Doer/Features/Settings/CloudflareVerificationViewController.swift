@@ -99,6 +99,17 @@ enum CloudflareVerificationPolicy {
         return !requiresFreshValue || currentValue != initialValue
     }
 
+    /// WKWebView still needs a blank clearance to show a challenge. The app
+    /// jar must keep the previous token until a fresh value replaces it —
+    /// CONNECT pass-through can RST and leave the user with no shield.
+    static func shouldClearWebViewClearanceBeforeChallenge(requiresFreshValue: Bool) -> Bool {
+        requiresFreshValue
+    }
+
+    static func shouldDeleteJarClearanceBeforeChallenge() -> Bool {
+        false
+    }
+
     static func canCompleteVerification(
         currentValue: String?,
         initialValue: String?,
@@ -446,8 +457,12 @@ final class CloudflareVerificationViewController: UIViewController {
             for: baseURL
         )
         guard generation == preparationGeneration, !Task.isCancelled, !isClosing else { return }
-        if autoDismissOnSuccess {
+        if CloudflareVerificationPolicy.shouldDeleteJarClearanceBeforeChallenge() {
             WebCookieStore.shared.deleteCookie(named: "cf_clearance", for: baseURL)
+        }
+        if CloudflareVerificationPolicy.shouldClearWebViewClearanceBeforeChallenge(
+            requiresFreshValue: autoDismissOnSuccess
+        ) {
             await deleteWebViewCookie(named: "cf_clearance")
         }
         guard generation == preparationGeneration, !Task.isCancelled, !isClosing else { return }

@@ -33,6 +33,16 @@ final class CloudflareRecoveryTests: XCTestCase {
         )
     }
 
+    func testAutomaticVerificationKeepsJarClearanceUntilFreshCookie() {
+        XCTAssertFalse(CloudflareVerificationPolicy.shouldDeleteJarClearanceBeforeChallenge())
+        XCTAssertTrue(
+            CloudflareVerificationPolicy.shouldClearWebViewClearanceBeforeChallenge(requiresFreshValue: true)
+        )
+        XCTAssertFalse(
+            CloudflareVerificationPolicy.shouldClearWebViewClearanceBeforeChallenge(requiresFreshValue: false)
+        )
+    }
+
     func testAutomaticVerificationRequiresFreshClearance() {
         XCTAssertFalse(
             CloudflareVerificationPolicy.hasUsableClearance(
