@@ -7,36 +7,27 @@ PRODUCTS_DIR="${BUILD_DIR}/Build/Products/Release-iphoneos"
 IPA_STAGING_DIR="${BUILD_DIR}/ipa"
 IPA_PATH="${BUILD_DIR}/doer-unsigned.ipa"
 
-XCODEBUILD_COMMON=(
-  -configuration Release
-  -sdk iphoneos
-  -derivedDataPath "${BUILD_DIR}"
-  CODE_SIGNING_ALLOWED=NO
-  CODE_SIGNING_REQUIRED=NO
-  CODE_SIGN_IDENTITY=
-)
-
-build_project_scheme() {
-  local project_path="$1"
-  local scheme="$2"
-
-  echo "==> Building ${scheme}"
-  xcodebuild \
-    -project "${ROOT_DIR}/${project_path}" \
-    -scheme "${scheme}" \
-    "${XCODEBUILD_COMMON[@]}" \
-    build
-}
-
 cd "${ROOT_DIR}"
 
-# Swift packages resolve as part of the app project; no Tuist-derived
-# package xcodeprojs need to be built first.
-build_project_scheme "Doer.xcodeproj" "Doer"
+echo "==> Building Doer"
+xcodebuild \
+  -workspace "${ROOT_DIR}/Doer.xcworkspace" \
+  -scheme Doer \
+  -configuration Release \
+  -sdk iphoneos \
+  -destination 'generic/platform=iOS' \
+  -derivedDataPath "${BUILD_DIR}" \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO \
+  CODE_SIGN_IDENTITY= \
+  DEVELOPMENT_TEAM= \
+  CURRENT_PROJECT_VERSION="${CURRENT_PROJECT_VERSION:-1}" \
+  build
 
 APP_PATH="${PRODUCTS_DIR}/Doer.app"
 if [[ ! -d "${APP_PATH}" ]]; then
   echo "error: app bundle not found at ${APP_PATH}" >&2
+  find "${BUILD_DIR}" -name 'Doer.app' -print >&2 || true
   exit 1
 fi
 

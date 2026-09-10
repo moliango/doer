@@ -20,30 +20,16 @@ jobs:
         uses: jdx/mise-action@v2
 
       - name: Generate Xcode project
-        run: mise x -- tuist install && mise x -- tuist generate
+        run: mise x -- tuist install && mise x -- tuist generate --no-open
 
       - name: Set build number
         id: buildnumber
         run: echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
-      - name: Build unsigned archive
-        run: |
-          xcodebuild archive \
-            -workspace Doer.xcworkspace \
-            -scheme Doer \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -archivePath build/Doer.xcarchive \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            DEVELOPMENT_TEAM="" \
-            CURRENT_PROJECT_VERSION=${{ steps.buildnumber.outputs.build }} | xcpretty
-      - name: Package IPA
-        run: |
-          mkdir -p build/Payload
-          cp -r build/Doer.xcarchive/Products/Applications/Doer.app build/Payload/
-          cd build && zip -r doer-unsigned.ipa Payload
+      - name: Build unsigned IPA
+        env:
+          CURRENT_PROJECT_VERSION: ${{ steps.buildnumber.outputs.build }}
+        run: ./ci_scripts/build_unsigned_ipa.sh
       - name: Read version
         id: version
         run: |
