@@ -24,15 +24,6 @@ XCODEBUILD_ARGS=(
   COMPILER_INDEX_STORE_ENABLE=NO
 )
 
-# GitHub's log looks stuck because SwiftDriverJobDiscovery reprints every file.
-# Skip WMO so swift-nio/BoringSSL does not sit on one huge frontend job.
-if [[ "${CI:-}" == "true" ]]; then
-  XCODEBUILD_ARGS+=(
-    SWIFT_WHOLE_MODULE_OPTIMIZATION=NO
-    SWIFT_COMPILATION_MODE=incremental
-  )
-fi
-
 echo "==> Building Doer"
 if [[ "${CI:-}" == "true" ]]; then
   echo "==> Compiling DoH (swift-nio / BoringSSL); this often takes 15+ minutes"
@@ -50,6 +41,11 @@ skip = (
     "note: Emitting module",
 )
 for line in sys.stdin:
+    lower = line.lower()
+    if "error:" in lower or "fatal error" in lower or "** build" in lower:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        continue
     if any(token in line for token in skip):
         continue
     sys.stdout.write(line)

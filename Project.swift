@@ -13,7 +13,7 @@ let project = Project(
         .local(path: "Packages/DohProxy"),
         .remote(
             url: "https://github.com/Alamofire/Alamofire.git",
-            requirement: .upToNextMajor(from: "5.10.0")
+            requirement: .upToNextMinor(from: "5.11.0")
         ),
         .remote(
             url: "https://github.com/groue/GRDB.swift.git",
