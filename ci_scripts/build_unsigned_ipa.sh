@@ -25,9 +25,11 @@ XCODEBUILD_ARGS=(
 )
 
 echo "==> Building Doer"
+mkdir -p "${BUILD_DIR}"
+XCODEBUILD_LOG="${BUILD_DIR}/xcodebuild.log"
 if [[ "${CI:-}" == "true" ]]; then
   echo "==> Compiling DoH (swift-nio / BoringSSL); this often takes 15+ minutes"
-  xcodebuild "${XCODEBUILD_ARGS[@]}" build 2>&1 | python3 -u -c '
+  if ! xcodebuild "${XCODEBUILD_ARGS[@]}" build 2>&1 | tee "${XCODEBUILD_LOG}" | python3 -u -c '
 import sys
 skip = (
     "SwiftDriverJobDiscovery",
@@ -51,6 +53,11 @@ for line in sys.stdin:
     sys.stdout.write(line)
     sys.stdout.flush()
 '
+  then
+    echo "==> Compiler diagnostics" >&2
+    grep -E "error:|fatal error:" "${XCODEBUILD_LOG}" | head -80 >&2 || true
+    exit 1
+  fi
 else
   xcodebuild "${XCODEBUILD_ARGS[@]}" build
 fi

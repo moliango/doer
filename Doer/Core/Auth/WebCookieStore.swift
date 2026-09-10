@@ -5,17 +5,20 @@ import WebKit
 /// WKHTTPCookieStore must be used on the main thread; do not cancel an in-flight
 /// continuation (TaskGroup cancel + late callback crashes).
 enum WKCookieStoreIO {
-    static let timeoutNanoseconds: UInt64 = 1_200_000_000
+    private static let timeoutNanoseconds: UInt64 = 1_200_000_000
 
     @MainActor
     static func getAllCookies(_ store: WKHTTPCookieStore) async -> [HTTPCookie]? {
-        await withCheckedContinuation { continuation in
-            let once = ResumeOnce<[HTTPCookie]?>()
-            store.getAllCookies { cookies in
-                once.resume(continuation, cookies)
+        let timeout = timeoutNanoseconds
+        let once = ResumeOnce<[HTTPCookie]?>()
+        return await withCheckedContinuation { continuation in
+            Task { @MainActor in
+                store.getAllCookies { cookies in
+                    once.resume(continuation, cookies)
+                }
             }
             Task.detached {
-                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                try? await Task.sleep(nanoseconds: timeout)
                 once.resume(continuation, nil)
             }
         }
@@ -23,13 +26,16 @@ enum WKCookieStoreIO {
 
     @MainActor
     static func setCookie(_ cookie: HTTPCookie, on store: WKHTTPCookieStore) async {
+        let timeout = timeoutNanoseconds
+        let once = ResumeOnce<Void>()
         await withCheckedContinuation { continuation in
-            let once = ResumeOnce<Void>()
-            store.setCookie(cookie) {
-                once.resume(continuation, ())
+            Task { @MainActor in
+                store.setCookie(cookie) {
+                    once.resume(continuation, ())
+                }
             }
             Task.detached {
-                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                try? await Task.sleep(nanoseconds: timeout)
                 once.resume(continuation, ())
             }
         }
@@ -37,20 +43,25 @@ enum WKCookieStoreIO {
 
     @MainActor
     static func deleteCookie(_ cookie: HTTPCookie, on store: WKHTTPCookieStore) async {
+        let timeout = timeoutNanoseconds
+        let once = ResumeOnce<Void>()
         await withCheckedContinuation { continuation in
-            let once = ResumeOnce<Void>()
-            store.delete(cookie) {
-                once.resume(continuation, ())
+            Task { @MainActor in
+                store.delete(cookie) {
+                    once.resume(continuation, ())
+                }
             }
             Task.detached {
-                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                try? await Task.sleep(nanoseconds: timeout)
                 once.resume(continuation, ())
             }
         }
     }
 }
 
-private final class ResumeOnce<Value>: @unchecked Sendable {
+/// Must stay off the default MainActor isolation so the timeout Task can resume
+/// if WebKit has already wedged the main thread.
+nonisolated private final class ResumeOnce<Value>: @unchecked Sendable {
     private let lock = NSLock()
     private var didResume = false
 
