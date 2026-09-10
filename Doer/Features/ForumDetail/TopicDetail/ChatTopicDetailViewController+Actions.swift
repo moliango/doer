@@ -1,3 +1,4 @@
+import CookedHTML
 import UIKit
 
 extension ChatTopicDetailViewController {
