@@ -49,6 +49,17 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         static func shouldFlushEncryptedDNSOnEnsureAlive(isLive: Bool) -> Bool {
             !isLive
         }
+
+        /// API/Alamofire must use CONNECT pass-through even before origin ECH
+        /// exists. Apple Encrypted DNS is HTTP/2 GET and stalls on the same
+        /// Cloudflare-hosted DoH that bootstrap POST (http/1.1) already proved.
+        static func shouldAttachConnectProxy(
+            enabled: Bool,
+            useGateway: Bool,
+            port: UInt16?
+        ) -> Bool {
+            enabled && !useGateway && port != nil
+        }
     }
 
     var currentSignature: String {
@@ -152,6 +163,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             self.reassertNameResolution()
             if isLive {
                 self.publishAppClients()
+                self.notifyRecovered()
                 return
             }
             DohDebugLog.record("DoH proxy not alive; restarting")
@@ -219,22 +231,11 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             DohDebugLog.record(
                 "DoH starting \(config.serverURL) bootstrap=\(config.bootstrapIPs.joined(separator: ","))"
             )
-            if LocalConnectProxy.originECHReady {
-                EncryptedDnsService.disable()
-                stop(clearError: false)
-                startWebViewProxyNow()
-            } else {
-                stop(clearError: false)
-                if let spec = EncryptedDnsService.spec(fromDefaults: .standard) {
-                    EncryptedDnsService.apply(spec)
-                    prewarmForumDNS()
-                } else {
-                    EncryptedDnsService.disable()
-                    DohDebugLog.record("Encrypted DNS skipped: no bootstrap IPs")
-                }
-                startWebViewProxyNow()
-                DohDebugLog.record("DoH Encrypted DNS + CONNECT pass-through for WKWebView")
-            }
+            EncryptedDnsService.disable()
+            stop(clearError: false)
+            startWebViewProxyNow()
+            prewarmForumDNS()
+            DohDebugLog.record("DoH CONNECT pass-through for URLSession and WKWebView")
         } else {
             lock.lock()
             lastError = nil
@@ -287,6 +288,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             self.configurationVersion += 1
             self.lock.unlock()
             self.publishAppClients()
+            self.notifyRecovered()
         }
         newProxy.onFailed = { [weak self, weak newProxy] error in
             guard let self else { return }
@@ -320,11 +322,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     }
 
     private func reassertNameResolution() {
-        if LocalConnectProxy.originECHReady {
-            EncryptedDnsService.disable()
-            return
-        }
-        EncryptedDnsService.reassertFromDefaults()
+        EncryptedDnsService.disable()
     }
 
     private func prewarmForumDNS() {
@@ -476,12 +474,10 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         return config.connectionProxyDictionary
     }
 
-    /// Attach the local proxy. Gateway API sessions skip CONNECT so they can
-    /// speak plaintext HTTP to 127.0.0.1 (excepted from the proxy list).
-    ///
-    /// API/Alamofire only uses CONNECT when ECH/MITM is ready. Pass-through
-    /// CONNECT to Cloudflare anycast often gets TLS RST; Encrypted DNS stays
-    /// the URLSession path until MITM can inject ECH.
+    /// Attach the local CONNECT proxy so URLSession uses bootstrap DoH
+    /// (HTTP/1.1 POST) instead of Apple Encrypted DNS (HTTP/2 GET).
+    /// Gateway API sessions skip CONNECT so they can speak plaintext HTTP
+    /// to 127.0.0.1 (excepted from the proxy list).
     func apply(
         to sessionConfiguration: URLSessionConfiguration,
         hostURL: String? = nil,
@@ -490,7 +486,12 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         let enabled = UserDefaults.standard.bool(forKey: "dohEnabled")
         let config = AppSettings.dohProxyConfig(from: .standard)
         let useGateway = preferGateway && config.isGatewayMode && LocalConnectProxy.originECHReady
-        guard enabled, LocalConnectProxy.originECHReady, !useGateway, let port = ensureRunning() else {
+        let port = ensureRunning()
+        guard DohProxyLiveness.shouldAttachConnectProxy(
+            enabled: enabled,
+            useGateway: useGateway,
+            port: port
+        ), let port else {
             clearProxy(on: sessionConfiguration)
             return
         }

@@ -103,11 +103,12 @@ nonisolated enum EncryptedDnsService {
         return ResolverSpec(url: spec.url, bootstrapIPs: ips)
     }
 
-    /// Encrypted DNS must not be required until a bootstrap DoH query succeeds.
-    /// Otherwise URLSession hangs on name resolution while the DoH IP is dead.
+    /// Apple Encrypted DNS is HTTP/2 GET. In-app bootstrap is HTTP/1.1 POST
+    /// because Cloudflare-hosted custom DoH stalls on h2. URLSession must use
+    /// CONNECT pass-through instead of requiring Encrypted DNS.
     enum Activation {
         static func shouldRequireEncryptedDNS(bootstrapSucceeded: Bool) -> Bool {
-            bootstrapSucceeded
+            false
         }
     }
 

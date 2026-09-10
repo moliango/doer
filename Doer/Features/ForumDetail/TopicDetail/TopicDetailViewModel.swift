@@ -1439,7 +1439,10 @@ final class TopicDetailViewModel: DoerObservableObject {
             DohDebugLog.record("by_number topic=\(topicId) elapsedMs=\(ms)", subsystem: "topic.firstpaint")
             await applyEarlyOpeningPost(post, generation: generation)
         } catch {
-            DohDebugLog.record("by_number topic=\(topicId) failed", subsystem: "topic.firstpaint")
+            DohDebugLog.record(
+                "by_number topic=\(topicId) failed \(error.localizedDescription)",
+                subsystem: "topic.firstpaint"
+            )
         }
     }
 

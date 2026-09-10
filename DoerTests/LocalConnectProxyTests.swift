@@ -67,6 +67,36 @@ final class LocalConnectProxyTests: XCTestCase {
         XCTAssertTrue(
             LightweightDohProxyService.DohProxyLiveness.shouldFlushEncryptedDNSOnEnsureAlive(isLive: false)
         )
+        XCTAssertTrue(
+            LightweightDohProxyService.DohProxyLiveness.shouldAttachConnectProxy(
+                enabled: true,
+                useGateway: false,
+                port: 51981
+            )
+        )
+        XCTAssertFalse(
+            LightweightDohProxyService.DohProxyLiveness.shouldAttachConnectProxy(
+                enabled: true,
+                useGateway: false,
+                port: nil
+            )
+        )
+        XCTAssertFalse(
+            LightweightDohProxyService.DohProxyLiveness.shouldAttachConnectProxy(
+                enabled: true,
+                useGateway: true,
+                port: 51981
+            )
+        )
+        XCTAssertFalse(
+            LightweightDohProxyService.DohProxyLiveness.shouldAttachConnectProxy(
+                enabled: false,
+                useGateway: false,
+                port: 51981
+            )
+        )
+        XCTAssertFalse(EncryptedDnsService.Activation.shouldRequireEncryptedDNS(bootstrapSucceeded: true))
+        XCTAssertFalse(EncryptedDnsService.Activation.shouldRequireEncryptedDNS(bootstrapSucceeded: false))
     }
 
     func testDoHProbeResultSubtitleIncludesLatencyAndIPs() {
