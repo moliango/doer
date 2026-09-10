@@ -55,8 +55,11 @@ nonisolated enum EncryptedDnsService {
         }
         applyLock.lock()
         let alreadyApplied = lastApplied == normalized
-        lastApplied = normalized
+        if !alreadyApplied {
+            lastApplied = normalized
+        }
         applyLock.unlock()
+        if alreadyApplied { return }
         let endpoints = bootstrapEndpoints(normalized.bootstrapIPs)
         performOnMain {
             let resolver = NWParameters.PrivacyContext.ResolverConfiguration.https(
@@ -67,12 +70,18 @@ nonisolated enum EncryptedDnsService {
                 true,
                 fallbackResolver: resolver
             )
-            if !alreadyApplied {
-                NWParameters.PrivacyContext.default.flushCache()
-            }
+            NWParameters.PrivacyContext.default.flushCache()
             DohDebugLog.record(
                 "Encrypted DNS on \(normalized.url.absoluteString) bootstrap=\(normalized.bootstrapIPs.joined(separator: ","))"
             )
+        }
+    }
+
+    /// Encrypted DNS must not be required until a bootstrap DoH query succeeds.
+    /// Otherwise URLSession hangs on name resolution while the DoH IP is dead.
+    enum Activation {
+        static func shouldRequireEncryptedDNS(bootstrapSucceeded: Bool) -> Bool {
+            bootstrapSucceeded
         }
     }
 

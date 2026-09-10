@@ -90,4 +90,9 @@ final class EncryptedDnsServiceTests: XCTestCase {
             )
         )
     }
+
+    func testEncryptedDNSWaitsForSuccessfulBootstrap() {
+        XCTAssertFalse(EncryptedDnsService.Activation.shouldRequireEncryptedDNS(bootstrapSucceeded: false))
+        XCTAssertTrue(EncryptedDnsService.Activation.shouldRequireEncryptedDNS(bootstrapSucceeded: true))
+    }
 }
