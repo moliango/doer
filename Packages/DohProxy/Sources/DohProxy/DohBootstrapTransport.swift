@@ -17,10 +17,20 @@ public enum DohBootstrapTransport {
             completion(.failure(DohProxyError.bootstrapUnavailable(endpoint.url)))
             return
         }
-        // Never getaddrinfo the DoH hostname. After Encrypted DNS is on,
-        // system resolution of doh.pub waits on Encrypted DNS which waits
-        // on this bootstrap query (white screen → watchdog).
-        let addresses = connectAddresses(for: endpoint)
+        // Same merge as v1.8.3: system DNS IPs first, then catalog.
+        // Encrypted DNS must be off so getaddrinfo is real system DNS.
+        var systemIPs: [String] = []
+        if !DohProxyConfig.looksLikeIPAddress(endpoint.host) {
+            systemIPs = systemAddresses(for: endpoint.host)
+            if !systemIPs.isEmpty {
+                log?("DoH server \(endpoint.host) system DNS -> \(systemIPs.joined(separator: ", "))")
+            }
+        }
+        let addresses = resolvedBootstrapAddresses(
+            host: endpoint.host,
+            catalogIPs: endpoint.bootstrapIPs,
+            systemIPs: systemIPs
+        )
         let path = postPath(url: endpoint.url)
         query(
             addresses: addresses,
@@ -51,7 +61,8 @@ public enum DohBootstrapTransport {
 
         let ip = addresses[index]
         let parameters = connectionParameters(serverHost: serverHost)
-        let connection = NWConnection(host: endpointHost(ip), port: port, using: parameters)
+        let endpoint = NWEndpoint.hostPort(host: endpointHost(ip), port: port)
+        let connection = NWConnection(to: endpoint, using: parameters)
         log?("bootstrap connect \(ip) SNI=\(serverHost)")
         let timeout = DispatchWorkItem {
             log?("bootstrap timeout \(ip)")
@@ -134,6 +145,10 @@ public enum DohBootstrapTransport {
 
         connection.stateUpdateHandler = { state in
             switch state {
+            case .setup:
+                log?("bootstrap setup \(ip)")
+            case .preparing:
+                log?("bootstrap preparing \(ip)")
             case .waiting(let error):
                 log?("bootstrap waiting \(ip): \(error)")
             case .ready:
@@ -207,7 +222,30 @@ public enum DohBootstrapTransport {
     }
 
     public static func connectAddresses(for endpoint: DohEndpoint) -> [String] {
-        endpoint.bootstrapIPs
+        resolvedBootstrapAddresses(
+            host: endpoint.host,
+            catalogIPs: endpoint.bootstrapIPs,
+            systemIPs: []
+        )
+    }
+
+    /// v1.8.3 order: live system IPs first, catalog anycast as fallback, IPv4 first.
+    public static func resolvedBootstrapAddresses(
+        host: String,
+        catalogIPs: [String],
+        systemIPs: [String]
+    ) -> [String] {
+        let merged: [String]
+        if DohProxyConfig.looksLikeIPAddress(host) || systemIPs.isEmpty {
+            merged = catalogIPs
+        } else {
+            var seen = Set<String>()
+            merged = (systemIPs + catalogIPs).filter { seen.insert($0).inserted }
+        }
+        let v4 = merged.filter { !$0.contains(":") }
+        let v6 = merged.filter { $0.contains(":") }
+        if !v4.isEmpty { return v4 + v6 }
+        return v6
     }
 
     public static func systemAddresses(for host: String) -> [String] {

@@ -16,6 +16,21 @@ public struct DohCacheStats: Equatable, Sendable {
     public var echNegative: Int
 }
 
+public enum DohBootstrapQueryPlan {
+    /// China paths often black-hole extra TLS. Probe A first; AAAA/HTTPS
+    /// only when the user opted into IPv6 or h2 MITM/ECH.
+    public static func extraRecordTypes(preferIPv6: Bool, includeHTTPS: Bool) -> [UInt16] {
+        var types: [UInt16] = []
+        if preferIPv6 {
+            types.append(DohDNSMessage.typeAAAA)
+        }
+        if includeHTTPS {
+            types.append(DohDNSMessage.typeHTTPS)
+        }
+        return types
+    }
+}
+
 public final class DohBootstrapResolver: @unchecked Sendable {
     public static let stickyTTL: TimeInterval = 600
     public static let penaltyTTL: TimeInterval = 120
@@ -185,8 +200,13 @@ public final class DohBootstrapResolver: @unchecked Sendable {
         }
 
         addQuery(endpoint: dns, type: DohDNSMessage.typeA)
-        addQuery(endpoint: dns, type: DohDNSMessage.typeAAAA)
-        addQuery(endpoint: ech, type: DohDNSMessage.typeHTTPS)
+        for type in DohBootstrapQueryPlan.extraRecordTypes(
+            preferIPv6: config.preferIPv6,
+            includeHTTPS: config.h2Mitm
+        ) {
+            let endpoint = type == DohDNSMessage.typeHTTPS ? ech : dns
+            addQuery(endpoint: endpoint, type: type)
+        }
 
         group.notify(queue: queue) {
             let unique = Self.unique(addresses)

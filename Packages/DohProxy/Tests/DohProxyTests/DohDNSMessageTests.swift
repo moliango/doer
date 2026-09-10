@@ -77,6 +77,36 @@ final class DohDNSMessageTests: XCTestCase {
         XCTAssertFalse(endpoint.bootstrapIPs.isEmpty)
     }
 
+    func testResolvedBootstrapAddressesPreferSystemIPsLikeV183() {
+        XCTAssertEqual(
+            DohBootstrapTransport.resolvedBootstrapAddresses(
+                host: "dns.alidns.com",
+                catalogIPs: ["223.5.5.5", "223.6.6.6"],
+                systemIPs: ["203.107.1.1", "223.5.5.5"]
+            ),
+            ["203.107.1.1", "223.5.5.5", "223.6.6.6"]
+        )
+        XCTAssertEqual(
+            DohBootstrapTransport.resolvedBootstrapAddresses(
+                host: "223.5.5.5",
+                catalogIPs: ["223.5.5.5"],
+                systemIPs: ["1.2.3.4"]
+            ),
+            ["223.5.5.5"]
+        )
+    }
+
+    func testBootstrapQueryPlanSkipsAAAAAndHTTPSByDefault() {
+        XCTAssertEqual(
+            DohBootstrapQueryPlan.extraRecordTypes(preferIPv6: false, includeHTTPS: false),
+            []
+        )
+        XCTAssertEqual(
+            DohBootstrapQueryPlan.extraRecordTypes(preferIPv6: true, includeHTTPS: true),
+            [DohDNSMessage.typeAAAA, DohDNSMessage.typeHTTPS]
+        )
+    }
+
     func testBootstrapConnectTimeoutAllowsSlowChinaPaths() {
         XCTAssertEqual(DohBootstrapTransport.connectTimeout, 8)
         let parameters = DohBootstrapTransport.connectionParameters(serverHost: "doh.pub")

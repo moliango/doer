@@ -49,9 +49,17 @@ nonisolated enum EncryptedDnsService {
     private static var lastApplied: ResolverSpec?
 
     static func apply(_ spec: ResolverSpec) {
-        guard let normalized = normalizedSpec(spec) else {
+        guard var normalized = normalizedSpec(spec) else {
             disable()
             return
+        }
+        if let host = spec.url.host {
+            let system = DohBootstrapTransport.systemAddresses(for: host)
+            normalized.bootstrapIPs = DohBootstrapTransport.resolvedBootstrapAddresses(
+                host: host,
+                catalogIPs: normalized.bootstrapIPs,
+                systemIPs: system
+            )
         }
         applyLock.lock()
         let alreadyApplied = lastApplied == normalized
@@ -114,13 +122,18 @@ nonisolated enum EncryptedDnsService {
         applyLock.lock()
         lastApplied = nil
         applyLock.unlock()
-        performOnMain {
+        let work = {
             NWParameters.PrivacyContext.default.requireEncryptedNameResolution(
                 false,
                 fallbackResolver: nil
             )
             NWParameters.PrivacyContext.default.flushCache()
             DohDebugLog.record("Encrypted DNS off")
+        }
+        if Thread.isMainThread {
+            work()
+        } else {
+            DispatchQueue.main.sync(execute: work)
         }
     }
 
