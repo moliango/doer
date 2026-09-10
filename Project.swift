@@ -6,7 +6,12 @@ let project = Project(
     name: "Doer",
     options: .options(
         defaultKnownRegions: ["en", "zh-Hans", "zh-Hant", "zh-HK"],
-        developmentRegion: "en"
+        developmentRegion: "en",
+        // Tuist 4.206 emits `class …: Sendable` accessors. With
+        // SWIFT_DEFAULT_ACTOR_ISOLATION=MainActor, Xcode 26.6 fails
+        // SwiftCompile on those generated files. The app does not use them.
+        disableBundleAccessors: true,
+        disableSynthesizedResourceAccessors: true
     ),
     packages: [
         .local(path: "Packages/CookedHTML"),
