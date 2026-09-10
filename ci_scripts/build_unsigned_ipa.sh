@@ -9,20 +9,55 @@ IPA_PATH="${BUILD_DIR}/doer-unsigned.ipa"
 
 cd "${ROOT_DIR}"
 
+XCODEBUILD_ARGS=(
+  -workspace "${ROOT_DIR}/Doer.xcworkspace"
+  -scheme Doer
+  -configuration Release
+  -sdk iphoneos
+  -destination 'generic/platform=iOS'
+  -derivedDataPath "${BUILD_DIR}"
+  CODE_SIGNING_ALLOWED=NO
+  CODE_SIGNING_REQUIRED=NO
+  CODE_SIGN_IDENTITY=
+  DEVELOPMENT_TEAM=
+  CURRENT_PROJECT_VERSION="${CURRENT_PROJECT_VERSION:-1}"
+  COMPILER_INDEX_STORE_ENABLE=NO
+)
+
+# GitHub's log looks stuck because SwiftDriverJobDiscovery reprints every file.
+# Skip WMO so swift-nio/BoringSSL does not sit on one huge frontend job.
+if [[ "${CI:-}" == "true" ]]; then
+  XCODEBUILD_ARGS+=(
+    SWIFT_WHOLE_MODULE_OPTIMIZATION=NO
+    SWIFT_COMPILATION_MODE=incremental
+  )
+fi
+
 echo "==> Building Doer"
-xcodebuild \
-  -workspace "${ROOT_DIR}/Doer.xcworkspace" \
-  -scheme Doer \
-  -configuration Release \
-  -sdk iphoneos \
-  -destination 'generic/platform=iOS' \
-  -derivedDataPath "${BUILD_DIR}" \
-  CODE_SIGNING_ALLOWED=NO \
-  CODE_SIGNING_REQUIRED=NO \
-  CODE_SIGN_IDENTITY= \
-  DEVELOPMENT_TEAM= \
-  CURRENT_PROJECT_VERSION="${CURRENT_PROJECT_VERSION:-1}" \
-  build
+if [[ "${CI:-}" == "true" ]]; then
+  echo "==> Compiling DoH (swift-nio / BoringSSL); this often takes 15+ minutes"
+  xcodebuild "${XCODEBUILD_ARGS[@]}" build 2>&1 | python3 -u -c '
+import sys
+skip = (
+    "SwiftDriverJobDiscovery",
+    "SwiftExplicitDependencyGeneratePcm",
+    "builtin-Swift-Compilation",
+    "builtin-SwiftDriver",
+    "builtin-copy",
+    "builtin-swiftHeaderTool",
+    "appintentsmetadataprocessor",
+    "Constructing build description",
+    "note: Emitting module",
+)
+for line in sys.stdin:
+    if any(token in line for token in skip):
+        continue
+    sys.stdout.write(line)
+    sys.stdout.flush()
+'
+else
+  xcodebuild "${XCODEBUILD_ARGS[@]}" build
+fi
 
 APP_PATH="${PRODUCTS_DIR}/Doer.app"
 if [[ ! -d "${APP_PATH}" ]]; then

@@ -19,6 +19,14 @@ jobs:
       - name: Install mise
         uses: jdx/mise-action@v2
 
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: build/SourcePackages
+          key: ${{ runner.os }}-spm-${{ hashFiles('.package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
       - name: Generate Xcode project
         run: mise x -- tuist install && mise x -- tuist generate --no-open
 
