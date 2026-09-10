@@ -50,16 +50,7 @@ public enum DohBootstrapTransport {
         }
 
         let ip = addresses[index]
-        let tls = NWProtocolTLS.Options()
-        serverHost.withCString { pointer in
-            sec_protocol_options_set_tls_server_name(tls.securityProtocolOptions, pointer)
-        }
-        "http/1.1".withCString { pointer in
-            sec_protocol_options_add_tls_application_protocol(tls.securityProtocolOptions, pointer)
-        }
-        let tcp = NWProtocolTCP.Options()
-        tcp.noDelay = true
-        let parameters = NWParameters(tls: tls, tcp: tcp)
+        let parameters = connectionParameters(serverHost: serverHost)
         let connection = NWConnection(host: endpointHost(ip), port: port, using: parameters)
         log?("bootstrap connect \(ip) SNI=\(serverHost)")
         let timeout = DispatchWorkItem {
@@ -166,8 +157,32 @@ public enum DohBootstrapTransport {
             }
         }
 
-        queue.asyncAfter(deadline: .now() + 5, execute: timeout)
+        queue.asyncAfter(deadline: .now() + connectTimeout, execute: timeout)
         connection.start(queue: queue)
+    }
+
+    /// Isolated from `PrivacyContext.default`. If Encrypted DNS is required
+    /// app-wide, bootstrap DoH to a literal IP still must not wait on itself.
+    static let connectTimeout: TimeInterval = 8
+
+    static func connectionParameters(serverHost: String) -> NWParameters {
+        let tls = NWProtocolTLS.Options()
+        serverHost.withCString { pointer in
+            sec_protocol_options_set_tls_server_name(tls.securityProtocolOptions, pointer)
+        }
+        "http/1.1".withCString { pointer in
+            sec_protocol_options_add_tls_application_protocol(tls.securityProtocolOptions, pointer)
+        }
+        let tcp = NWProtocolTCP.Options()
+        tcp.noDelay = true
+        let parameters = NWParameters(tls: tls, tcp: tcp)
+        if #available(iOS 16.0, *) {
+            parameters.preferNoProxies = true
+        }
+        let privacy = NWParameters.PrivacyContext(description: "doer.doh.bootstrap")
+        privacy.requireEncryptedNameResolution(false, fallbackResolver: nil)
+        parameters.setPrivacyContext(privacy)
+        return parameters
     }
 
     private static func postPath(url: String) -> String {

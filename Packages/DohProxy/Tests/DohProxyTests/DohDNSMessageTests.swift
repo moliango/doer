@@ -76,4 +76,12 @@ final class DohDNSMessageTests: XCTestCase {
         )
         XCTAssertFalse(endpoint.bootstrapIPs.isEmpty)
     }
+
+    func testBootstrapConnectTimeoutAllowsSlowChinaPaths() {
+        XCTAssertEqual(DohBootstrapTransport.connectTimeout, 8)
+        let parameters = DohBootstrapTransport.connectionParameters(serverHost: "doh.pub")
+        if #available(iOS 16.0, *) {
+            XCTAssertTrue(parameters.preferNoProxies)
+        }
+    }
 }
