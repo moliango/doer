@@ -102,6 +102,10 @@ final class DohDNSMessageTests: XCTestCase {
             []
         )
         XCTAssertEqual(
+            DohBootstrapQueryPlan.extraRecordTypes(preferIPv6: false, includeHTTPS: true),
+            [DohDNSMessage.typeHTTPS]
+        )
+        XCTAssertEqual(
             DohBootstrapQueryPlan.extraRecordTypes(preferIPv6: true, includeHTTPS: true),
             [DohDNSMessage.typeAAAA, DohDNSMessage.typeHTTPS]
         )

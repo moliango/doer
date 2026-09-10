@@ -44,17 +44,28 @@ public enum BoringSSLECH {
     }
 
     private static func sslPointer(from handler: NIOSSLHandler) -> OpaquePointer? {
-        let handlerMirror = Mirror(reflecting: handler)
-        guard let connection = handlerMirror.children.first(where: { $0.label == "connection" })?.value else {
-            return nil
+        sslPointer(in: handler, depth: 0)
+    }
+
+    private static func sslPointer(in value: Any, depth: Int) -> OpaquePointer? {
+        if depth > 6 { return nil }
+        if let pointer = value as? OpaquePointer { return pointer }
+        for child in Mirror(reflecting: value).children {
+            if child.label == "ssl", let pointer = child.value as? OpaquePointer {
+                return pointer
+            }
+            if let pointer = sslPointer(in: child.value, depth: depth + 1) {
+                return pointer
+            }
         }
-        let connectionMirror = Mirror(reflecting: connection)
-        return connectionMirror.children.first(where: { $0.label == "ssl" })?.value as? OpaquePointer
+        return nil
     }
 
     private static func setConfigList(_ ssl: OpaquePointer, _ list: Data) -> Bool {
         typealias Fn = @convention(c) (OpaquePointer?, UnsafePointer<UInt8>?, Int) -> Int32
-        guard let fn: Fn = symbol("CNIOBoringSSL_SSL_set1_ech_config_list") else { return false }
+        let fn: Fn? = symbol("CNIOBoringSSL_SSL_set1_ech_config_list")
+            ?? symbol("SSL_set1_ech_config_list")
+        guard let fn else { return false }
         return list.withUnsafeBytes { raw in
             guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return false }
             return fn(ssl, base, list.count) == 1
