@@ -30,7 +30,9 @@ extension HomeViewController {
 
     func startObservingSettingsChanges() {
         settingsObservationToken = AppSettings.shared.objectWillChange.sink { [weak self] in
-            self?.handleSettingsChanged()
+            Task { @MainActor [weak self] in
+                self?.handleSettingsChanged()
+            }
         }
     }
 

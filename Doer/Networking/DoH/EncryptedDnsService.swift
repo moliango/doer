@@ -60,20 +60,22 @@ nonisolated enum EncryptedDnsService {
         lastApplied = normalized
         applyLock.unlock()
         let endpoints = bootstrapEndpoints(ips)
-        let resolver = NWParameters.PrivacyContext.ResolverConfiguration.https(
-            normalized.url,
-            serverAddresses: endpoints
-        )
-        NWParameters.PrivacyContext.default.requireEncryptedNameResolution(
-            true,
-            fallbackResolver: resolver
-        )
-        if !alreadyApplied {
-            NWParameters.PrivacyContext.default.flushCache()
+        performOnMain {
+            let resolver = NWParameters.PrivacyContext.ResolverConfiguration.https(
+                normalized.url,
+                serverAddresses: endpoints
+            )
+            NWParameters.PrivacyContext.default.requireEncryptedNameResolution(
+                true,
+                fallbackResolver: resolver
+            )
+            if !alreadyApplied {
+                NWParameters.PrivacyContext.default.flushCache()
+            }
+            DohDebugLog.record(
+                "Encrypted DNS on \(normalized.url.absoluteString) bootstrap=\(ips.joined(separator: ","))"
+            )
         }
-        DohDebugLog.record(
-            "Encrypted DNS on \(normalized.url.absoluteString) bootstrap=\(ips.joined(separator: ","))"
-        )
     }
 
     /// Locked catalog IPs first. System-resolved extras are only a fallback so
@@ -97,12 +99,30 @@ nonisolated enum EncryptedDnsService {
         applyLock.lock()
         lastApplied = nil
         applyLock.unlock()
-        NWParameters.PrivacyContext.default.requireEncryptedNameResolution(
-            false,
-            fallbackResolver: nil
-        )
-        NWParameters.PrivacyContext.default.flushCache()
-        DohDebugLog.record("Encrypted DNS off")
+        performOnMain {
+            NWParameters.PrivacyContext.default.requireEncryptedNameResolution(
+                false,
+                fallbackResolver: nil
+            )
+            NWParameters.PrivacyContext.default.flushCache()
+            DohDebugLog.record("Encrypted DNS off")
+        }
+    }
+
+    static func flushCache() {
+        performOnMain {
+            NWParameters.PrivacyContext.default.flushCache()
+        }
+    }
+
+    /// PrivacyContext is process-wide. Mutating it from the DoH start queue
+    /// while URLSession / WebKit is resolving names aborts on recent iOS.
+    private static func performOnMain(_ body: @escaping () -> Void) {
+        if Thread.isMainThread {
+            body()
+        } else {
+            DispatchQueue.main.async(execute: body)
+        }
     }
 
     /// Live resolver IPs first, IPv4 before IPv6. Hardcoded anycast like

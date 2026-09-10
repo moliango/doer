@@ -205,6 +205,7 @@ class ObservableViewController: UIViewController {
     private var observedObjects: [ObjectIdentifier: DoerObservableObject] = [:]
     private var observationCancellables = Set<AnyCancellable>()
     private var isObserving = false
+    private var pendingUIUpdate = false
 
     func updateUI() {
         // Subclasses override this to bind observable state to UI.
@@ -233,9 +234,23 @@ class ObservableViewController: UIViewController {
     private func subscribe(to object: DoerObservableObject) {
         object.objectWillChange
             .sink { [weak self] in
-                self?.updateUI()
+                self?.scheduleUpdateUI()
             }
             .store(in: &observationCancellables)
+    }
+
+    /// Do not rebuild the hierarchy inside a UISwitch callback. `notifyChanged`
+    /// is synchronous; tearing out the switch while UIKit is still delivering
+    /// `.valueChanged` crashes (DoH toggle on the network settings screen).
+    private func scheduleUpdateUI() {
+        guard !pendingUIUpdate else { return }
+        pendingUIUpdate = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pendingUIUpdate = false
+            guard self.isObserving else { return }
+            self.updateUI()
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {

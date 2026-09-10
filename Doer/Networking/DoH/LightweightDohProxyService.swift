@@ -399,7 +399,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
 
     func clearCache() {
         resolver.clearCache()
-        NWParameters.PrivacyContext.default.flushCache()
+        EncryptedDnsService.flushCache()
     }
 
     func resolverCacheStats() -> DohCacheStats {

@@ -441,7 +441,7 @@ final class ObservableInfrastructureTests: XCTestCase {
         XCTAssertEqual(secondUpdateCount, 0)
     }
 
-    func testObservableViewControllerOnlyUpdatesForRegisteredObjects() {
+    func testObservableViewControllerOnlyUpdatesForRegisteredObjects() async {
         let observed = DoerObservableObject()
         let unrelated = DoerObservableObject()
         let controller = TrackingObservableViewController()
@@ -452,13 +452,16 @@ final class ObservableInfrastructureTests: XCTestCase {
         XCTAssertEqual(controller.updateCount, 1)
 
         unrelated.notifyChanged()
+        await flushMainQueue()
         XCTAssertEqual(controller.updateCount, 1)
 
         observed.notifyChanged()
+        XCTAssertEqual(controller.updateCount, 1, "UISwitch callbacks must not rebuild synchronously")
+        await flushMainQueue()
         XCTAssertEqual(controller.updateCount, 2)
     }
 
-    func testObservableViewControllerStopsUpdatingAfterDisappearing() {
+    func testObservableViewControllerStopsUpdatingAfterDisappearing() async {
         let observed = DoerObservableObject()
         let controller = TrackingObservableViewController()
         controller.observe(observed)
@@ -466,8 +469,17 @@ final class ObservableInfrastructureTests: XCTestCase {
 
         controller.viewWillDisappear(false)
         observed.notifyChanged()
+        await flushMainQueue()
 
         XCTAssertEqual(controller.updateCount, 1)
+    }
+
+    private func flushMainQueue() async {
+        let flushed = expectation(description: "main queue flushed")
+        DispatchQueue.main.async {
+            flushed.fulfill()
+        }
+        await fulfillment(of: [flushed], timeout: 1)
     }
 
     func testNotifyChangedPublishesOnMainThread() async {

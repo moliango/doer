@@ -82,7 +82,6 @@ final class NetworkSettingsViewController: ObservableViewController {
 
     override func updateUI() {
         title = String(localized: "settings.network")
-        rebuildContent()
         refreshDataViews()
     }
 
