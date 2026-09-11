@@ -50,12 +50,26 @@ nonisolated enum EncryptedDnsService {
 
     static func apply(_ spec: ResolverSpec) {
         var ips = spec.bootstrapIPs
+        var system: [String] = []
         if let host = spec.url.host {
-            for ip in DohBootstrapTransport.systemAddresses(for: host) where !ips.contains(ip) {
-                ips.insert(ip, at: 0)
-            }
+            system = DohBootstrapTransport.systemAddresses(for: host)
         }
-        ips = orderedBootstrapIPs(ips, preferIPv6: false)
+        let forum = DohBootstrapTransport.systemAddresses(for: "linux.do")
+        if shouldSkipEncryptedDNS(systemIPs: system, forumIPs: forum) {
+            let fake = (system + forum).filter(isTunnelFakeIP).prefix(2).joined(separator: ",")
+            disable()
+            DohDebugLog.record("Encrypted DNS skipped: fake-ip \(fake)")
+            return
+        }
+        for ip in system where !ips.contains(ip) && !isTunnelFakeIP(ip) {
+            ips.insert(ip, at: 0)
+        }
+        ips = usableBootstrapIPs(ips)
+        guard !ips.isEmpty else {
+            disable()
+            DohDebugLog.record("Encrypted DNS skipped: no bootstrap IPs")
+            return
+        }
         let normalized = ResolverSpec(url: spec.url, bootstrapIPs: ips)
         applyLock.lock()
         let alreadyApplied = lastApplied == normalized
@@ -97,6 +111,24 @@ nonisolated enum EncryptedDnsService {
         )
         NWParameters.PrivacyContext.default.flushCache()
         DohDebugLog.record("Encrypted DNS off")
+    }
+
+    /// Clash / Surge fake-ip (198.18.0.0/15). Encrypted DNS must not use these
+    /// as bootstrap or steal URLSession from the tunnel — that surfaces as
+    /// `SSL错误，无法建立与该服务器的安全连接`.
+    static func isTunnelFakeIP(_ ip: String) -> Bool {
+        guard let v4 = IPv4Address(ip) else { return false }
+        let bytes = [UInt8](v4.rawValue)
+        guard bytes.count >= 2 else { return false }
+        return bytes[0] == 198 && (bytes[1] == 18 || bytes[1] == 19)
+    }
+
+    static func shouldSkipEncryptedDNS(systemIPs: [String], forumIPs: [String] = []) -> Bool {
+        systemIPs.contains(where: isTunnelFakeIP) || forumIPs.contains(where: isTunnelFakeIP)
+    }
+
+    static func usableBootstrapIPs(_ ips: [String]) -> [String] {
+        orderedBootstrapIPs(ips.filter { !isTunnelFakeIP($0) }, preferIPv6: false)
     }
 
     /// Live resolver IPs first, IPv4 before IPv6. Hardcoded anycast like

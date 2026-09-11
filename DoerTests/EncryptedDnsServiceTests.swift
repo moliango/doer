@@ -47,6 +47,38 @@ final class EncryptedDnsServiceTests: XCTestCase {
         XCTAssertTrue(locked.contains("1.1.1.1"))
     }
 
+    func testClashFakeIPIsNotUsableBootstrap() {
+        XCTAssertTrue(EncryptedDnsService.isTunnelFakeIP("198.18.10.184"))
+        XCTAssertTrue(EncryptedDnsService.isTunnelFakeIP("198.19.0.1"))
+        XCTAssertFalse(EncryptedDnsService.isTunnelFakeIP("104.21.16.56"))
+        XCTAssertEqual(
+            EncryptedDnsService.usableBootstrapIPs([
+                "198.18.10.184",
+                "119.29.29.29",
+                "104.21.16.56",
+            ]),
+            ["119.29.29.29", "104.21.16.56"]
+        )
+        XCTAssertTrue(
+            EncryptedDnsService.shouldSkipEncryptedDNS(
+                systemIPs: ["198.18.10.184"],
+                forumIPs: []
+            )
+        )
+        XCTAssertTrue(
+            EncryptedDnsService.shouldSkipEncryptedDNS(
+                systemIPs: ["104.21.16.56"],
+                forumIPs: ["198.18.0.1"]
+            )
+        )
+        XCTAssertFalse(
+            EncryptedDnsService.shouldSkipEncryptedDNS(
+                systemIPs: ["104.21.16.56", "172.67.210.33"],
+                forumIPs: ["172.66.166.61"]
+            )
+        )
+    }
+
     func testRejectsNonHTTPSURL() {
         XCTAssertNil(
             EncryptedDnsService.spec(
