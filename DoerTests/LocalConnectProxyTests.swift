@@ -94,6 +94,17 @@ final class LocalConnectProxyTests: XCTestCase {
         LocalConnectProxy.originECHReady = previous
     }
 
+    func testGatewayRewriteKeepsHostAndLoopback() throws {
+        let original = URLRequest(url: try XCTUnwrap(URL(string: "https://linux.do/t/1.json?page=2")))
+        let rewritten = try XCTUnwrap(DohGatewayRewrite.rewrite(original, port: 51997))
+        XCTAssertEqual(rewritten.url?.scheme, "http")
+        XCTAssertEqual(rewritten.url?.host, "127.0.0.1")
+        XCTAssertEqual(rewritten.url?.port, 51997)
+        XCTAssertEqual(rewritten.url?.path, "/t/1.json")
+        XCTAssertEqual(rewritten.url?.query, "page=2")
+        XCTAssertEqual(rewritten.value(forHTTPHeaderField: "Host"), "linux.do")
+    }
+
     func testGatewayInterceptorNoopsWithoutRunningProxy() {
         let interceptor = DohGatewayInterceptor()
         var request = URLRequest(url: URL(string: "https://linux.do/t/1.json")!)

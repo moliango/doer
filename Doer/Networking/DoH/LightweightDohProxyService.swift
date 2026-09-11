@@ -168,6 +168,8 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
                 EncryptedDnsService.disable()
                 stop(clearError: false)
                 startWebViewProxyNow()
+                prewarmForumDNS()
+                DohDebugLog.record("DoH Gateway + origin ECH for URLSession")
             } else {
                 stop(clearError: false)
                 if let spec = EncryptedDnsService.spec(fromDefaults: .standard) {
@@ -313,7 +315,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             switch result {
             case .success(let answer):
                 DohDebugLog.record(
-                    "DoH prewarm linux.do -> \(answer.addresses.prefix(2).joined(separator: ", "))"
+                    "DoH prewarm linux.do -> \(answer.addresses.prefix(2).joined(separator: ", ")) ech=\(answer.echConfig?.count ?? 0)"
                 )
             case .failure(let error):
                 DohDebugLog.record("DoH prewarm linux.do failed: \(error.localizedDescription)")
@@ -483,7 +485,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     private func applyImageDownloaderProxy() {
         let config = SDWebImageDownloader.shared.config.sessionConfiguration
             ?? URLSessionConfiguration.default
-        apply(to: config, hostURL: "https://linux.do", preferGateway: false)
+        apply(to: config, hostURL: "https://linux.do", preferGateway: true)
         SDWebImageDownloader.shared.config.sessionConfiguration = config
     }
 
