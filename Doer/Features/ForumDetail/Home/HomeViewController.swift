@@ -115,7 +115,6 @@ final class HomeViewController: ObservableViewController {
     var didLoadCategoryDrawerTags = false
     /// Observation of app-wide `ConnectivityService` (FluxDo-aligned).
     var connectivityObservationToken: NSObjectProtocol?
-    var dohRecoveryObservationToken: NSObjectProtocol?
     let offlineIndicatorView = OfflineIndicatorView()
 
     var isCategoryDrawerMode: Bool {
@@ -906,9 +905,6 @@ final class HomeViewController: ObservableViewController {
         incomingTopicsRetryTask?.cancel()
         if let connectivityObservationToken {
             NotificationCenter.default.removeObserver(connectivityObservationToken)
-        }
-        if let dohRecoveryObservationToken {
-            NotificationCenter.default.removeObserver(dohRecoveryObservationToken)
         }
     }
 

@@ -120,7 +120,7 @@ enum AvatarImageLoader {
         let diskBytes = cacheLimit.byteCount
         let imageSession = SDWebImageDownloader.shared.config.sessionConfiguration
             ?? URLSessionConfiguration.default
-        LightweightDohProxyService.shared.apply(to: imageSession, preferGateway: true)
+        LightweightDohProxyService.shared.apply(to: imageSession)
         imageSession.httpMaximumConnectionsPerHost = max(6, profile.maxConcurrentDownloads)
         imageSession.waitsForConnectivity = false
         imageSession.timeoutIntervalForRequest = 15
@@ -421,12 +421,10 @@ enum AvatarImageLoader {
     ) -> [SDWebImageContextOption: Any]? {
         var context: [SDWebImageContextOption: Any] = [:]
         let headers = requestHeaders(for: url, cloudflareBaseURL: cloudflareBaseURL)
-        context[SDWebImageContextOption.downloadRequestModifier] = SDWebImageDownloaderRequestModifier { request in
-            var request = request
-            for (field, value) in headers {
-                request.setValue(value, forHTTPHeaderField: field)
-            }
-            return DohGatewayRewrite.applyIfNeeded(request)
+        if !headers.isEmpty {
+            context[SDWebImageContextOption.downloadRequestModifier] = SDWebImageDownloaderRequestModifier(
+                headers: headers
+            )
         }
 
         let responseModifier = SDWebImageDownloaderResponseModifier(block: { response in

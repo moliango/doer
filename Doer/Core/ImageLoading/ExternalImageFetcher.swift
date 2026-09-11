@@ -25,7 +25,7 @@ enum ExternalImageFetcher {
             diskCapacity: 64 * 1024 * 1024,
             diskPath: "doer.external-image-urlcache-v2"
         )
-        LightweightDohProxyService.shared.apply(to: config, preferGateway: true)
+        LightweightDohProxyService.shared.apply(to: config)
         return URLSession(configuration: config)
     }()
 
@@ -137,7 +137,6 @@ enum ExternalImageFetcher {
                     request.setValue(cookie, forHTTPHeaderField: "Cookie")
                 }
             }
-            request = DohGatewayRewrite.applyIfNeeded(request)
 
             let task = session.dataTask(with: request) { data, response, _ in
                 defer { networkSemaphore.signal() }

@@ -106,18 +106,4 @@ public enum DohServerCatalog: Sendable {
         }
         return []
     }
-
-    /// Catalog anycast IPs are only valid for that provider's hostname.
-    /// A custom DoH URL with 119.29.29.29 (dns.pub) will TLS-timeout.
-    public static func bootstrapOwnershipWarning(serverURL: String, bootstrapIPs: [String]) -> String? {
-        let host = URL(string: normalize(serverURL))?.host?.lowercased()
-        guard let host, !host.isEmpty else { return nil }
-        for ip in bootstrapIPs {
-            guard let owner = builtIn.first(where: { $0.bootstrapIPs.contains(ip) }) else { continue }
-            guard let ownerHost = URL(string: owner.url)?.host?.lowercased() else { continue }
-            if host == ownerHost || host.hasSuffix(".\(ownerHost)") { continue }
-            return "bootstrap IP \(ip) belongs to \(owner.name) (\(owner.url)), not \(serverURL)"
-        }
-        return nil
-    }
 }

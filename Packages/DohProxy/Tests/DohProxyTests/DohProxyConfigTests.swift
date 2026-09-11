@@ -87,20 +87,4 @@ final class DohProxyConfigTests: XCTestCase {
         XCTAssertNotEqual(base.signature, ech.signature)
         XCTAssertNotEqual(base.signature, noGateway.signature)
     }
-
-    func testBootstrapOwnershipWarnsWhenIPBelongsToAnotherProvider() {
-        XCTAssertEqual(
-            DohServerCatalog.bootstrapOwnershipWarning(
-                serverURL: "https://ld.ddd.oaifree.com/query-dns",
-                bootstrapIPs: ["119.29.29.29"]
-            ),
-            "bootstrap IP 119.29.29.29 belongs to 腾讯 DNS (https://dns.pub/dns-query), not https://ld.ddd.oaifree.com/query-dns"
-        )
-        XCTAssertNil(
-            DohServerCatalog.bootstrapOwnershipWarning(
-                serverURL: DohServerCatalog.tencent.url,
-                bootstrapIPs: DohServerCatalog.tencent.bootstrapIPs
-            )
-        )
-    }
 }

@@ -61,42 +61,6 @@ final class LocalConnectProxyTests: XCTestCase {
                 isLive: false
             )
         )
-        XCTAssertFalse(
-            LightweightDohProxyService.DohProxyLiveness.shouldFlushEncryptedDNSOnEnsureAlive(isLive: true)
-        )
-        XCTAssertTrue(
-            LightweightDohProxyService.DohProxyLiveness.shouldFlushEncryptedDNSOnEnsureAlive(isLive: false)
-        )
-        XCTAssertTrue(
-            LightweightDohProxyService.DohProxyLiveness.shouldAttachConnectProxy(
-                enabled: true,
-                useGateway: false,
-                port: 51981
-            )
-        )
-        XCTAssertFalse(
-            LightweightDohProxyService.DohProxyLiveness.shouldAttachConnectProxy(
-                enabled: true,
-                useGateway: false,
-                port: nil
-            )
-        )
-        XCTAssertFalse(
-            LightweightDohProxyService.DohProxyLiveness.shouldAttachConnectProxy(
-                enabled: true,
-                useGateway: true,
-                port: 51981
-            )
-        )
-        XCTAssertFalse(
-            LightweightDohProxyService.DohProxyLiveness.shouldAttachConnectProxy(
-                enabled: false,
-                useGateway: false,
-                port: 51981
-            )
-        )
-        XCTAssertFalse(EncryptedDnsService.Activation.shouldRequireEncryptedDNS(bootstrapSucceeded: true))
-        XCTAssertFalse(EncryptedDnsService.Activation.shouldRequireEncryptedDNS(bootstrapSucceeded: false))
     }
 
     func testDoHProbeResultSubtitleIncludesLatencyAndIPs() {
@@ -128,17 +92,6 @@ final class LocalConnectProxyTests: XCTestCase {
         XCTAssertTrue(LocalConnectProxy.shouldMITM("example.com"))
         XCTAssertFalse(LocalConnectProxy.shouldMITM("challenges.cloudflare.com"))
         LocalConnectProxy.originECHReady = previous
-    }
-
-    func testGatewayRewriteKeepsHostAndLoopback() throws {
-        let original = URLRequest(url: try XCTUnwrap(URL(string: "https://linux.do/t/1.json?page=2")))
-        let rewritten = try XCTUnwrap(DohGatewayRewrite.rewrite(original, port: 51981))
-        XCTAssertEqual(rewritten.url?.scheme, "http")
-        XCTAssertEqual(rewritten.url?.host, "127.0.0.1")
-        XCTAssertEqual(rewritten.url?.port, 51981)
-        XCTAssertEqual(rewritten.url?.path, "/t/1.json")
-        XCTAssertEqual(rewritten.url?.query, "page=2")
-        XCTAssertEqual(rewritten.value(forHTTPHeaderField: "Host"), "linux.do")
     }
 
     func testGatewayInterceptorNoopsWithoutRunningProxy() {

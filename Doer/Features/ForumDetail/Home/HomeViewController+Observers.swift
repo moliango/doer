@@ -99,32 +99,13 @@ extension HomeViewController {
                 }
             }
         }
-        if dohRecoveryObservationToken == nil {
-            dohRecoveryObservationToken = NotificationCenter.default.addObserver(
-                forName: LightweightDohProxyService.didRecoverNotification,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    self?.handleDoHRecovered()
-                }
-            }
-        }
     }
 
     func handleConnectivityChanged(isConnected: Bool) {
         applyConnectivityUI(isConnected: isConnected, animated: true)
         guard isConnected else { return }
-        recoverTransportAfterReconnectIfNeeded()
-    }
-
-    func handleDoHRecovered() {
-        guard ConnectivityService.shared.isConnected else { return }
-        recoverTransportAfterReconnectIfNeeded()
-    }
-
-    func recoverTransportAfterReconnectIfNeeded() {
         api.resetSession()
+        LightweightDohProxyService.shared.clearCache()
         guard HomeConnectivityRecoveryPolicy.shouldReloadTopicList(
             topicsEmpty: viewModel.topics.isEmpty,
             hasError: viewModel.errorMessage != nil,
@@ -229,7 +210,7 @@ extension HomeViewController {
 
     func recoverTransportAndReload(resetCategoryMetadata: Bool = false) {
         api.resetSession()
-        LightweightDohProxyService.shared.ensureProxyAlive()
+        LightweightDohProxyService.shared.clearCache()
         reloadTopics(resetCategoryMetadata: resetCategoryMetadata)
     }
 

@@ -67,17 +67,6 @@ final class ConnectivityService {
         return previous != current
     }
 
-    /// Same-interface reconnect (airplane off, Wi‑Fi back) stays `.satisfied`
-    /// with the same transport, so also rebuild after a disconnect blip.
-    nonisolated static func shouldRecoverDoHOnSatisfiedPath(
-        previous: PathTransport?,
-        current: PathTransport,
-        cancelledPendingDisconnect: Bool
-    ) -> Bool {
-        if cancelledPendingDisconnect, previous != nil { return true }
-        return shouldRecoverDoH(previous: previous, current: current)
-    }
-
     // MARK: - Public
 
     func start() {
@@ -130,14 +119,9 @@ final class ConnectivityService {
             return
         }
 
-        let cancelledPendingDisconnect = disconnectDebounceWorkItem != nil
         cancelDisconnectDebounce()
         let transport = PathTransport(path: path)
-        let recoverDoH = Self.shouldRecoverDoHOnSatisfiedPath(
-            previous: lastTransport,
-            current: transport,
-            cancelledPendingDisconnect: cancelledPendingDisconnect
-        )
+        let recoverDoH = Self.shouldRecoverDoH(previous: lastTransport, current: transport)
         lastTransport = transport
 
         if Self.enableServerPing {

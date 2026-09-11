@@ -6,23 +6,18 @@ import WebKit
 
 nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     static let shared = LightweightDohProxyService()
-    static let didRecoverNotification = Notification.Name("DoerDoHDidRecover")
 
     private let lock = NSLock()
     private let resolver = DohResolver()
     private let startQueue = DispatchQueue(label: "doer.doh.proxy-start")
-    private static let startQueueKey = DispatchSpecificKey<Void>()
     private var proxy: LocalConnectProxy?
     private(set) var lastError: Error?
     private(set) var configurationVersion: Int = 0
     private var lastSignature = ""
     private var applyGeneration = 0
     private var consecutiveStartFailures = 0
-    private var recoverWorkItem: DispatchWorkItem?
 
-    private init() {
-        startQueue.setSpecific(key: Self.startQueueKey, value: ())
-    }
+    private init() {}
 
     enum DohProxyLiveness {
         /// Config changed, or DoH is on but the loopback listener is not ready.
@@ -36,30 +31,6 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             if signatureChanged { return true }
             return enabled && !isLive
         }
-
-        /// Offline→online must rebuild Encrypted DNS even if the loopback
-        /// listener still reports running. Toggle off/on works because it
-        /// changes the signature; path restore must force the same rebuild.
-        static func shouldForceRebuildOnReconnect(wasDisconnected: Bool) -> Bool {
-            wasDisconnected
-        }
-
-        /// A live listener already has Encrypted DNS. Flushing PrivacyContext
-        /// on every foreground blanks name resolution until DoH returns.
-        static func shouldFlushEncryptedDNSOnEnsureAlive(isLive: Bool) -> Bool {
-            !isLive
-        }
-
-        /// API/Alamofire must use CONNECT pass-through even before origin ECH
-        /// exists. Apple Encrypted DNS is HTTP/2 GET and stalls on the same
-        /// Cloudflare-hosted DoH that bootstrap POST (http/1.1) already proved.
-        static func shouldAttachConnectProxy(
-            enabled: Bool,
-            useGateway: Bool,
-            port: UInt16?
-        ) -> Bool {
-            enabled && !useGateway && port != nil
-        }
     }
 
     var currentSignature: String {
@@ -72,7 +43,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
 
     var statusDescription: String {
         guard UserDefaults.standard.bool(forKey: "dohEnabled") else {
-            return String(localized: "doh.status.disabled", defaultValue: "未启用")
+            return "未启用"
         }
 
         lock.lock()
@@ -80,32 +51,20 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         lock.unlock()
 
         if let activeError {
-            return String(
-                format: String(localized: "doh.status.start_failed", defaultValue: "启动失败：%@"),
-                activeError.localizedDescription
-            )
+            return "启动失败：\(activeError.localizedDescription)"
         }
         let config = AppSettings.dohProxyConfig(from: .standard)
         guard config.bootstrapReady else {
-            return String(
-                localized: "doh.status.no_bootstrap",
-                defaultValue: "启动失败：DoH 服务器没有 bootstrap IP"
-            )
+            return "启动失败：DoH 服务器没有 bootstrap IP"
         }
         lock.lock()
         let browserReady = proxy?.isRunning == true
         lock.unlock()
         if !LocalConnectProxy.originECHReady {
             if #available(iOS 17.0, *), browserReady {
-                return String(
-                    localized: "doh.status.encrypted_dns_browser",
-                    defaultValue: "应用内 DoH · Encrypted DNS · 浏览器直通"
-                )
+                return "应用内 DoH · Encrypted DNS · 浏览器直通"
             }
-            return String(
-                localized: "doh.status.encrypted_dns",
-                defaultValue: "应用内 DoH · Encrypted DNS"
-            )
+            return "应用内 DoH · Encrypted DNS"
         }
         let mode = config.isGatewayMode ? "Gateway" : "CONNECT MITM"
         let h2 = config.h2Mitm ? " · h2" : ""
@@ -113,17 +72,10 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         let port = proxy?.proxyPort
         lock.unlock()
         let portText = port.map { " · :\($0)" } ?? ""
-        let detail = "\(mode)\(h2)\(portText)"
         if #available(iOS 17.0, *), browserReady {
-            return String(
-                format: String(localized: "doh.status.with_browser", defaultValue: "应用内 DoH · %@ · 浏览器"),
-                detail
-            )
+            return "应用内 DoH · \(mode)\(h2)\(portText) · 浏览器"
         }
-        return String(
-            format: String(localized: "doh.status.running", defaultValue: "应用内 DoH · %@"),
-            detail
-        )
+        return "应用内 DoH · \(mode)\(h2)\(portText)"
     }
 
     func configureFromSettings() {
@@ -145,55 +97,36 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         configurationVersion += 1
         lock.unlock()
 
-        runOnStartQueue { [weak self] in
+        startQueue.async { [weak self] in
             self?.applyConfiguration(shouldEnable: shouldEnable, generation: generation)
         }
     }
 
-    /// FluxDo `ensureProxyAlive`. Resume re-installs Encrypted DNS without
-    /// flushing a live resolver. A dead loopback listener still restarts.
+    /// FluxDo `ensureProxyAlive`. iOS can drop the loopback listener and
+    /// Encrypted DNS PrivacyContext while suspended; resume must restore
+    /// them without requiring a process kill.
     func ensureProxyAlive() {
         guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
-        runOnStartQueue { [weak self] in
-            guard let self else { return }
-            self.lock.lock()
-            self.consecutiveStartFailures = 0
-            let isLive = self.proxy?.isRunning == true
-            self.lock.unlock()
-            self.reassertNameResolution()
-            if isLive {
-                self.publishAppClients()
-                self.notifyRecovered()
-                return
-            }
-            DohDebugLog.record("DoH proxy not alive; restarting")
-            self.configureFromSettings()
+        lock.lock()
+        consecutiveStartFailures = 0
+        let isLive = proxy?.isRunning == true
+        lock.unlock()
+        reassertNameResolution()
+        if isLive {
+            publishAppClients()
+            return
         }
+        DohDebugLog.record("DoH proxy not alive; restarting")
+        configureFromSettings()
     }
 
     /// Wi‑Fi ↔ cellular keeps the path `.satisfied`, so Encrypted DNS and
     /// sticky bootstrap IPs from the previous interface must be rebuilt.
-    /// Match v1.8.4: flush resolver cache and reassert, do not disable Encrypted DNS.
     func recoverAfterPathChange() {
         guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
-        recoverWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
-            DohDebugLog.record("DoH recovering after network path change")
-            self.clearCache()
-            self.ensureProxyAlive()
-        }
-        recoverWorkItem = work
-        startQueue.async(execute: work)
-    }
-
-    private func runOnStartQueue(_ work: @escaping () -> Void) {
-        if DispatchQueue.getSpecific(key: Self.startQueueKey) != nil {
-            work()
-        } else {
-            startQueue.async(execute: work)
-        }
+        DohDebugLog.record("DoH recovering after network path change")
+        clearCache()
+        ensureProxyAlive()
     }
 
     private func applyConfiguration(shouldEnable: Bool, generation: Int) {
@@ -231,11 +164,25 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             DohDebugLog.record(
                 "DoH starting \(config.serverURL) bootstrap=\(config.bootstrapIPs.joined(separator: ","))"
             )
-            EncryptedDnsService.disable()
-            stop(clearError: false)
-            startWebViewProxyNow()
-            prewarmForumDNS()
-            DohDebugLog.record("DoH CONNECT pass-through for URLSession and WKWebView")
+            if LocalConnectProxy.originECHReady {
+                EncryptedDnsService.disable()
+                stop(clearError: false)
+                startWebViewProxyNow()
+            } else {
+                stop(clearError: false)
+                if let spec = EncryptedDnsService.spec(fromDefaults: .standard) {
+                    EncryptedDnsService.apply(spec)
+                    prewarmForumDNS()
+                } else {
+                    EncryptedDnsService.disable()
+                    DohDebugLog.record("Encrypted DNS skipped: no bootstrap IPs")
+                }
+                // WKWebView ignores Network.framework Encrypted DNS. Keep CONNECT
+                // pass-through (no MITM) so CF challenge / login / in-app browser
+                // resolve via DoH instead of poisoned system DNS.
+                startWebViewProxyNow()
+                DohDebugLog.record("DoH Encrypted DNS + CONNECT pass-through for WKWebView")
+            }
         } else {
             lock.lock()
             lastError = nil
@@ -288,7 +235,6 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             self.configurationVersion += 1
             self.lock.unlock()
             self.publishAppClients()
-            self.notifyRecovered()
         }
         newProxy.onFailed = { [weak self, weak newProxy] error in
             guard let self else { return }
@@ -322,25 +268,10 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     }
 
     private func reassertNameResolution() {
-        EncryptedDnsService.disable()
-    }
-
-    private func prewarmForumDNS() {
-        resolver.resolve(host: "linux.do") { result in
-            switch result {
-            case .success(let answer):
-                DohDebugLog.record(
-                    "DoH prewarm linux.do -> \(answer.addresses.prefix(2).joined(separator: ", ")) ech=\(answer.echConfig?.count ?? 0)"
-                )
-            case .failure(let error):
-                DohDebugLog.record("DoH prewarm linux.do failed: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    private func notifyRecovered() {
-        DispatchQueue.main.async {
-            NotificationCenter.default.post(name: Self.didRecoverNotification, object: self)
+        if LocalConnectProxy.originECHReady {
+            EncryptedDnsService.disable()
+        } else {
+            EncryptedDnsService.reassertFromDefaults()
         }
     }
 
@@ -377,9 +308,22 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         publishAppClients()
     }
 
+    private func prewarmForumDNS() {
+        resolver.resolve(host: "linux.do") { result in
+            switch result {
+            case .success(let answer):
+                DohDebugLog.record(
+                    "DoH prewarm linux.do -> \(answer.addresses.prefix(2).joined(separator: ", "))"
+                )
+            case .failure(let error):
+                DohDebugLog.record("DoH prewarm linux.do failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
     func clearCache() {
         resolver.clearCache()
-        EncryptedDnsService.flushCache()
+        NWParameters.PrivacyContext.default.flushCache()
     }
 
     func resolverCacheStats() -> DohCacheStats {
@@ -474,10 +418,12 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         return config.connectionProxyDictionary
     }
 
-    /// Attach the local CONNECT proxy so URLSession uses bootstrap DoH
-    /// (HTTP/1.1 POST) instead of Apple Encrypted DNS (HTTP/2 GET).
-    /// Gateway API sessions skip CONNECT so they can speak plaintext HTTP
-    /// to 127.0.0.1 (excepted from the proxy list).
+    /// Attach the local proxy. Gateway API sessions skip CONNECT so they can
+    /// speak plaintext HTTP to 127.0.0.1 (excepted from the proxy list).
+    ///
+    /// API/Alamofire only uses CONNECT when ECH/MITM is ready. Pass-through
+    /// CONNECT to Cloudflare anycast often gets TLS RST; Encrypted DNS stays
+    /// the URLSession path until MITM can inject ECH.
     func apply(
         to sessionConfiguration: URLSessionConfiguration,
         hostURL: String? = nil,
@@ -486,12 +432,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         let enabled = UserDefaults.standard.bool(forKey: "dohEnabled")
         let config = AppSettings.dohProxyConfig(from: .standard)
         let useGateway = preferGateway && config.isGatewayMode && LocalConnectProxy.originECHReady
-        let port = ensureRunning()
-        guard DohProxyLiveness.shouldAttachConnectProxy(
-            enabled: enabled,
-            useGateway: useGateway,
-            port: port
-        ), let port else {
+        guard enabled, LocalConnectProxy.originECHReady, !useGateway, let port = ensureRunning() else {
             clearProxy(on: sessionConfiguration)
             return
         }
@@ -542,7 +483,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     private func applyImageDownloaderProxy() {
         let config = SDWebImageDownloader.shared.config.sessionConfiguration
             ?? URLSessionConfiguration.default
-        apply(to: config, hostURL: "https://linux.do", preferGateway: true)
+        apply(to: config, hostURL: "https://linux.do", preferGateway: false)
         SDWebImageDownloader.shared.config.sessionConfiguration = config
     }
 

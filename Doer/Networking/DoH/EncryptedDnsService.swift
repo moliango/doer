@@ -49,87 +49,37 @@ nonisolated enum EncryptedDnsService {
     private static var lastApplied: ResolverSpec?
 
     static func apply(_ spec: ResolverSpec) {
-        guard let normalized = specForEncryptedDNS(spec) else {
-            disable()
-            return
+        var ips = spec.bootstrapIPs
+        if let host = spec.url.host {
+            for ip in DohBootstrapTransport.systemAddresses(for: host) where !ips.contains(ip) {
+                ips.insert(ip, at: 0)
+            }
         }
+        ips = orderedBootstrapIPs(ips, preferIPv6: false)
+        let normalized = ResolverSpec(url: spec.url, bootstrapIPs: ips)
         applyLock.lock()
         let alreadyApplied = lastApplied == normalized
-        if !alreadyApplied {
-            lastApplied = normalized
-        }
+        lastApplied = normalized
         applyLock.unlock()
-        if alreadyApplied { return }
-        let endpoints = bootstrapEndpoints(normalized.bootstrapIPs)
-        let work = {
-            let resolver = NWParameters.PrivacyContext.ResolverConfiguration.https(
-                normalized.url,
-                serverAddresses: endpoints
-            )
-            NWParameters.PrivacyContext.default.requireEncryptedNameResolution(
-                true,
-                fallbackResolver: resolver
-            )
-            NWParameters.PrivacyContext.default.flushCache()
-            DohDebugLog.record(
-                "Encrypted DNS on \(normalized.url.absoluteString) bootstrap=\(normalized.bootstrapIPs.joined(separator: ","))"
-            )
-        }
-        if Thread.isMainThread {
-            work()
-        } else {
-            DispatchQueue.main.sync(execute: work)
-        }
-    }
-
-    /// v1.8.4 used IPv4-only system+catalog IPs. Foreign catalog anycast
-    /// (e.g. 119.29.29.29 on a custom host) and IPv6 stall Encrypted DNS.
-    static func specForEncryptedDNS(_ spec: ResolverSpec, systemIPs: [String]? = nil) -> ResolverSpec? {
-        let host = spec.url.host ?? ""
-        let system = systemIPs ?? DohBootstrapTransport.systemAddresses(for: host)
-        let ownedCatalog = spec.bootstrapIPs.filter { ip in
-            DohServerCatalog.bootstrapOwnershipWarning(
-                serverURL: spec.url.absoluteString,
-                bootstrapIPs: [ip]
-            ) == nil
-        }
-        let merged = DohBootstrapTransport.resolvedBootstrapAddresses(
-            host: host,
-            catalogIPs: ownedCatalog,
-            systemIPs: system
+        let endpoints = bootstrapEndpoints(ips)
+        let resolver = NWParameters.PrivacyContext.ResolverConfiguration.https(
+            normalized.url,
+            serverAddresses: endpoints
         )
-        let ips = orderedBootstrapIPs(merged, preferIPv6: false)
-        guard !ips.isEmpty else { return nil }
-        return ResolverSpec(url: spec.url, bootstrapIPs: ips)
-    }
-
-    /// Apple Encrypted DNS is HTTP/2 GET. In-app bootstrap is HTTP/1.1 POST
-    /// because Cloudflare-hosted custom DoH stalls on h2. URLSession must use
-    /// CONNECT pass-through instead of requiring Encrypted DNS.
-    enum Activation {
-        static func shouldRequireEncryptedDNS(bootstrapSucceeded: Bool) -> Bool {
-            false
+        NWParameters.PrivacyContext.default.requireEncryptedNameResolution(
+            true,
+            fallbackResolver: resolver
+        )
+        if !alreadyApplied {
+            NWParameters.PrivacyContext.default.flushCache()
         }
+        DohDebugLog.record(
+            "Encrypted DNS on \(normalized.url.absoluteString) bootstrap=\(ips.joined(separator: ","))"
+        )
     }
 
-    /// Catalog / stored bootstrap IPs only. Never `getaddrinfo` the DoH host —
-    /// that deadlocks once Encrypted DNS is required.
-    static func normalizedSpec(_ spec: ResolverSpec) -> ResolverSpec? {
-        let ips = orderedBootstrapIPs(spec.bootstrapIPs, preferIPv6: false)
-        guard !ips.isEmpty else { return nil }
-        return ResolverSpec(url: spec.url, bootstrapIPs: ips)
-    }
-
-    /// Locked catalog IPs first. System-resolved extras are only a fallback so
-    /// poisoned DNS cannot jump the Encrypted DNS bootstrap list.
-    static func mergedBootstrapIPs(locked: [String], system: [String]) -> [String] {
-        var seen = Set<String>()
-        let combined = (locked + system).filter { seen.insert($0).inserted }
-        return orderedBootstrapIPs(combined, preferIPv6: false)
-    }
-
-    /// Force-apply after a real path restore. `apply` skips flush when the spec
-    /// is unchanged; iOS can drop PrivacyContext after radio changes.
+    /// Force-apply after foreground / path restore. `apply` skips flush when
+    /// the spec is unchanged, but iOS can drop PrivacyContext while suspended.
     static func reassertFromDefaults() {
         applyLock.lock()
         lastApplied = nil
@@ -141,31 +91,12 @@ nonisolated enum EncryptedDnsService {
         applyLock.lock()
         lastApplied = nil
         applyLock.unlock()
-        let work = {
-            NWParameters.PrivacyContext.default.requireEncryptedNameResolution(
-                false,
-                fallbackResolver: nil
-            )
-            NWParameters.PrivacyContext.default.flushCache()
-            DohDebugLog.record("Encrypted DNS off")
-        }
-        if Thread.isMainThread {
-            work()
-        } else {
-            DispatchQueue.main.sync(execute: work)
-        }
-    }
-
-    static func flushCache() {
-        performOnMain {
-            NWParameters.PrivacyContext.default.flushCache()
-        }
-    }
-
-    /// Always hop. `requireEncryptedNameResolution` / `getaddrinfo` on the
-    /// scene or launch callback blocks the first frame (white screen).
-    private static func performOnMain(_ body: @escaping () -> Void) {
-        DispatchQueue.main.async(execute: body)
+        NWParameters.PrivacyContext.default.requireEncryptedNameResolution(
+            false,
+            fallbackResolver: nil
+        )
+        NWParameters.PrivacyContext.default.flushCache()
+        DohDebugLog.record("Encrypted DNS off")
     }
 
     /// Live resolver IPs first, IPv4 before IPv6. Hardcoded anycast like

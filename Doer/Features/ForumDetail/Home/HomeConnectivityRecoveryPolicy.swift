@@ -11,11 +11,4 @@ enum HomeConnectivityRecoveryPolicy {
     ) -> Bool {
         topicsEmpty || hasError || isWaitingForNetwork || isLoading
     }
-
-    /// v1.8.4 reloaded as soon as the path was back. Waiting for Encrypted DNS
-    /// left the list on waitNet=true across Wi‑Fi changes.
-    static func shouldWaitForDoHRecovery(dohEnabled: Bool) -> Bool {
-        _ = dohEnabled
-        return false
-    }
 }

@@ -17,20 +17,18 @@ public enum DohBootstrapTransport {
             completion(.failure(DohProxyError.bootstrapUnavailable(endpoint.url)))
             return
         }
-        // Same merge as v1.8.3: system DNS IPs first, then catalog.
-        // Encrypted DNS must be off so getaddrinfo is real system DNS.
-        var systemIPs: [String] = []
+        var addresses = endpoint.bootstrapIPs
         if !DohProxyConfig.looksLikeIPAddress(endpoint.host) {
-            systemIPs = systemAddresses(for: endpoint.host)
-            if !systemIPs.isEmpty {
-                log?("DoH server \(endpoint.host) system DNS -> \(systemIPs.joined(separator: ", "))")
+            let resolved = systemAddresses(for: endpoint.host)
+            if !resolved.isEmpty {
+                log?("DoH server \(endpoint.host) system DNS -> \(resolved.joined(separator: ", "))")
+                var seen = Set<String>()
+                let merged = (resolved + addresses).filter { seen.insert($0).inserted }
+                let v4 = merged.filter { !$0.contains(":") }
+                let v6 = merged.filter { $0.contains(":") }
+                addresses = v4 + v6
             }
         }
-        let addresses = resolvedBootstrapAddresses(
-            host: endpoint.host,
-            catalogIPs: endpoint.bootstrapIPs,
-            systemIPs: systemIPs
-        )
         let path = postPath(url: endpoint.url)
         query(
             addresses: addresses,
@@ -60,9 +58,17 @@ public enum DohBootstrapTransport {
         }
 
         let ip = addresses[index]
-        let parameters = connectionParameters(serverHost: serverHost)
-        let endpoint = NWEndpoint.hostPort(host: endpointHost(ip), port: port)
-        let connection = NWConnection(to: endpoint, using: parameters)
+        let tls = NWProtocolTLS.Options()
+        serverHost.withCString { pointer in
+            sec_protocol_options_set_tls_server_name(tls.securityProtocolOptions, pointer)
+        }
+        "http/1.1".withCString { pointer in
+            sec_protocol_options_add_tls_application_protocol(tls.securityProtocolOptions, pointer)
+        }
+        let tcp = NWProtocolTCP.Options()
+        tcp.noDelay = true
+        let parameters = NWParameters(tls: tls, tcp: tcp)
+        let connection = NWConnection(host: endpointHost(ip), port: port, using: parameters)
         log?("bootstrap connect \(ip) SNI=\(serverHost)")
         let timeout = DispatchWorkItem {
             log?("bootstrap timeout \(ip)")
@@ -145,10 +151,6 @@ public enum DohBootstrapTransport {
 
         connection.stateUpdateHandler = { state in
             switch state {
-            case .setup:
-                log?("bootstrap setup \(ip)")
-            case .preparing:
-                log?("bootstrap preparing \(ip)")
             case .waiting(let error):
                 log?("bootstrap waiting \(ip): \(error)")
             case .ready:
@@ -172,32 +174,8 @@ public enum DohBootstrapTransport {
             }
         }
 
-        queue.asyncAfter(deadline: .now() + connectTimeout, execute: timeout)
+        queue.asyncAfter(deadline: .now() + 5, execute: timeout)
         connection.start(queue: queue)
-    }
-
-    /// Isolated from `PrivacyContext.default`. If Encrypted DNS is required
-    /// app-wide, bootstrap DoH to a literal IP still must not wait on itself.
-    static let connectTimeout: TimeInterval = 8
-
-    static func connectionParameters(serverHost: String) -> NWParameters {
-        let tls = NWProtocolTLS.Options()
-        serverHost.withCString { pointer in
-            sec_protocol_options_set_tls_server_name(tls.securityProtocolOptions, pointer)
-        }
-        "http/1.1".withCString { pointer in
-            sec_protocol_options_add_tls_application_protocol(tls.securityProtocolOptions, pointer)
-        }
-        let tcp = NWProtocolTCP.Options()
-        tcp.noDelay = true
-        let parameters = NWParameters(tls: tls, tcp: tcp)
-        if #available(iOS 16.0, *) {
-            parameters.preferNoProxies = true
-        }
-        let privacy = NWParameters.PrivacyContext(description: "doer.doh.bootstrap")
-        privacy.requireEncryptedNameResolution(false, fallbackResolver: nil)
-        parameters.setPrivacyContext(privacy)
-        return parameters
     }
 
     private static func postPath(url: String) -> String {
@@ -219,33 +197,6 @@ public enum DohBootstrapTransport {
         var data = Data(header.utf8)
         data.append(dnsQuery)
         return data
-    }
-
-    public static func connectAddresses(for endpoint: DohEndpoint) -> [String] {
-        resolvedBootstrapAddresses(
-            host: endpoint.host,
-            catalogIPs: endpoint.bootstrapIPs,
-            systemIPs: []
-        )
-    }
-
-    /// v1.8.3 order: live system IPs first, catalog anycast as fallback, IPv4 first.
-    public static func resolvedBootstrapAddresses(
-        host: String,
-        catalogIPs: [String],
-        systemIPs: [String]
-    ) -> [String] {
-        let merged: [String]
-        if DohProxyConfig.looksLikeIPAddress(host) || systemIPs.isEmpty {
-            merged = catalogIPs
-        } else {
-            var seen = Set<String>()
-            merged = (systemIPs + catalogIPs).filter { seen.insert($0).inserted }
-        }
-        let v4 = merged.filter { !$0.contains(":") }
-        let v6 = merged.filter { $0.contains(":") }
-        if !v4.isEmpty { return v4 + v6 }
-        return v6
     }
 
     public static func systemAddresses(for host: String) -> [String] {

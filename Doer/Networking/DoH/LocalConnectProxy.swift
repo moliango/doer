@@ -993,9 +993,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                 echConfig: echConfig
             )
             originClients[ObjectIdentifier(client)] = origin
-            DohDebugLog.record(
-                "Gateway origin TLS NIOSSL \(request.host) \(originAddress) echInjected=\(origin.echInjected) echBytes=\(echConfig?.count ?? 0)"
-            )
+            DohDebugLog.record("Gateway origin TLS NIOSSL \(request.host) \(originAddress)")
             startGatewayNIOOrigin(origin, client: client, upstream: upstream, request: request)
         } catch {
             DohDebugLog.record("Gateway origin TLS failed: \(error)")
@@ -1295,9 +1293,10 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         }
     }
 
-    /// Pass-through CONNECT forwards a clear `SNI=linux.do` ClientHello and
-    /// Cloudflare RSTs it (POSIX 54). Origin TLS must inject DNS HTTPS ECH.
-    static var originECHReady = true
+    /// Origin ECH inject is not available on device yet. Until it is, CONNECT
+    /// pass-through lets URLSession speak real HTTPS (h2) so Cloudflare does
+    /// not 403 `cf-mitigated: challenge` on HTTP/1.1 Gateway hops.
+    static var originECHReady = false
 
     static func shouldMITM(_ host: String) -> Bool {
         guard originECHReady else { return false }
