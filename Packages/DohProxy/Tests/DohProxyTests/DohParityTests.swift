@@ -1,3 +1,4 @@
+import NIOSSL
 import XCTest
 @testable import DohProxy
 
@@ -45,6 +46,14 @@ final class DohParityTests: XCTestCase {
         XCTAssertEqual(BoringSSLECH.configList(from: list), list)
     }
 
+    func testECHFindsSSLPointerOnClientHandler() throws {
+        var configuration = TLSConfiguration.makeClientConfiguration()
+        configuration.applicationProtocols = ["http/1.1"]
+        let context = try NIOSSLContext(configuration: configuration)
+        let handler = try NIOSSLClientHandler(context: context, serverHostname: "linux.do")
+        XCTAssertTrue(BoringSSLECH.hasSSLPointer(handler))
+    }
+
     func testH2PrefaceAndFrameRoundTrip() {
         XCTAssertTrue(H2MitmForwarder.isClientPreface(H2MitmForwarder.clientPreface))
         let frame = H2MitmForwarder.Frame(type: 0x04, flags: 0, streamID: 0, payload: Data([0, 1, 2, 3]))
@@ -75,5 +84,17 @@ final class DohParityTests: XCTestCase {
         XCTAssertTrue(text.hasPrefix("GET /t/1.json HTTP/1.1\r\n"))
         XCTAssertTrue(text.contains("Host: linux.do"))
         XCTAssertFalse(text.contains("127.0.0.1"))
+    }
+
+    func testGatewayRewritesLoopbackHostHeader() throws {
+        let raw = Data("GET /challenge HTTP/1.1\r\nHost: 127.0.0.1:52006\r\nAccept: */*\r\n\r\n".utf8)
+        let parsed = try XCTUnwrap(try DohGatewayHTTPRequest.parse(raw))
+        XCTAssertTrue(parsed.host == "127.0.0.1" || parsed.host.hasPrefix("127.0.0.1"))
+        let rewritten = parsed.withOriginHost("linux.do")
+        XCTAssertEqual(rewritten.host, "linux.do")
+        XCTAssertEqual(rewritten.port, 443)
+        let text = String(data: rewritten.originForm, encoding: .utf8) ?? ""
+        XCTAssertTrue(text.contains("Host: linux.do"))
+        XCTAssertFalse(text.contains("Host: 127.0.0.1"))
     }
 }

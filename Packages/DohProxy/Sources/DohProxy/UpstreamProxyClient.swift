@@ -95,6 +95,42 @@ public struct DohGatewayHTTPRequest: Equatable, Sendable {
         return DohGatewayHTTPRequest(host: host.lowercased(), port: port, originForm: origin)
     }
 
+    /// WKWebView on iOS 16 cannot set `Host` and talks HTTP to loopback.
+    /// Rewrite the Host header so origin ECH still targets the forum.
+    public func withOriginHost(_ originHost: String) -> DohGatewayHTTPRequest {
+        let originHost = originHost.lowercased()
+        if host == originHost { return self }
+        let separator = Data([13, 10, 13, 10])
+        guard let range = originForm.range(of: separator),
+              let header = String(
+                data: originForm.subdata(in: originForm.startIndex ..< range.lowerBound),
+                encoding: .utf8
+              )
+        else {
+            return DohGatewayHTTPRequest(host: originHost, port: 443, originForm: originForm)
+        }
+        var rebuilt: [String] = []
+        var replaced = false
+        for line in header.components(separatedBy: "\r\n") {
+            if line.lowercased().hasPrefix("host:") {
+                rebuilt.append("Host: \(originHost)")
+                replaced = true
+            } else {
+                rebuilt.append(line)
+            }
+        }
+        if !replaced {
+            if rebuilt.isEmpty {
+                rebuilt.append("Host: \(originHost)")
+            } else {
+                rebuilt.insert("Host: \(originHost)", at: min(1, rebuilt.count))
+            }
+        }
+        var origin = Data(rebuilt.joined(separator: "\r\n").utf8)
+        origin.append(originForm.subdata(in: range.lowerBound ..< originForm.endIndex))
+        return DohGatewayHTTPRequest(host: originHost, port: 443, originForm: origin)
+    }
+
     private static func parseHostPort(_ value: String) throws -> (host: String, port: UInt16) {
         if let idx = value.lastIndex(of: ":"), let parsed = UInt16(value[value.index(after: idx)...]) {
             return (String(value[..<idx]), parsed)

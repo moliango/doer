@@ -1,9 +1,11 @@
-import Darwin
 import Foundation
 import NIOSSL
 
 /// Inject DNS HTTPS ECHConfigList into BoringSSL (vendored by NIOSSL).
 /// Network.framework and NIOSSL's Swift API cannot set ECH; the C API can.
+///
+/// Link the CNIOBoringSSL symbols directly so they are not dead-stripped.
+/// `dlsym` cannot see static BoringSSL and would leave a clear `SNI=linux.do`.
 public enum BoringSSLECH {
     public static func configList(from echConfig: Data) -> Data {
         guard echConfig.count >= 2 else { return wrapList(echConfig) }
@@ -20,9 +22,13 @@ public enum BoringSSLECH {
         return setConfigList(ssl, list)
     }
 
+    public static func hasSSLPointer(_ handler: NIOSSLHandler) -> Bool {
+        sslPointer(from: handler) != nil
+    }
+
     public static func echAccepted(_ handler: NIOSSLHandler) -> Bool {
         guard let ssl = sslPointer(from: handler) else { return false }
-        return echAccepted(ssl)
+        return sslECHAccepted(ssl) == 1
     }
 
     public static func negotiatedALPN(_ handler: NIOSSLHandler) -> String? {
@@ -32,7 +38,20 @@ public enum BoringSSLECH {
 
     public static func isHandshakeFinished(_ handler: NIOSSLHandler) -> Bool {
         guard let ssl = sslPointer(from: handler) else { return false }
-        return handshakeFinished(ssl)
+        return sslIsInitFinished(ssl) == 1
+    }
+
+    /// Public name to verify when the server rejected ECH. Empty when ECH was accepted.
+    public static func echNameOverride(_ handler: NIOSSLHandler) -> String? {
+        guard let ssl = sslPointer(from: handler) else { return nil }
+        var pointer: UnsafePointer<CChar>?
+        var length = 0
+        sslGet0ECHNameOverride(ssl, &pointer, &length)
+        guard let pointer, length > 0 else { return nil }
+        return String(
+            decoding: UnsafeRawBufferPointer(start: pointer, count: length),
+            as: UTF8.self
+        )
     }
 
     private static func wrapList(_ config: Data) -> Data {
@@ -47,59 +66,66 @@ public enum BoringSSLECH {
         sslPointer(in: handler, depth: 0)
     }
 
+    /// `NIOSSLClientHandler` stores `connection` on the superclass; `SSLConnection.ssl`
+    /// is private. Walk `superclassMirror` and only follow `connection` / `ssl`.
     private static func sslPointer(in value: Any, depth: Int) -> OpaquePointer? {
-        if depth > 6 { return nil }
-        if let pointer = value as? OpaquePointer { return pointer }
-        for child in Mirror(reflecting: value).children {
-            if child.label == "ssl", let pointer = child.value as? OpaquePointer {
-                return pointer
+        if depth > 8 { return nil }
+        var mirror: Mirror? = Mirror(reflecting: value)
+        while let current = mirror {
+            for child in current.children {
+                if child.label == "ssl", let pointer = child.value as? OpaquePointer {
+                    return pointer
+                }
+                if child.label == "connection" || child.label == "ssl" {
+                    if let pointer = sslPointer(in: child.value, depth: depth + 1) {
+                        return pointer
+                    }
+                }
             }
-            if let pointer = sslPointer(in: child.value, depth: depth + 1) {
-                return pointer
-            }
+            mirror = current.superclassMirror
         }
         return nil
     }
 
     private static func setConfigList(_ ssl: OpaquePointer, _ list: Data) -> Bool {
-        typealias Fn = @convention(c) (OpaquePointer?, UnsafePointer<UInt8>?, Int) -> Int32
-        let fn: Fn? = symbol("CNIOBoringSSL_SSL_set1_ech_config_list")
-            ?? symbol("SSL_set1_ech_config_list")
-        guard let fn else { return false }
-        return list.withUnsafeBytes { raw in
+        list.withUnsafeBytes { raw in
             guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return false }
-            return fn(ssl, base, list.count) == 1
+            return sslSetECHConfigList(ssl, base, list.count) == 1
         }
     }
 
-    private static func echAccepted(_ ssl: OpaquePointer) -> Bool {
-        typealias Fn = @convention(c) (OpaquePointer?) -> Int32
-        guard let fn: Fn = symbol("CNIOBoringSSL_SSL_ech_accepted") else { return false }
-        return fn(ssl) == 1
-    }
-
-    private static func handshakeFinished(_ ssl: OpaquePointer) -> Bool {
-        typealias Fn = @convention(c) (OpaquePointer?) -> Int32
-        guard let fn: Fn = symbol("CNIOBoringSSL_SSL_is_init_finished") else { return true }
-        return fn(ssl) == 1
-    }
-
     private static func alpn(_ ssl: OpaquePointer) -> String? {
-        typealias Fn = @convention(c) (
-            OpaquePointer?,
-            UnsafeMutablePointer<UnsafePointer<UInt8>?>?,
-            UnsafeMutablePointer<UInt32>?
-        ) -> Void
-        guard let fn: Fn = symbol("CNIOBoringSSL_SSL_get0_alpn_selected") else { return nil }
         var pointer: UnsafePointer<UInt8>?
         var length: UInt32 = 0
-        fn(ssl, &pointer, &length)
+        sslGet0ALPNSelected(ssl, &pointer, &length)
         guard let pointer, length > 0 else { return nil }
         return String(bytes: UnsafeBufferPointer(start: pointer, count: Int(length)), encoding: .utf8)
     }
-
-    private static func symbol<T>(_ name: String) -> T? {
-        guard let raw = dlsym(UnsafeMutableRawPointer(bitPattern: -2), name) else { return nil }
-        return unsafeBitCast(raw, to: T.self)
-    }
 }
+
+@_silgen_name("CNIOBoringSSL_SSL_set1_ech_config_list")
+private func sslSetECHConfigList(
+    _ ssl: OpaquePointer?,
+    _ echConfigList: UnsafePointer<UInt8>?,
+    _ echConfigListLen: Int
+) -> Int32
+
+@_silgen_name("CNIOBoringSSL_SSL_ech_accepted")
+private func sslECHAccepted(_ ssl: OpaquePointer?) -> Int32
+
+@_silgen_name("CNIOBoringSSL_SSL_is_init_finished")
+private func sslIsInitFinished(_ ssl: OpaquePointer?) -> Int32
+
+@_silgen_name("CNIOBoringSSL_SSL_get0_alpn_selected")
+private func sslGet0ALPNSelected(
+    _ ssl: OpaquePointer?,
+    _ out: UnsafeMutablePointer<UnsafePointer<UInt8>?>?,
+    _ outLen: UnsafeMutablePointer<UInt32>?
+)
+
+@_silgen_name("CNIOBoringSSL_SSL_get0_ech_name_override")
+private func sslGet0ECHNameOverride(
+    _ ssl: OpaquePointer?,
+    _ outName: UnsafeMutablePointer<UnsafePointer<CChar>?>?,
+    _ outNameLen: UnsafeMutablePointer<Int>?
+)

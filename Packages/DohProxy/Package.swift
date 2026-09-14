@@ -30,7 +30,10 @@ let package = Package(
         ),
         .testTarget(
             name: "DohProxyTests",
-            dependencies: ["DohProxy"]
+            dependencies: [
+                "DohProxy",
+                .product(name: "NIOSSL", package: "swift-nio-ssl"),
+            ]
         ),
     ]
 )
