@@ -871,6 +871,14 @@ enum CloudflareImageGate {
         }
         lock.unlock()
         DohDebugLog.record("image gate pause base=\(key) duration=\(Int(duration))s", subsystem: "CF")
+        cancelInFlightDownloads()
+    }
+
+    /// In-flight avatar/content fetches keep hitting Gateway after a 403 and
+    /// retrigger CF. Pause must drop them, not only block new loads.
+    static func cancelInFlightDownloads() {
+        SDWebImageDownloader.shared.cancelAllDownloads()
+        SDWebImagePrefetcher.shared.cancelPrefetching()
     }
 
     static func pause(baseURL: URL, duration: TimeInterval = defaultPauseDuration) {
@@ -945,6 +953,11 @@ enum CloudflareImageGate {
     /// - Main host while gate paused
     /// - Forum CDN while matching forum gate paused
     static func shouldBlockNetworkLoad(url: URL, cloudflareBaseURL: String?, now: Date = Date()) -> Bool {
+        if isGatewayLoopback(url),
+           let cloudflareBaseURL,
+           isPaused(baseURL: cloudflareBaseURL, now: now) {
+            return true
+        }
         let main = isMainDomain(url, cloudflareBaseURL: cloudflareBaseURL)
         let cdn = AvatarImageLoader.isForumCDN(url)
         guard main || cdn else { return false }
@@ -1034,7 +1047,7 @@ enum CloudflareImageGate {
             routePath: nil,
             method: nil,
             detection: detection,
-            shouldNotify: true
+            shouldNotify: !LocalConnectProxy.usesWebViewHTTPTransport
         )
     }
 
@@ -1053,6 +1066,12 @@ enum CloudflareImageGate {
             return true
         }
         return false
+    }
+
+    /// Gateway rewrite turns `https://linux.do/...` into `http://127.0.0.1:port/...`.
+    static func isGatewayLoopback(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host == "127.0.0.1" || host == "localhost" || host == "::1"
     }
 
     static func originString(for url: URL) -> String? {

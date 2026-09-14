@@ -354,6 +354,63 @@ final class WebCookieStore {
         setCookies(cookies)
     }
 
+    /// Copy site cookies onto 127.0.0.1 so Gateway-loopback WKWebView sends them.
+    @MainActor
+    func mirrorSiteCookiesToLoopback(
+        _ dataStore: WKWebsiteDataStore,
+        from baseURL: URL,
+        loopbackURL: URL
+    ) async {
+        guard let siteHost = baseURL.host?.lowercased(),
+              let loopbackHost = loopbackURL.host?.lowercased()
+        else { return }
+        let mirrored = siteCookiesForInjection(forHost: siteHost).compactMap {
+            Self.cookieByRebasing($0, ontoHost: loopbackHost, secure: false)
+        }
+        guard !mirrored.isEmpty else { return }
+        await injectCookies(mirrored, into: dataStore, replacingAuthOnHost: loopbackHost)
+    }
+
+    /// After Gateway-loopback Turnstile, `cf_clearance` lands on 127.0.0.1.
+    @MainActor
+    func adoptLoopbackClearance(
+        from dataStore: WKWebsiteDataStore,
+        onto baseURL: URL
+    ) async {
+        guard let baseHost = baseURL.host?.lowercased(),
+              let cookies = await WKCookieStoreIO.getAllCookies(dataStore.httpCookieStore)
+        else { return }
+        let adopted = cookies.compactMap { cookie -> HTTPCookie? in
+            guard cookie.name == "cf_clearance" else { return nil }
+            let domain = cookie.domain.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            guard LocalConnectProxy.isLoopbackGatewayHost(domain) else { return nil }
+            return Self.cookieByRebasing(cookie, ontoHost: baseHost, secure: true)
+        }
+        guard !adopted.isEmpty else { return }
+        setCookies(adopted)
+        DohDebugLog.record("adopted loopback cf_clearance onto \(baseHost)", subsystem: "CF")
+    }
+
+    static func cookieByRebasing(
+        _ source: HTTPCookie,
+        ontoHost host: String,
+        secure: Bool
+    ) -> HTTPCookie? {
+        var props: [HTTPCookiePropertyKey: Any] = [
+            .name: source.name,
+            .value: source.value,
+            .domain: host,
+            .path: source.path.isEmpty ? "/" : source.path,
+        ]
+        if let expiresDate = source.expiresDate {
+            props[.expires] = expiresDate
+        }
+        if secure {
+            props[.secure] = "TRUE"
+        }
+        return HTTPCookie(properties: props)
+    }
+
     @MainActor
     func syncToWebView(_ dataStore: WKWebsiteDataStore, for url: URL) async {
         guard let host = url.host?.lowercased() else { return }

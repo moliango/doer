@@ -133,6 +133,9 @@ final class ForumContainerViewController: UIViewController, AuthGating {
         super.viewDidLoad()
         view.backgroundColor = AppSettings.shared.themeStyle.topicListBackgroundColor
         DohDebugLog.record("forum container viewDidLoad base=\(forum.baseURL)", subsystem: "Launch")
+        if let host = URL(string: forum.baseURL)?.host {
+            LocalConnectProxy.gatewayOriginHost = host
+        }
 
         authManager.restoreAuthState(for: forum)
         if authManager.hasWebSession(for: forum.baseURL) {
@@ -749,17 +752,22 @@ final class ForumContainerViewController: UIViewController, AuthGating {
             setCloudflareShieldButtonVisible(false, animated: true)
             return
         }
-        logCloudflareState("challenge detected; starting background verification base=\(baseURLString)")
         guard !isPresentingCloudflareVerification else {
             logCloudflareState("background verification skipped because foreground verification is active base=\(baseURLString)")
             return
         }
         setCloudflareShieldButtonVisible(true, animated: true)
-        CloudflareBackgroundVerificationService.shared.ensureInBackground(
-            baseURL: baseURL,
-            reason: "container_challenge",
-            responseURL: responseURL
-        )
+        if CloudflareVerificationPolicy.shouldAttemptBackgroundVerification() {
+            logCloudflareState("challenge detected; starting background verification base=\(baseURLString)")
+            CloudflareBackgroundVerificationService.shared.ensureInBackground(
+                baseURL: baseURL,
+                reason: "container_challenge",
+                responseURL: responseURL
+            )
+            return
+        }
+        logCloudflareState("challenge detected; presenting foreground verification base=\(baseURLString)")
+        presentCloudflareVerification(baseURL: baseURL, responseURL: responseURL)
     }
 
     private func handleCloudflareNeedsUserInteraction(_ notification: Notification) {
@@ -773,9 +781,14 @@ final class ForumContainerViewController: UIViewController, AuthGating {
         let responseURL = notification.userInfo?[DiscourseAPI.cloudflareResponseURLUserInfoKey] as? URL
         pendingCloudflareBaseURL = baseURL
         pendingCloudflareResponseURL = responseURL
-        guard !isCloudflareShieldSuppressed(), !isCloudflareAutoPresentBlocked() else {
+        if isCloudflareShieldSuppressed() {
             logCloudflareState("needs-user ignored while shield is suppressed base=\(baseURLString)")
-            setCloudflareShieldButtonVisible(!isCloudflareShieldSuppressed(), animated: true)
+            setCloudflareShieldButtonVisible(false, animated: true)
+            return
+        }
+        if isCloudflareAutoPresentBlocked() {
+            logCloudflareState("needs-user ignored while auto-present is blocked base=\(baseURLString)")
+            setCloudflareShieldButtonVisible(true, animated: true)
             return
         }
         guard !isPresentingCloudflareVerification else {
@@ -1008,7 +1021,8 @@ final class ForumContainerViewController: UIViewController, AuthGating {
             }
             let nav = UINavigationController(rootViewController: vc)
             nav.modalPresentationStyle = .pageSheet
-            nav.isModalInPresentation = false
+            // Swipe-dismiss during Turnstile left API/images still challenged.
+            nav.isModalInPresentation = true
             if let sheet = nav.sheetPresentationController {
                 sheet.detents = [.large()]
                 sheet.prefersGrabberVisible = true

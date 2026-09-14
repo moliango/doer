@@ -90,6 +90,26 @@ enum CloudflareVerificationPolicy {
         return URL(string: "/challenge", relativeTo: baseURL)?.absoluteURL ?? baseURL
     }
 
+    /// iOS 16 WKWebView cannot use CONNECT. Do not load the challenge on
+    /// `127.0.0.1` — Turnstile requires `location.hostname == linux.do`.
+    static func gatewayBrowserURL(path: String, baseURL: URL) -> URL? {
+        _ = path
+        _ = baseURL
+        return nil
+    }
+
+    static func isGatewayBrowserHost(_ host: String?) -> Bool {
+        guard let host else { return false }
+        return LocalConnectProxy.isLoopbackGatewayHost(host)
+    }
+
+    static func hostsMatchForVerification(current: String?, baseURL: URL) -> Bool {
+        guard let current = current?.lowercased() else { return false }
+        if isGatewayBrowserHost(current) { return true }
+        guard let baseHost = baseURL.host?.lowercased() else { return false }
+        return current == baseHost || current.hasSuffix(".\(baseHost)")
+    }
+
     static func hasUsableClearance(
         currentValue: String?,
         initialValue: String?,
@@ -132,9 +152,7 @@ enum CloudflareVerificationPolicy {
     ) -> Bool {
         guard response.statusCode == 404,
               let responseURL = response.url,
-              responseURL.scheme?.lowercased() == baseURL.scheme?.lowercased(),
-              responseURL.host?.lowercased() == baseURL.host?.lowercased(),
-              responseURL.port == baseURL.port,
+              hostsMatchForVerification(current: responseURL.host, baseURL: baseURL),
               responseURL.path.lowercased() == "/challenge"
         else { return false }
 
@@ -156,6 +174,13 @@ enum CloudflareVerificationPolicy {
         let query = url.query?.lowercased() ?? ""
         guard !query.isEmpty else { return false }
         return query.contains("__cf_chl_") || query.contains("cf_chl_")
+    }
+
+    /// Offscreen 1x1 WKWebView cannot complete interactive Turnstile, and a
+    /// leftover Safari `cf_clearance` is not a pass. Skip background and let
+    /// the container present the human sheet immediately.
+    static func shouldAttemptBackgroundVerification() -> Bool {
+        false
     }
 
     /// A leftover `cf_clearance` can be stale. Only the short post-pass grace
@@ -372,6 +397,7 @@ final class CloudflareVerificationViewController: UIViewController {
             notifyFinishIfNeeded()
             return
         }
+        log("foreground dismissed without complete base=\(baseURL.absoluteString)")
         Task { @MainActor [self] in
             await self.ensureFailureCleanup().value
             self.notifyFinishIfNeeded()
@@ -490,6 +516,7 @@ final class CloudflareVerificationViewController: UIViewController {
             let domain = cookie.domain.lowercased()
             let domainMatch = host == domain
                 || (domain.hasPrefix(".") && (host == String(domain.dropFirst()) || host.hasSuffix(domain)))
+                || CloudflareVerificationPolicy.isGatewayBrowserHost(domain)
             guard domainMatch else { continue }
             await withCheckedContinuation { continuation in
                 cookieStore.delete(cookie) {
@@ -580,6 +607,10 @@ final class CloudflareVerificationViewController: UIViewController {
             names: ["cf_clearance"],
             for: baseURL
         )
+        await WebCookieStore.shared.adoptLoopbackClearance(
+            from: webView.configuration.websiteDataStore,
+            onto: baseURL
+        )
     }
 
     @MainActor
@@ -626,6 +657,8 @@ final class CloudflareVerificationViewController: UIViewController {
     private func completeVerification() {
         guard !didDetectClearance else { return }
         log("foreground complete base=\(baseURL.absoluteString)")
+        WebViewHTTPClient.shared.adoptChallengeWebView(webView, baseURL: baseURL)
+        LocalConnectProxy.enableSafariWebViewHTTPAfterChallenge()
         CloudflareVerificationPolicy.markVerificationGrace(baseURL: baseURL)
         didDetectClearance = true
         needsVerificationRecheck = false
@@ -702,13 +735,13 @@ final class CloudflareVerificationViewController: UIViewController {
     @MainActor
     private func hasLoadedVerifiedBasePage() async -> Bool {
         guard didFinishVerifiedNavigation,
-              let currentURL = webView.url,
-              let currentHost = currentURL.host?.lowercased(),
-              let baseHost = baseURL.host?.lowercased()
+              let currentURL = webView.url
         else { return false }
 
-        let hostMatches = currentHost == baseHost || currentHost.hasSuffix(".\(baseHost)")
-        guard hostMatches else { return false }
+        guard CloudflareVerificationPolicy.hostsMatchForVerification(
+            current: currentURL.host,
+            baseURL: baseURL
+        ) else { return false }
 
         let path = currentURL.path.lowercased()
         guard !path.contains("/cdn-cgi/") else { return false }
@@ -717,12 +750,11 @@ final class CloudflareVerificationViewController: UIViewController {
 
     private func isKnownVerifiedRedirectURL(_ url: URL?) -> Bool {
         guard let url,
-              let currentHost = url.host?.lowercased(),
-              let baseHost = baseURL.host?.lowercased()
+              CloudflareVerificationPolicy.hostsMatchForVerification(
+                current: url.host,
+                baseURL: baseURL
+              )
         else { return false }
-
-        let hostMatches = currentHost == baseHost || currentHost.hasSuffix(".\(baseHost)")
-        guard hostMatches else { return false }
 
         let path = url.path.lowercased()
         return path == "/404" || path == "/404/"
@@ -732,12 +764,13 @@ final class CloudflareVerificationViewController: UIViewController {
     private func hasLoadedKnownVerifiedNotFoundPage() async -> Bool {
         guard didFinishVerifiedNavigation,
               let currentURL = webView.url,
-              let currentHost = currentURL.host?.lowercased(),
-              let baseHost = baseURL.host?.lowercased()
+              CloudflareVerificationPolicy.hostsMatchForVerification(
+                current: currentURL.host,
+                baseURL: baseURL
+              )
         else { return false }
 
-        let hostMatches = currentHost == baseHost || currentHost.hasSuffix(".\(baseHost)")
-        guard hostMatches, !currentURL.path.lowercased().contains("/cdn-cgi/") else {
+        guard !currentURL.path.lowercased().contains("/cdn-cgi/") else {
             return false
         }
 
@@ -839,6 +872,14 @@ extension CloudflareVerificationViewController: WKNavigationDelegate, WKUIDelega
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
         decisionHandler(.allow)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        MitmTrust.handle(challenge, completionHandler: completionHandler)
     }
 
     func webView(

@@ -33,6 +33,42 @@ final class CloudflareRecoveryTests: XCTestCase {
         )
     }
 
+    func testVerificationHostsTreatGatewayLoopbackAsForum() throws {
+        let baseURL = try XCTUnwrap(URL(string: "https://linux.do"))
+        XCTAssertTrue(
+            CloudflareVerificationPolicy.hostsMatchForVerification(current: "127.0.0.1", baseURL: baseURL)
+        )
+        XCTAssertTrue(
+            CloudflareVerificationPolicy.hostsMatchForVerification(current: "linux.do", baseURL: baseURL)
+        )
+        XCTAssertFalse(
+            CloudflareVerificationPolicy.hostsMatchForVerification(current: "example.com", baseURL: baseURL)
+        )
+    }
+
+    func testCookieRebasingMovesClearanceBetweenLoopbackAndForum() throws {
+        let source = try XCTUnwrap(
+            HTTPCookie(properties: [
+                .name: "cf_clearance",
+                .value: "token",
+                .domain: "linux.do",
+                .path: "/",
+                .secure: "TRUE",
+            ])
+        )
+        let loopback = try XCTUnwrap(
+            WebCookieStore.cookieByRebasing(source, ontoHost: "127.0.0.1", secure: false)
+        )
+        XCTAssertEqual(loopback.domain, "127.0.0.1")
+        XCTAssertFalse(loopback.isSecure)
+        let adopted = try XCTUnwrap(
+            WebCookieStore.cookieByRebasing(loopback, ontoHost: "linux.do", secure: true)
+        )
+        XCTAssertEqual(adopted.domain, "linux.do")
+        XCTAssertEqual(adopted.value, "token")
+        XCTAssertTrue(adopted.isSecure)
+    }
+
     func testAutomaticVerificationKeepsJarClearanceUntilFreshCookie() {
         XCTAssertFalse(CloudflareVerificationPolicy.shouldDeleteJarClearanceBeforeChallenge())
         XCTAssertTrue(
@@ -201,6 +237,7 @@ final class CloudflareRecoveryTests: XCTestCase {
         XCTAssertTrue(CloudflareVerificationPolicy.shouldPromptAfterBackgroundFailure(isInGrace: false))
         XCTAssertTrue(CloudflareVerificationPolicy.shouldTreatCooldownAsVerified(isInGrace: true))
         XCTAssertFalse(CloudflareVerificationPolicy.shouldTreatCooldownAsVerified(isInGrace: false))
+        XCTAssertFalse(CloudflareVerificationPolicy.shouldAttemptBackgroundVerification())
     }
 
     func testRepeatedApiChallengesClearVerificationGrace() {
@@ -263,6 +300,18 @@ final class CloudflareRecoveryTests: XCTestCase {
         CloudflareImageGate.resume(baseURL: base)
         XCTAssertFalse(CloudflareImageGate.isPaused(baseURL: base))
         XCTAssertFalse(CloudflareImageGate.shouldBlockNetworkLoad(url: avatar, cloudflareBaseURL: base))
+    }
+
+    func testImageGateBlocksGatewayLoopbackWhilePaused() throws {
+        CloudflareImageGate.resetForTests()
+        let base = "https://linux.do"
+        let loopback = try XCTUnwrap(URL(string: "http://127.0.0.1:52006/user_avatar/linux.do/foo/120/1.png"))
+        XCTAssertTrue(CloudflareImageGate.isGatewayLoopback(loopback))
+        XCTAssertFalse(CloudflareImageGate.shouldBlockNetworkLoad(url: loopback, cloudflareBaseURL: base))
+        CloudflareImageGate.pause(baseURL: base, duration: 30)
+        XCTAssertTrue(CloudflareImageGate.shouldBlockNetworkLoad(url: loopback, cloudflareBaseURL: base))
+        CloudflareImageGate.resume(baseURL: base)
+        XCTAssertFalse(CloudflareImageGate.shouldBlockNetworkLoad(url: loopback, cloudflareBaseURL: base))
     }
 
     func testChallengeSourceControlsImageGatePause() {

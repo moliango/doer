@@ -127,6 +127,13 @@ final class DiscourseAPI {
             || message.contains("explicitly canceled")
     }
 
+    static func isTransportTimeout(_ error: Error) -> Bool {
+        if let urlError = error as? URLError, urlError.code == .timedOut {
+            return true
+        }
+        return (error as NSError).code == NSURLErrorTimedOut
+    }
+
     // MARK: - Public API
 
     // MARK: - Private
@@ -191,6 +198,32 @@ final class DiscourseAPI {
             throw Self.cloudflareChallengeError()
         }
         let encoding = requestedEncoding ?? (route.method == .post ? JSONEncoding.default : URLEncoding.default)
+        if LocalConnectProxy.usesWebViewHTTPTransport, let base = URL(string: baseURL) {
+            do {
+                DohDebugLog.record(
+                    "request \(route.method.rawValue) \(route.path) via Safari WKWebView",
+                    subsystem: "Auth"
+                )
+                return try await performRequestViaWebView(
+                    route: route,
+                    url: url,
+                    baseURL: base,
+                    parameters: parameters,
+                    headers: headers,
+                    encoding: encoding,
+                    allowAuthRecovery: allowAuthRecovery
+                )
+            } catch {
+                if Self.isTransportTimeout(error) {
+                    DohDebugLog.record(
+                        "webview http timeout fallback URLSession \(route.method.rawValue) \(route.path)",
+                        subsystem: "Auth"
+                    )
+                } else {
+                    throw error
+                }
+            }
+        }
         let response = await session.request(url, method: route.method, parameters: parameters, encoding: encoding, headers: headers)
             .serializingData(emptyResponseCodes: [200, 201, 202, 204, 205])
             .response
@@ -312,18 +345,112 @@ final class DiscourseAPI {
         return true
     }
 
+    func performRequestViaWebView(
+        route: DiscourseRouter,
+        url: String,
+        baseURL: URL,
+        parameters: Parameters?,
+        headers: HTTPHeaders?,
+        encoding: ParameterEncoding,
+        allowAuthRecovery: Bool
+    ) async throws -> RawDiscourseResponse {
+        guard let requestURL = URL(string: url) else {
+            throw URLError(.badURL)
+        }
+        var urlRequest = try URLRequest(url: requestURL, method: route.method, headers: headers)
+        urlRequest = try encoding.encode(urlRequest, with: parameters)
+        urlRequest = try await adaptedRequest(urlRequest)
+        let (data, httpResponse) = try await WebViewHTTPClient.shared.data(for: urlRequest, baseURL: baseURL)
+
+        if let newToken = httpResponse.value(forHTTPHeaderField: "X-CSRF-Token") {
+            interceptor.updateCSRFToken(newToken)
+        }
+        if handleCloudflareChallengeIfNeeded(route: route, response: httpResponse, data: data) {
+            throw Self.cloudflareChallengeError()
+        }
+        if executionContext.allowsInteractiveWebRecovery,
+           allowAuthRecovery,
+           await shouldRetryAfterWebSessionRefresh(
+               route: route,
+               statusCode: httpResponse.statusCode,
+               error: nil,
+               data: data
+           ) {
+            return try await performRequest(
+                route: route,
+                parameters: parameters,
+                headers: headers,
+                encoding: encoding,
+                allowAuthRecovery: false
+            )
+        }
+        if shouldMergeWebCookieResponseHeaders(
+            baseURL: self.baseURL,
+            responseURL: httpResponse.url ?? baseURL,
+            statusCode: httpResponse.statusCode
+        ) {
+            WebCookieStore.shared.mergeResponseHeaders(
+                httpResponse.allHeaderFields,
+                for: httpResponse.url ?? baseURL
+            )
+        }
+        if !(200 ..< 300).contains(httpResponse.statusCode) {
+            if httpResponse.statusCode == 429 {
+                throw DiscourseAPIError(
+                    messages: [String(localized: "error.rate_limited")],
+                    errorType: "rate_limited"
+                )
+            }
+            if case .currentUser = route,
+               let sessionError = Self.currentUserFailure(statusCode: httpResponse.statusCode, data: data) {
+                throw sessionError
+            }
+            if httpResponse.statusCode == 403 {
+                throw Self.errorFromForbiddenStatus(data: data)
+            }
+            if let errBody = try? JSONDecoder().decode(DiscourseErrorResponse.self, from: data),
+               !errBody.errors.isEmpty {
+                throw DiscourseAPIError(messages: errBody.errors, errorType: errBody.errorType)
+            }
+            throw Self.serverUnavailableError(statusCode: httpResponse.statusCode)
+        }
+        return RawDiscourseResponse(data: data, url: url, statusCode: httpResponse.statusCode)
+    }
+
+    func adaptedRequest(_ request: URLRequest) async throws -> URLRequest {
+        try await withCheckedThrowingContinuation { continuation in
+            interceptor.adapt(request, for: session) { result in
+                continuation.resume(with: result)
+            }
+        }
+    }
+
     func handleCloudflareChallengeIfNeeded(
         route: DiscourseRouter,
         response: DataResponse<Data, AFError>,
         source: String? = nil
     ) -> Bool {
-        guard let detection = Self.cloudflareChallengeDetection(response.response, data: response.data) else {
+        handleCloudflareChallengeIfNeeded(
+            route: route,
+            response: response.response,
+            data: response.data,
+            source: source
+        )
+    }
+
+    func handleCloudflareChallengeIfNeeded(
+        route: DiscourseRouter,
+        response: HTTPURLResponse?,
+        data: Data?,
+        source: String? = nil
+    ) -> Bool {
+        guard let detection = Self.cloudflareChallengeDetection(response, data: data) else {
             return false
         }
         let shouldNotify = executionContext.allowsInteractiveWebRecovery
         Self.handleCloudflareChallengeDetected(
             baseURL: baseURL,
-            responseURL: response.response?.url,
+            responseURL: response?.url,
             source: source ?? cloudflareLogSource,
             routePath: route.path,
             method: route.method.rawValue,

@@ -54,6 +54,11 @@ final class CloudflareBackgroundVerificationService {
             log("skipped reason=\(reason) base=\(key) skip=verification_grace")
             return true
         }
+        if !CloudflareVerificationPolicy.shouldAttemptBackgroundVerification() {
+            log("skipped reason=\(reason) base=\(key) skip=interactive_challenge")
+            postNeedsUserInteraction(baseURL: baseURL, responseURL: responseURL, reason: "interactive_challenge")
+            return false
+        }
 
         if let active = activeAttempts[key] {
             log("joined active attempt reason=\(reason) base=\(key)")
