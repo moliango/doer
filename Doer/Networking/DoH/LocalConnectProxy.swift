@@ -962,7 +962,10 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                 request: gatewayRequest,
                 echConfig: echConfig,
                 originAddress: hostname
-            )
+            ) { [weak self, weak client] ok in
+                guard !ok, let self, let client else { return }
+                self.reject(client, reason: "gateway tls")
+            }
             return
         }
         sendConnectSuccess(
@@ -983,24 +986,34 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         upstream: NWConnection,
         request: DohGatewayHTTPRequest,
         echConfig: Data?,
-        originAddress: String
+        originAddress: String,
+        onHandshake: @escaping (Bool) -> Void = { _ in }
     ) {
         do {
-            let alpn = H2MitmALPN.protocols(h2Enabled: config.h2Mitm)
+            // Gateway rewrite is HTTP/1.1 origin-form. Do not offer h2.
             let origin = try OriginNIOClient(
                 sni: request.host,
-                applicationProtocols: alpn,
+                applicationProtocols: H2MitmALPN.protocols(h2Enabled: false),
                 echConfig: echConfig
             )
+            let needsPipe = originClients[ObjectIdentifier(client)] == nil
             originClients[ObjectIdentifier(client)] = origin
             DohDebugLog.record(
                 "Gateway origin TLS NIOSSL \(request.host) \(originAddress) echInjected=\(origin.echInjected) echBytes=\(echConfig?.count ?? 0)"
             )
-            startGatewayNIOOrigin(origin, client: client, upstream: upstream, request: request)
+            startGatewayNIOOrigin(
+                origin,
+                client: client,
+                upstream: upstream,
+                request: request,
+                originAddress: originAddress,
+                pipeClient: needsPipe,
+                onHandshake: onHandshake
+            )
         } catch {
             DohDebugLog.record("Gateway origin TLS failed: \(error)")
-            reject(client, reason: "gateway tls")
             close(upstream)
+            onHandshake(false)
         }
     }
 
@@ -1008,28 +1021,71 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         _ origin: OriginNIOClient,
         client: NWConnection,
         upstream: NWConnection,
-        request: DohGatewayHTTPRequest
+        request: DohGatewayHTTPRequest,
+        originAddress: String,
+        pipeClient: Bool,
+        onHandshake: @escaping (Bool) -> Void
     ) {
             var loggedHello = false
+            var loggedInbound = false
+            var handshakeSettled = false
+            let settleHandshake: (Bool) -> Void = { [weak self, weak origin] ok in
+                guard let self, !handshakeSettled else { return }
+                handshakeSettled = true
+                if ok {
+                    DohDebugLog.record(
+                        "Gateway origin TLS ready \(request.host) \(originAddress) echAccepted=\(origin?.echAccepted == true)"
+                    )
+                } else {
+                    DohDebugLog.record(
+                        "Gateway origin TLS failed \(request.host) \(originAddress): \(origin?.lastError ?? "unknown")"
+                    )
+                }
+                onHandshake(ok)
+            }
+            let timeout = DispatchWorkItem { [weak self, weak upstream] in
+                guard let self, let upstream else { return }
+                DohDebugLog.record("Gateway origin TLS timeout \(request.host) \(originAddress)")
+                self.close(upstream)
+                settleHandshake(false)
+            }
+            queue.asyncAfter(deadline: .now() + 8, execute: timeout)
             origin.start(
                 socketRead: { [weak self, weak upstream] deliver in
                     guard let self, let upstream else { return }
                     func receive() {
-                        upstream.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { data, _, _, _ in
-                            guard let data else {
+                        upstream.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { data, _, isComplete, error in
+                            if let data, !data.isEmpty {
+                                if !loggedInbound {
+                                    loggedInbound = true
+                                    DohDebugLog.record(
+                                        "Gateway origin inbound \(data.count) bytes from \(originAddress) first=\(Self.hexPrefix(data))"
+                                    )
+                                }
+                                if let ss = self.ssSessions[ObjectIdentifier(upstream)] {
+                                    let payload = ss.decrypt(data)
+                                    if payload.isEmpty {
+                                        receive()
+                                        return
+                                    }
+                                    deliver(payload)
+                                } else {
+                                    deliver(data)
+                                }
+                                return
+                            }
+                            if let error {
+                                DohDebugLog.record(
+                                    "Gateway origin TCP read error \(originAddress): \(error)"
+                                )
                                 deliver(nil)
                                 return
                             }
-                            if let ss = self.ssSessions[ObjectIdentifier(upstream)] {
-                                let payload = ss.decrypt(data)
-                                if payload.isEmpty {
-                                    receive()
-                                    return
-                                }
-                                deliver(payload)
-                            } else {
-                                deliver(data)
+                            if isComplete {
+                                deliver(nil)
+                                return
                             }
+                            receive()
                         }
                     }
                     receive()
@@ -1041,9 +1097,17 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                     }
                     if !loggedHello {
                         loggedHello = true
-                        DohDebugLog.record("Gateway origin ClientHello \(data.count) bytes to \(request.host)")
+                        let clearSNI = data.range(of: Data(request.host.utf8)) != nil
+                        DohDebugLog.record(
+                            "Gateway origin ClientHello \(data.count) bytes to \(request.host) sni_clear=\(clearSNI) echInjected=\(origin.echInjected)"
+                        )
                     }
-                    self.sendStreaming(upstream, content: data) { _ in
+                    self.sendStreaming(upstream, content: data) { sendError in
+                        if let sendError {
+                            DohDebugLog.record(
+                                "Gateway origin TCP write error \(originAddress): \(sendError)"
+                            )
+                        }
                         done()
                     }
                 },
@@ -1051,11 +1115,11 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                     guard let self, let client else { return }
                     self.sendStreaming(client, content: plaintext) { _ in }
                 },
-                completion: { [weak self, weak client, weak upstream] ok in
-                    guard let self, !ok else { return }
-                    self.queue.async {
-                        self.close(client)
-                        self.close(upstream)
+                completion: { _ in },
+                onHandshake: { [weak self] ok in
+                    timeout.cancel()
+                    self?.queue.async {
+                        settleHandshake(ok)
                     }
                 }
             )
@@ -1068,7 +1132,9 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                     done()
                 }
             }
-            pipeGatewayClient(client, origin: origin)
+            if pipeClient {
+                pipeGatewayClient(client)
+            }
     }
 
     private func enqueueGatewayOrigin(_ work: @escaping () -> Void) {
@@ -1089,100 +1155,113 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         gatewayOriginInflight = max(0, gatewayOriginInflight - 1)
     }
 
-    /// TLS to the hostname via Network.framework. Connecting to a Cloudflare
-    /// anycast IP with a clear SNI ClientHello is reset (POSIX 54).
-    private func startOriginSystemTLS(
-        host: String,
-        port: UInt16,
-        attempt: Int = 0,
-        onReady: @escaping (NWConnection) -> Void,
-        onFail: @escaping (Error?) -> Void
+    /// Raw TCP to the DoH-resolved origin IP, then NIO TLS with ECH.
+    /// Network.framework TLS to the hostname sends a clear `SNI=linux.do` and is RST.
+    private func connectGatewayOriginTCP(
+        addresses: [String],
+        index: Int,
+        request: DohGatewayHTTPRequest,
+        client: NWConnection,
+        echConfig: Data?
     ) {
-        startOriginConnection(
-            host: host,
-            port: port,
-            useTLS: true,
-            attempt: attempt,
-            onReady: onReady,
-            onFail: onFail
-        )
-    }
-
-    private func startOriginConnection(
-        host: String,
-        port: UInt16,
-        useTLS: Bool,
-        attempt: Int = 0,
-        onReady: @escaping (NWConnection) -> Void,
-        onFail: @escaping (Error?) -> Void
-    ) {
-        guard let nwPort = NWEndpoint.Port(rawValue: port) else {
-            onFail(nil)
+        guard index < addresses.count,
+              let port = NWEndpoint.Port(rawValue: request.port)
+        else {
+            completeGatewayOrigin()
+            DohDebugLog.record("Gateway origin TCP gave up \(request.host)")
+            reject(client, reason: "gateway tls")
             return
         }
-        let label = useTLS ? "system TLS" : "pass-through TCP"
-        DohDebugLog.record("Gateway origin \(label) \(host) attempt=\(attempt)")
-        let parameters = useTLS ? tlsTCPParameters(serverName: host) : Self.streamTCPParameters()
+
+        let target = addresses[index]
+        DohDebugLog.record("Gateway origin TCP \(target):\(port.rawValue) \(request.host)")
         let upstream = NWConnection(
-            host: .name(host, nil),
-            port: nwPort,
-            using: parameters
+            host: Self.endpointHost(from: target),
+            port: port,
+            using: Self.streamTCPParameters()
         )
         connections[ObjectIdentifier(upstream)] = upstream
         let gate = HandshakeGate()
-        let timeout = DispatchWorkItem { [weak self, weak upstream] in
-            guard let self, let upstream else { return }
-            gate.settle {
-                DohDebugLog.record("Gateway origin \(label) timeout \(host)")
-                self.close(upstream)
-                if attempt < 1 {
-                    self.startOriginConnection(
-                        host: host,
-                        port: port,
-                        useTLS: useTLS,
-                        attempt: attempt + 1,
-                        onReady: onReady,
-                        onFail: onFail
-                    )
-                } else {
-                    onFail(nil)
-                }
-            }
+        let timeout = DispatchWorkItem { [weak upstream] in
+            guard let upstream else { return }
+            DohDebugLog.record("Gateway origin TCP timeout \(target)")
+            upstream.cancel()
         }
-        queue.asyncAfter(deadline: .now() + 10, execute: timeout)
-        upstream.stateUpdateHandler = { [weak self, weak upstream] state in
+        queue.asyncAfter(deadline: .now() + 8, execute: timeout)
+        upstream.stateUpdateHandler = { [weak self, weak upstream, weak client] state in
             guard let self, let upstream else { return }
             switch state {
             case .waiting(let error):
-                DohDebugLog.record("Gateway origin \(label) waiting \(host): \(error)")
+                DohDebugLog.record("Gateway origin TCP waiting \(target): \(error)")
             case .ready:
                 gate.settle {
                     timeout.cancel()
-                    DohDebugLog.record("Gateway origin \(label) ready \(host)")
-                    onReady(upstream)
-                }
-            case .failed(let error):
-                gate.settle {
-                    timeout.cancel()
-                    DohDebugLog.record("Gateway origin \(label) failed \(host): \(error)")
-                    self.close(upstream)
-                    if attempt < 1 {
-                        self.startOriginConnection(
-                            host: host,
-                            port: port,
-                            useTLS: useTLS,
-                            attempt: attempt + 1,
-                            onReady: onReady,
-                            onFail: onFail
+                    DohDebugLog.record("Gateway origin TCP ready \(target)")
+                    guard let client else {
+                        self.completeGatewayOrigin()
+                        self.close(upstream)
+                        return
+                    }
+                    self.startGatewayOrigin(
+                        client: client,
+                        upstream: upstream,
+                        request: request,
+                        echConfig: echConfig,
+                        originAddress: target
+                    ) { ok in
+                        if ok {
+                            self.completeGatewayOrigin()
+                            return
+                        }
+                        self.close(upstream)
+                        self.connectGatewayOriginTCP(
+                            addresses: addresses,
+                            index: index + 1,
+                            request: request,
+                            client: client,
+                            echConfig: echConfig
                         )
-                    } else {
-                        onFail(error)
                     }
                 }
-            case .cancelled:
+            case .failed(let error):
+                timeout.cancel()
+                self.connections.removeValue(forKey: ObjectIdentifier(upstream))
+                DohDebugLog.record("Gateway origin TCP error \(target): \(error)")
+                if gate.hasSettled {
+                    return
+                }
                 gate.settle {
-                    timeout.cancel()
-                    onFail(nil)
+                    guard let client else {
+                        self.completeGatewayOrigin()
+                        return
+                    }
+                    self.connectGatewayOriginTCP(
+                        addresses: addresses,
+                        index: index + 1,
+                        request: request,
+                        client: client,
+                        echConfig: echConfig
+                    )
+                }
+            case .cancelled:
+                timeout.cancel()
+                self.connections.removeValue(forKey: ObjectIdentifier(upstream))
+                if gate.hasSettled {
+                    return
+                }
+                gate.settle {
+                    DohDebugLog.record("Gateway origin TCP failed \(target), trying next")
+                    guard let client else {
+                        self.completeGatewayOrigin()
+                        return
+                    }
+                    self.connectGatewayOriginTCP(
+                        addresses: addresses,
+                        index: index + 1,
+                        request: request,
+                        client: client,
+                        echConfig: echConfig
+                    )
                 }
             default:
                 break
@@ -1191,39 +1270,22 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         upstream.start(queue: queue)
     }
 
-    private func tlsTCPParameters(serverName: String) -> NWParameters {
-        let tcp = NWProtocolTCP.Options()
-        tcp.noDelay = true
-        let tls = NWProtocolTLS.Options()
-        serverName.withCString { pointer in
-            sec_protocol_options_set_tls_server_name(tls.securityProtocolOptions, pointer)
-        }
-        for proto in H2MitmALPN.protocols(h2Enabled: config.h2Mitm) {
-            proto.withCString { pointer in
-                sec_protocol_options_add_tls_application_protocol(tls.securityProtocolOptions, pointer)
-            }
-        }
-        let parameters = NWParameters(tls: tls, tcp: tcp)
-        if #available(iOS 16.0, *) {
-            parameters.preferNoProxies = true
-        }
-        return parameters
-    }
-
-    private func pipeGatewayClient(_ client: NWConnection, origin: OriginNIOClient) {
+    private func pipeGatewayClient(_ client: NWConnection) {
         client.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { [weak self, weak client] data, _, isComplete, error in
             guard let self, let client else { return }
+            guard let origin = self.originClients[ObjectIdentifier(client)] else { return }
             if let data, !data.isEmpty {
                 origin.writeApplication(data) { _, _ in }
-                self.pipeGatewayClient(client, origin: origin)
+                self.pipeGatewayClient(client)
                 return
             }
             if error != nil || isComplete { return }
-            self.pipeGatewayClient(client, origin: origin)
+            self.pipeGatewayClient(client)
         }
     }
 
     private func openGateway(_ request: DohGatewayHTTPRequest, client: NWConnection) {
+        let request = resolvedGatewayRequest(request)
         resolver.resolve(host: request.host) { [weak self, weak client] result in
             guard let self, let client else { return }
             self.queue.async {
@@ -1233,15 +1295,13 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                     self.reject(client, reason: "resolve failed")
                 case .success(let answer):
                     let addresses = Self.preferredUpstreamAddresses(answer.addresses)
-                    guard let first = addresses.first else {
+                    guard !addresses.isEmpty else {
                         self.reject(client, reason: "empty resolved address")
                         return
                     }
                     DohDebugLog.record("Gateway resolved \(request.host) -> \(addresses.joined(separator: ", "))")
                     if let ech = answer.echConfig, !ech.isEmpty {
-                        DohDebugLog.record(
-                            "Gateway ECH config \(ech.count) bytes unused until inject works"
-                        )
+                        DohDebugLog.record("Gateway ECH config \(ech.count) bytes")
                     }
                     if let hop = self.config.upstream, hop.isValid {
                         self.connectViaConfiguredUpstream(
@@ -1257,51 +1317,149 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                         return
                     }
                     self.enqueueGatewayOrigin {
-                        self.startOriginSystemTLS(host: request.host, port: request.port) { tlsConn in
-                            self.completeGatewayOrigin()
-                            DohDebugLog.record(
-                                "Gateway origin HTTP send \(request.originForm.count) bytes \(request.host)"
-                            )
-                            self.sendStreaming(tlsConn, content: request.originForm) { error in
-                                if error != nil {
-                                    DohDebugLog.record(
-                                        "Gateway origin HTTP send failed: \(String(describing: error))"
-                                    )
-                                    self.close(client)
-                                    self.close(tlsConn)
-                                    return
-                                }
-                                self.startByteTunnel(
-                                    client: client,
-                                    upstream: tlsConn,
-                                    bufferedClientData: Data(),
-                                    addresses: [first],
-                                    addressIndex: 0,
-                                    hostname: request.host,
-                                    readyReply: Data(),
-                                    requestAlreadySent: true
-                                )
-                            }
-                        } onFail: { error in
-                            self.completeGatewayOrigin()
-                            DohDebugLog.record(
-                                "Gateway origin system TLS gave up \(request.host): \(String(describing: error))"
-                            )
-                            self.reject(client, reason: "gateway tls")
-                        }
+                        self.connectGatewayOriginTCP(
+                            addresses: addresses,
+                            index: 0,
+                            request: request,
+                            client: client,
+                            echConfig: answer.echConfig
+                        )
                     }
                 }
             }
         }
     }
 
-    /// Origin TLS injects DNS HTTPS ECH so the wire does not show `SNI=linux.do`.
-    /// Encrypted DNS + clear SNI fails with SSL错误 on networks that RST Cloudflare.
-    static var originECHReady = true
+    /// WKWebView can only attach the CONNECT proxy via `proxyConfigurations` (iOS 17+).
+    /// iOS 16 loads the CF challenge through Gateway loopback HTTP instead.
+    static var supportsWebViewCONNECTProxy: Bool {
+        if #available(iOS 17.0, *) { return true }
+        return false
+    }
+
+    /// Kept for diagnostics. Encrypted DNS does not follow system A/AAAA for linux.do.
+    static var systemNameResolutionBlockedLinuxDo = false
+
+    static var usesWebViewHTTPTransport: Bool {
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else {
+            return false
+        }
+        return UserDefaults.standard.bool(forKey: "dohEnabled")
+            && !supportsWebViewCONNECTProxy
+            && preferSafariWebViewHTTP
+    }
+
+    static func refreshSystemNameResolutionHealth() {
+        let ips = DohBootstrapTransport.systemAddresses(for: "linux.do")
+        systemNameResolutionBlockedLinuxDo = isPoisonedLinuxDoAddresses(ips)
+        if systemNameResolutionBlockedLinuxDo {
+            DohDebugLog.record(
+                "system DNS linux.do poisoned \(ips.joined(separator: ",")); Encrypted DNS stays on"
+            )
+        } else if !ips.isEmpty {
+            DohDebugLog.record("system DNS linux.do \(ips.prefix(4).joined(separator: ","))")
+        }
+    }
+
+    static func abandonWebViewHTTPTransport(reason: String) {
+        guard !supportsWebViewCONNECTProxy else { return }
+        DohDebugLog.record("DoH iOS16 WebView HTTP retry reason=\(reason)")
+    }
+
+    static func enableSafariWebViewHTTPAfterChallenge() {
+        guard !supportsWebViewCONNECTProxy else { return }
+        preferSafariWebViewHTTP = false
+        DohDebugLog.record("DoH stay on Encrypted DNS after Turnstile")
+    }
+
+    static func isPoisonedLinuxDoAddresses(_ ips: [String]) -> Bool {
+        let trimmed = ips.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard !trimmed.isEmpty else { return false }
+        if trimmed.contains(where: EncryptedDnsService.isTunnelFakeIP) { return true }
+        if trimmed.contains(where: isFacebookOrGarbageAddress) { return true }
+        if trimmed.contains(where: isCloudflareishAddress) { return false }
+        return true
+    }
+
+    static func isFacebookOrGarbageAddress(_ ip: String) -> Bool {
+        let value = ip.lowercased()
+        if value.contains("face:b00c") { return true }
+        if value.hasPrefix("2a03:2880:") { return true }
+        if value.hasPrefix("31.13.") { return true }
+        if value.hasPrefix("157.240.") { return true }
+        if value.hasPrefix("69.171.") { return true }
+        if value.hasPrefix("173.252.") { return true }
+        return false
+    }
+
+    static func isCloudflareishAddress(_ ip: String) -> Bool {
+        let value = ip.lowercased()
+        if value.hasPrefix("2606:4700:") { return true }
+        if value.hasPrefix("2803:f800:") { return true }
+        if value.hasPrefix("2400:cb00:") { return true }
+        if value.hasPrefix("2405:b500:") { return true }
+        if value.hasPrefix("2405:8100:") { return true }
+        if value.hasPrefix("2a06:98c1:") { return true }
+        if value.hasPrefix("2c0f:f248:") { return true }
+        guard let ipv4 = IPv4Address(value) else { return false }
+        let bytes = [UInt8](ipv4.rawValue)
+        guard bytes.count >= 2 else { return false }
+        let a = Int(bytes[0])
+        let b = Int(bytes[1])
+        if a == 104, (16...31).contains(b) { return true }
+        if a == 172, (64...71).contains(b) { return true }
+        if a == 162, b == 158 { return true }
+        if a == 188, b == 114 { return true }
+        if a == 108, b == 162 { return true }
+        if a == 141, b == 101 { return true }
+        if a == 198, b == 41 { return true }
+        if a == 197, b == 234 { return true }
+        if a == 190, b == 93 { return true }
+        if a == 173, b == 245 { return true }
+        return false
+    }
+
+    /// Origin ECH / Gateway MITM. Off restores the v1.8.4 Encrypted DNS path:
+    /// URLSession uses system TLS to DoH-resolved IPs, so existing `cf_clearance`
+    /// works and linux.do does not need a Turnstile hop.
+    static var originECHReady = false
+
+    /// Hidden WKWebView JSON. Off: pass-through CONNECT RSTs linux.do TLS.
+    static var preferSafariWebViewHTTP = false
+
+    /// Forum host used when WKWebView talks HTTP to 127.0.0.1 without `Host`.
+    static var gatewayOriginHost = "linux.do"
+
+    static func isLoopbackGatewayHost(_ host: String) -> Bool {
+        let normalized = host.lowercased()
+        return normalized == "127.0.0.1"
+            || normalized == "localhost"
+            || normalized == "::1"
+    }
+
+    private func resolvedGatewayRequest(_ request: DohGatewayHTTPRequest) -> DohGatewayHTTPRequest {
+        guard Self.isLoopbackGatewayHost(request.host) else { return request }
+        let origin = Self.gatewayOriginHost
+        let rewritten = request.withOriginHost(origin)
+        DohDebugLog.record("Gateway loopback Host \(request.host) -> \(origin)")
+        return rewritten
+    }
 
     static func shouldMITM(_ host: String) -> Bool {
         guard originECHReady else { return false }
         return !MitmCertificateAuthority.isCloudflareChallengeHost(host)
+    }
+
+    static var shouldSwitchToSystemTLSAfterWebViewClearance: Bool {
+        originECHReady && !supportsWebViewCONNECTProxy
+    }
+
+    static func switchToSystemTLSAfterWebViewClearance() {
+        guard originECHReady else { return }
+        originECHReady = false
+        preferSafariWebViewHTTP = false
+        DohDebugLog.record("DoH restore Encrypted DNS after WebView CF pass")
+        LightweightDohProxyService.shared.forceReapplyFromSettings()
     }
 
     private static func hexPrefix(_ data: Data, limit: Int = 16) -> String {
@@ -1352,6 +1510,8 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
 
 private final class HandshakeGate {
     private var settled = false
+
+    var hasSettled: Bool { settled }
 
     func settle(_ body: () -> Void) {
         guard !settled else { return }

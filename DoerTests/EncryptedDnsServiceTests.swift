@@ -59,23 +59,36 @@ final class EncryptedDnsServiceTests: XCTestCase {
             ]),
             ["119.29.29.29", "104.21.16.56"]
         )
-        XCTAssertTrue(
+        XCTAssertFalse(
             EncryptedDnsService.shouldSkipEncryptedDNS(
                 systemIPs: ["198.18.10.184"],
                 forumIPs: []
             )
         )
-        XCTAssertTrue(
+        XCTAssertFalse(
             EncryptedDnsService.shouldSkipEncryptedDNS(
                 systemIPs: ["104.21.16.56"],
                 forumIPs: ["198.18.0.1"]
             )
         )
-        XCTAssertFalse(
-            EncryptedDnsService.shouldSkipEncryptedDNS(
-                systemIPs: ["104.21.16.56", "172.67.210.33"],
-                forumIPs: ["172.66.166.61"]
-            )
+    }
+
+    func testEncryptedDNSDropsForeignResolverExtras() throws {
+        let url = try XCTUnwrap(URL(string: "https://ld.ddd.oaifree.com/query-dns"))
+        XCTAssertEqual(
+            EncryptedDnsService.usableEncryptedDNSBootstrapIPs(
+                ["198.18.10.184", "119.29.29.29", "104.21.16.56", "172.67.210.33"],
+                serverURL: url
+            ),
+            ["104.21.16.56", "172.67.210.33"]
+        )
+        let tencent = try XCTUnwrap(URL(string: "https://dns.pub/dns-query"))
+        XCTAssertEqual(
+            EncryptedDnsService.usableEncryptedDNSBootstrapIPs(
+                ["119.29.29.29", "119.28.28.28"],
+                serverURL: tencent
+            ),
+            ["119.29.29.29", "119.28.28.28"]
         )
     }
 

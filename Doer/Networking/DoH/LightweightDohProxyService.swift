@@ -16,6 +16,13 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     private var lastSignature = ""
     private var applyGeneration = 0
     private var consecutiveStartFailures = 0
+    /// True while `applyConfiguration` is in flight. Prevents a second start
+    /// from `ensureProxyAlive` before the first listener is bound.
+    private var isStartingProxy = false
+    /// Encrypted DNS (and CONNECT, when used) finished applying for the
+    /// current signature. iOS 16 has no CONNECT listener; this still counts
+    /// as live so resume does not restart DoH in a loop.
+    private var stackReady = false
 
     private init() {}
 
@@ -61,9 +68,6 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         let browserReady = proxy?.isRunning == true
         lock.unlock()
         if !LocalConnectProxy.originECHReady {
-            if #available(iOS 17.0, *), browserReady {
-                return "应用内 DoH · Encrypted DNS · 浏览器直通"
-            }
             return "应用内 DoH · Encrypted DNS"
         }
         let mode = config.isGatewayMode ? "Gateway" : "CONNECT MITM"
@@ -85,7 +89,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         let shouldApply = DohProxyLiveness.shouldReapply(
             enabled: shouldEnable,
             signatureChanged: signature != lastSignature,
-            isLive: proxy?.isRunning == true
+            isLive: proxy?.isRunning == true || stackReady || isStartingProxy
         )
         if !shouldApply {
             lock.unlock()
@@ -95,11 +99,20 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         let generation = applyGeneration
         lastSignature = signature
         configurationVersion += 1
+        isStartingProxy = true
         lock.unlock()
 
         startQueue.async { [weak self] in
             self?.applyConfiguration(shouldEnable: shouldEnable, generation: generation)
         }
+    }
+
+    /// Origin ECH / Gateway flipped at runtime (iOS 16 after a WebView CF pass).
+    func forceReapplyFromSettings() {
+        lock.lock()
+        lastSignature = ""
+        lock.unlock()
+        configureFromSettings()
     }
 
     /// FluxDo `ensureProxyAlive`. iOS can drop the loopback listener and
@@ -110,10 +123,14 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         lock.lock()
         consecutiveStartFailures = 0
         let isLive = proxy?.isRunning == true
+        let starting = isStartingProxy
+        let ready = stackReady
         lock.unlock()
         reassertNameResolution()
-        if isLive {
-            publishAppClients()
+        if isLive || starting || ready {
+            if isLive {
+                publishAppClients()
+            }
             return
         }
         DohDebugLog.record("DoH proxy not alive; restarting")
@@ -140,6 +157,8 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             if !config.bootstrapReady {
                 lock.lock()
                 lastError = DohProxyError.bootstrapUnavailable(config.serverURL)
+                isStartingProxy = false
+                stackReady = false
                 lock.unlock()
                 DohDebugLog.record("DoH start aborted: no bootstrap IP for \(config.serverURL)")
                 EncryptedDnsService.disable()
@@ -150,6 +169,8 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             if let upstream = config.upstream, !upstream.isValid {
                 lock.lock()
                 lastError = DohProxyError.queryFailed("upstream")
+                isStartingProxy = false
+                stackReady = false
                 lock.unlock()
                 DohDebugLog.record("DoH start aborted: invalid upstream \(upstream.host):\(upstream.port)")
                 EncryptedDnsService.disable()
@@ -179,20 +200,27 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
                     EncryptedDnsService.disable()
                     DohDebugLog.record("Encrypted DNS skipped: no bootstrap IPs")
                 }
-                // WKWebView ignores Network.framework Encrypted DNS. Keep CONNECT
-                // pass-through (no MITM) so CF challenge / login / in-app browser
-                // resolve via DoH instead of poisoned system DNS.
-                startWebViewProxyNow()
-                DohDebugLog.record("DoH Encrypted DNS + CONNECT pass-through for WKWebView")
+                LocalConnectProxy.preferSafariWebViewHTTP = false
+                DohDebugLog.record("DoH Encrypted DNS for URLSession")
             }
         } else {
             lock.lock()
             lastError = nil
+            isStartingProxy = false
+            stackReady = false
             lock.unlock()
             DohDebugLog.record("DoH disabled; not starting local proxy")
             EncryptedDnsService.disable()
             stop()
         }
+        lock.lock()
+        if applyGeneration == generation {
+            isStartingProxy = false
+            if shouldEnable {
+                stackReady = true
+            }
+        }
+        lock.unlock()
         publishAppClients()
     }
 
@@ -205,8 +233,10 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
 
     /// WKWebView ignores Encrypted DNS. Wait for CONNECT pass-through so
     /// Cloudflare challenge / login pages resolve via DoH, not system DNS.
+    /// iOS 16 WKWebView cannot attach CONNECT; skip the listener.
     func prepareBrowserProxy() async {
         guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
+        guard LocalConnectProxy.supportsWebViewCONNECTProxy else { return }
         startWebViewProxyNow()
         for _ in 0..<40 {
             if ensureRunning() != nil { break }
@@ -245,6 +275,8 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
                 self.proxy = nil
                 self.lastError = error
                 self.configurationVersion += 1
+                self.stackReady = false
+                self.isStartingProxy = false
             }
             self.lock.unlock()
             DohDebugLog.record("WebView DoH proxy failed: \(error.localizedDescription)")
@@ -420,12 +452,8 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         return config.connectionProxyDictionary
     }
 
-    /// Attach the local proxy. Gateway API sessions skip CONNECT so they can
-    /// speak plaintext HTTP to 127.0.0.1 (excepted from the proxy list).
-    ///
-    /// API/Alamofire only uses CONNECT when ECH/MITM is ready. Pass-through
-    /// CONNECT to Cloudflare anycast often gets TLS RST; Encrypted DNS stays
-    /// the URLSession path until MITM can inject ECH.
+    /// Attach CONNECT only for MITM/Gateway. Pass-through CONNECT RSTs
+    /// linux.do TLS; Encrypted DNS is the URLSession path.
     func apply(
         to sessionConfiguration: URLSessionConfiguration,
         hostURL: String? = nil,

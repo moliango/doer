@@ -54,17 +54,12 @@ nonisolated enum EncryptedDnsService {
         if let host = spec.url.host {
             system = DohBootstrapTransport.systemAddresses(for: host)
         }
-        let forum = DohBootstrapTransport.systemAddresses(for: "linux.do")
-        if shouldSkipEncryptedDNS(systemIPs: system, forumIPs: forum) {
-            let fake = (system + forum).filter(isTunnelFakeIP).prefix(2).joined(separator: ",")
-            disable()
-            DohDebugLog.record("Encrypted DNS skipped: fake-ip \(fake)")
-            return
-        }
-        for ip in system where !ips.contains(ip) && !isTunnelFakeIP(ip) {
+        // Clash fake-ip on another path is ignored. Encrypted DNS talks to
+        // the DoH host's own IPs (system DNS of that host, minus fake-ip).
+        for ip in system.reversed() where !ips.contains(ip) && !isTunnelFakeIP(ip) {
             ips.insert(ip, at: 0)
         }
-        ips = usableBootstrapIPs(ips)
+        ips = usableEncryptedDNSBootstrapIPs(ips, serverURL: spec.url)
         guard !ips.isEmpty else {
             disable()
             DohDebugLog.record("Encrypted DNS skipped: no bootstrap IPs")
@@ -124,11 +119,44 @@ nonisolated enum EncryptedDnsService {
     }
 
     static func shouldSkipEncryptedDNS(systemIPs: [String], forumIPs: [String] = []) -> Bool {
-        systemIPs.contains(where: isTunnelFakeIP) || forumIPs.contains(where: isTunnelFakeIP)
+        _ = (systemIPs, forumIPs)
+        return false
     }
 
     static func usableBootstrapIPs(_ ips: [String]) -> [String] {
         orderedBootstrapIPs(ips.filter { !isTunnelFakeIP($0) }, preferIPv6: false)
+    }
+
+    /// Encrypted DNS must reach the DoH hostname, not an unrelated recursive
+    /// resolver. `119.29.29.29` is Tencent DNS and is only valid for `dns.pub`.
+    static func usableEncryptedDNSBootstrapIPs(_ ips: [String], serverURL: URL) -> [String] {
+        let inferred = DohServerCatalog.inferredBootstrapIPs(for: serverURL.absoluteString)
+        let host = (serverURL.host ?? "").lowercased()
+        return orderedBootstrapIPs(
+            ips.filter { isUsableEncryptedDNSBootstrapIP($0, host: host, inferred: inferred) },
+            preferIPv6: false
+        )
+    }
+
+    static func isUsableEncryptedDNSBootstrapIP(
+        _ ip: String,
+        host: String,
+        inferred: [String]
+    ) -> Bool {
+        if isTunnelFakeIP(ip) { return false }
+        if inferred.contains(ip) { return true }
+        if host == ip.lowercased() { return true }
+        if isForeignBuiltinResolver(ip, host: host) { return false }
+        return true
+    }
+
+    static func isForeignBuiltinResolver(_ ip: String, host: String) -> Bool {
+        for server in DohServerCatalog.builtIn {
+            let serverHost = URL(string: server.url)?.host?.lowercased()
+            if serverHost == host { continue }
+            if server.bootstrapIPs.contains(ip) { return true }
+        }
+        return false
     }
 
     /// Live resolver IPs first, IPv4 before IPv6. Hardcoded anycast like

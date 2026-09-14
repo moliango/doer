@@ -121,6 +121,13 @@ final class WebSessionRefreshService: NSObject {
         }
 
         lastAttemptAt[baseURL] = Date()
+        if UserDefaults.standard.bool(forKey: "dohEnabled"), !LocalConnectProxy.originECHReady {
+            DohDebugLog.record(
+                "web session refresh skipped reason=\(reason) skip=encrypted_dns",
+                subsystem: "Auth"
+            )
+            return WebCookieStore.shared.hasDiscourseWebSessionCookie(for: base)
+        }
         let task = Task { @MainActor [weak self] in
             guard let self else { return false }
             return await self.refresh(baseURL: base, reason: reason)
