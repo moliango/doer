@@ -34,6 +34,25 @@ final class TopicPreviewMorphTests: XCTestCase {
     }
 
     @MainActor
+    func testMorphTransformStaysUniformWhenSourceAspectDiffers() {
+        let card = CGRect(x: 20, y: 80, width: 360, height: 640)
+        let cell = CGRect(x: 16, y: 200, width: 360, height: 96)
+        let transform = TopicPreviewMorphTransform.make(cardFrame: card, anchorFrame: cell)
+        XCTAssertEqual(transform.a, transform.d, accuracy: 0.0001)
+        XCTAssertEqual(transform.a, 96 / 640, accuracy: 0.0001)
+        XCTAssertEqual(transform.b, 0, accuracy: 0.0001)
+        XCTAssertEqual(transform.c, 0, accuracy: 0.0001)
+    }
+
+    func testMorphTransformFallsBackToUniformNudgeWithoutAnchor() {
+        let transform = TopicPreviewMorphTransform.make(
+            cardFrame: CGRect(x: 0, y: 0, width: 360, height: 640),
+            anchorFrame: nil
+        )
+        XCTAssertEqual(transform.a, 0.92, accuracy: 0.0001)
+        XCTAssertEqual(transform.d, 0.92, accuracy: 0.0001)
+    }
+
     func testPreviewLinkPolicyKeepsSameTopicInPlace() {
         XCTAssertEqual(
             TopicPreviewLinkPolicy.behavior(

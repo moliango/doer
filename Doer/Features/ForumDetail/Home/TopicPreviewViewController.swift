@@ -88,6 +88,7 @@ final class TopicPreviewViewController: UIViewController {
     private let statsStack = UIStackView()
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let closeButton = UIButton(type: .system)
+    private var actionBar: UIView?
     private var cardHeightConstraint: NSLayoutConstraint?
     private var presentationDelegate: TopicPreviewTransitioningDelegate?
     private var loadTask: Task<Void, Never>?
@@ -98,6 +99,7 @@ final class TopicPreviewViewController: UIViewController {
     /// The transition animator uses these views to animate the real card, not a blank snapshot.
     fileprivate var transitionCardView: UIView { cardView }
     fileprivate var transitionDimView: UIView { dimView }
+    fileprivate var transitionActionBar: UIView? { actionBar }
 
     init(
         api: DiscourseAPI,
@@ -188,7 +190,9 @@ final class TopicPreviewViewController: UIViewController {
         configureReadingContent()
         cardStack.addArrangedSubview(scrollView)
         if !actions.isEmpty {
-            cardStack.addArrangedSubview(makeActionStack())
+            let bar = makeActionStack()
+            actionBar = bar
+            cardStack.addArrangedSubview(bar)
         }
         applyHeader()
         applyExcerptFallback()
@@ -613,11 +617,15 @@ final class TopicPreviewViewController: UIViewController {
     private func makeIconActionButton(_ action: TopicPreviewAction, theme: AppSettings.ThemeStyle) -> UIButton {
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.setImage(action.image, for: .normal)
+        let symbol = UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+        button.setImage(action.image?.applyingSymbolConfiguration(symbol) ?? action.image, for: .normal)
         button.tintColor = theme.accentColor
         button.backgroundColor = theme.topicCountBackgroundColor
         button.layer.cornerRadius = 16
         button.layer.cornerCurve = .continuous
+        button.clipsToBounds = true
+        button.imageView?.contentMode = .scaleAspectFit
+        button.imageView?.clipsToBounds = true
         button.accessibilityLabel = action.title
         button.addAction(UIAction { [weak self] _ in
             self?.runPreviewAction(action)
@@ -626,6 +634,10 @@ final class TopicPreviewViewController: UIViewController {
             button.widthAnchor.constraint(equalToConstant: 32),
             button.heightAnchor.constraint(equalToConstant: 32),
         ])
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        button.setContentHuggingPriority(.required, for: .vertical)
+        button.setContentCompressionResistancePriority(.required, for: .vertical)
         return button
     }
 
@@ -766,9 +778,11 @@ private final class TopicPreviewTransitionAnimator: NSObject, UIViewControllerAn
             container.addSubview(previewView)
             previewView.layoutIfNeeded()
             let card = preview.transitionCardView
+            let actionBar = preview.transitionActionBar
             let initialTransform = transformToAnchor(for: card, in: container)
             card.transform = initialTransform
             preview.transitionDimView.alpha = 0
+            actionBar?.alpha = 0
             previewView.isUserInteractionEnabled = false
 
             UIView.animate(
@@ -784,6 +798,11 @@ private final class TopicPreviewTransitionAnimator: NSObject, UIViewControllerAn
                 previewView.isUserInteractionEnabled = finished
                 transitionContext.completeTransition(finished && !transitionContext.transitionWasCancelled)
             }
+            let barFade = UIAccessibility.isReduceMotionEnabled ? 0.01 : 0.18
+            let barDelay = UIAccessibility.isReduceMotionEnabled ? 0 : 0.16
+            UIView.animate(withDuration: barFade, delay: barDelay, options: [.curveEaseOut]) {
+                actionBar?.alpha = 1
+            }
             return
         }
 
@@ -794,6 +813,7 @@ private final class TopicPreviewTransitionAnimator: NSObject, UIViewControllerAn
         let previewView = preview.view!
         previewView.layoutIfNeeded()
         let card = preview.transitionCardView
+        let actionBar = preview.transitionActionBar
         card.transform = .identity
         let finalTransform = transformToAnchor(for: card, in: container)
         UIView.animate(
@@ -803,6 +823,7 @@ private final class TopicPreviewTransitionAnimator: NSObject, UIViewControllerAn
             animations: {
                 card.transform = finalTransform
                 preview.transitionDimView.alpha = 0
+                actionBar?.alpha = 0
             },
             completion: { finished in
                 transitionContext.completeTransition(finished && !transitionContext.transitionWasCancelled)
@@ -811,21 +832,34 @@ private final class TopicPreviewTransitionAnimator: NSObject, UIViewControllerAn
     }
 
     private func transformToAnchor(for card: UIView, in container: UIView) -> CGAffineTransform {
-        guard let anchorRect,
-              anchorRect.width > 1,
-              anchorRect.height > 1,
-              !anchorRect.isNull,
-              !anchorRect.isInfinite
+        let targetFrame = card.convert(card.bounds, to: container)
+        let convertedAnchor: CGRect? = {
+            guard let anchorRect else { return nil }
+            return container.convert(anchorRect, from: nil)
+        }()
+        return TopicPreviewMorphTransform.make(cardFrame: targetFrame, anchorFrame: convertedAnchor)
+    }
+}
+
+/// Uniform scale so circular action chips stay round during the morph.
+enum TopicPreviewMorphTransform {
+    static func make(cardFrame: CGRect, anchorFrame: CGRect?) -> CGAffineTransform {
+        guard let anchorFrame,
+              anchorFrame.width > 1,
+              anchorFrame.height > 1,
+              !anchorFrame.isNull,
+              !anchorFrame.isInfinite
         else {
             return CGAffineTransform(scaleX: 0.92, y: 0.92)
         }
-
-        let targetFrame = card.convert(card.bounds, to: container)
-        let anchorFrame = container.convert(anchorRect, from: nil)
-        let scaleX = max(anchorFrame.width / max(targetFrame.width, 1), 0.01)
-        let scaleY = max(anchorFrame.height / max(targetFrame.height, 1), 0.01)
-        return CGAffineTransform(translationX: anchorFrame.midX - targetFrame.midX, y: anchorFrame.midY - targetFrame.midY)
-            .scaledBy(x: scaleX, y: scaleY)
+        let scaleX = max(anchorFrame.width / max(cardFrame.width, 1), 0.01)
+        let scaleY = max(anchorFrame.height / max(cardFrame.height, 1), 0.01)
+        let scale = min(scaleX, scaleY)
+        return CGAffineTransform(
+            translationX: anchorFrame.midX - cardFrame.midX,
+            y: anchorFrame.midY - cardFrame.midY
+        )
+        .scaledBy(x: scale, y: scale)
     }
 }
 
