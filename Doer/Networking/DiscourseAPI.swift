@@ -639,10 +639,9 @@ final class DiscourseAPI {
                 )
             } else {
                 DohDebugLog.record(
-                    "challenge ignored during grace \(details.joined(separator: " "))",
+                    "challenge during grace still shows shield \(details.joined(separator: " "))",
                     subsystem: "CF"
                 )
-                return
             }
         }
         // Only pause the image pipeline for image/API forum traffic.

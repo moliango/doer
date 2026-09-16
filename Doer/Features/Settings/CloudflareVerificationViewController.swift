@@ -183,6 +183,20 @@ enum CloudflareVerificationPolicy {
         false
     }
 
+    /// Grace/suppression only delay auto-present. The floating shield must
+    /// appear on the first challenge so the user is not stuck waiting.
+    static func shouldShowShieldOnChallenge() -> Bool {
+        true
+    }
+
+    static func shouldAutoPresentVerificationSheet(
+        isInGrace: Bool,
+        isShieldSuppressed: Bool,
+        isAutoPresentBlocked: Bool
+    ) -> Bool {
+        !isInGrace && !isShieldSuppressed && !isAutoPresentBlocked
+    }
+
     /// A leftover `cf_clearance` can be stale. Only the short post-pass grace
     /// should suppress the human verification sheet.
     static func shouldPromptAfterBackgroundFailure(isInGrace: Bool) -> Bool {

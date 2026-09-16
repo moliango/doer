@@ -3,7 +3,7 @@ import UIKit
 import WebKit
 
 final class ForumContainerViewController: UIViewController, AuthGating {
-    private static let cloudflareShieldSuppressionDuration: TimeInterval = 30
+    private static let cloudflareShieldSuppressionDuration: TimeInterval = 5
     private static let launchOverlayMinimumDuration: TimeInterval = 1.15
     private static let launchOverlayMaximumDurationNanoseconds: UInt64 = 4_200_000_000
 
@@ -741,22 +741,21 @@ final class ForumContainerViewController: UIViewController, AuthGating {
         guard let baseURL = URL(string: baseURLString) ?? URL(string: forum.baseURL) else { return }
         let responseURL = notification.userInfo?[DiscourseAPI.cloudflareResponseURLUserInfoKey] as? URL
         if CloudflareVerificationPolicy.isInVerificationGrace(baseURL: baseURLString) {
-            logCloudflareState("challenge ignored during verification grace base=\(baseURLString)")
-            setCloudflareShieldButtonVisible(false, animated: true)
+            logCloudflareState("challenge during grace; showing shield without auto-present base=\(baseURLString)")
+            pendingCloudflareBaseURL = baseURL
+            pendingCloudflareResponseURL = notification.userInfo?[DiscourseAPI.cloudflareResponseURLUserInfoKey] as? URL
+            setCloudflareShieldButtonVisible(true, animated: true)
             return
         }
         pendingCloudflareBaseURL = baseURL
         pendingCloudflareResponseURL = responseURL
-        guard !isCloudflareShieldSuppressed() else {
-            logCloudflareState("challenge ignored while shield is suppressed base=\(baseURLString)")
-            setCloudflareShieldButtonVisible(false, animated: true)
-            return
+        if CloudflareVerificationPolicy.shouldShowShieldOnChallenge() {
+            setCloudflareShieldButtonVisible(true, animated: true)
         }
         guard !isPresentingCloudflareVerification else {
             logCloudflareState("background verification skipped because foreground verification is active base=\(baseURLString)")
             return
         }
-        setCloudflareShieldButtonVisible(true, animated: true)
         if CloudflareVerificationPolicy.shouldAttemptBackgroundVerification() {
             logCloudflareState("challenge detected; starting background verification base=\(baseURLString)")
             CloudflareBackgroundVerificationService.shared.ensureInBackground(
@@ -764,6 +763,15 @@ final class ForumContainerViewController: UIViewController, AuthGating {
                 reason: "container_challenge",
                 responseURL: responseURL
             )
+            return
+        }
+        let autoPresent = CloudflareVerificationPolicy.shouldAutoPresentVerificationSheet(
+            isInGrace: CloudflareVerificationPolicy.isInVerificationGrace(baseURL: baseURLString),
+            isShieldSuppressed: isCloudflareShieldSuppressed(),
+            isAutoPresentBlocked: isCloudflareAutoPresentBlocked()
+        )
+        guard autoPresent else {
+            logCloudflareState("challenge detected; shield shown, auto-present deferred base=\(baseURLString)")
             return
         }
         logCloudflareState("challenge detected; presenting foreground verification base=\(baseURLString)")
@@ -781,24 +789,17 @@ final class ForumContainerViewController: UIViewController, AuthGating {
         let responseURL = notification.userInfo?[DiscourseAPI.cloudflareResponseURLUserInfoKey] as? URL
         pendingCloudflareBaseURL = baseURL
         pendingCloudflareResponseURL = responseURL
-        if isCloudflareShieldSuppressed() {
-            logCloudflareState("needs-user ignored while shield is suppressed base=\(baseURLString)")
-            setCloudflareShieldButtonVisible(false, animated: true)
-            return
-        }
-        if isCloudflareAutoPresentBlocked() {
-            logCloudflareState("needs-user ignored while auto-present is blocked base=\(baseURLString)")
-            setCloudflareShieldButtonVisible(true, animated: true)
-            return
-        }
-        guard !isPresentingCloudflareVerification else {
-            logCloudflareState("needs-user ignored because foreground verification is already presented base=\(baseURLString)")
-            return
-        }
-        // Background CF pass failed (API or image path). Auto-present the verification
-        // sheet so the user is not stuck with blank images / only a tiny shield icon.
-        logCloudflareState("background verification needs user; presenting verification sheet base=\(baseURLString)")
         setCloudflareShieldButtonVisible(true, animated: true)
+        let autoPresent = CloudflareVerificationPolicy.shouldAutoPresentVerificationSheet(
+            isInGrace: CloudflareVerificationPolicy.isInVerificationGrace(baseURL: baseURLString),
+            isShieldSuppressed: isCloudflareShieldSuppressed(),
+            isAutoPresentBlocked: isCloudflareAutoPresentBlocked()
+        )
+        guard autoPresent, !isPresentingCloudflareVerification else {
+            logCloudflareState("needs-user; shield shown, auto-present deferred base=\(baseURLString)")
+            return
+        }
+        logCloudflareState("background verification needs user; presenting verification sheet base=\(baseURLString)")
         presentCloudflareVerification(baseURL: baseURL, responseURL: responseURL)
     }
 
@@ -990,16 +991,12 @@ final class ForumContainerViewController: UIViewController, AuthGating {
         pendingCloudflareBaseURL = baseURL
         pendingCloudflareResponseURL = responseURL
         isPresentingCloudflareVerification = true
-        setCloudflareShieldButtonVisible(false, animated: true)
         Task { @MainActor [weak self] in
-            await CloudflareBackgroundVerificationService.shared.beginForegroundVerification(
-                baseURL: baseURL
-            )
-            guard let self, self.isPresentingCloudflareVerification else {
-                CloudflareBackgroundVerificationService.shared.endForegroundVerification(
+            guard let self, self.isPresentingCloudflareVerification else { return }
+            Task {
+                await CloudflareBackgroundVerificationService.shared.beginForegroundVerification(
                     baseURL: baseURL
                 )
-                return
             }
             guard !presenter.isBeingDismissed, presenter.view.window != nil else {
                 CloudflareBackgroundVerificationService.shared.endForegroundVerification(
@@ -1029,6 +1026,7 @@ final class ForumContainerViewController: UIViewController, AuthGating {
                 sheet.preferredCornerRadius = 20
             }
             presenter.present(nav, animated: true)
+            self.setCloudflareShieldButtonVisible(false, animated: true)
         }
     }
 

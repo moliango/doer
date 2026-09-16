@@ -238,6 +238,21 @@ final class CloudflareRecoveryTests: XCTestCase {
         XCTAssertTrue(CloudflareVerificationPolicy.shouldTreatCooldownAsVerified(isInGrace: true))
         XCTAssertFalse(CloudflareVerificationPolicy.shouldTreatCooldownAsVerified(isInGrace: false))
         XCTAssertFalse(CloudflareVerificationPolicy.shouldAttemptBackgroundVerification())
+        XCTAssertTrue(CloudflareVerificationPolicy.shouldShowShieldOnChallenge())
+        XCTAssertFalse(
+            CloudflareVerificationPolicy.shouldAutoPresentVerificationSheet(
+                isInGrace: true,
+                isShieldSuppressed: false,
+                isAutoPresentBlocked: false
+            )
+        )
+        XCTAssertTrue(
+            CloudflareVerificationPolicy.shouldAutoPresentVerificationSheet(
+                isInGrace: false,
+                isShieldSuppressed: false,
+                isAutoPresentBlocked: false
+            )
+        )
     }
 
     func testRepeatedApiChallengesClearVerificationGrace() {
