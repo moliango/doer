@@ -593,6 +593,7 @@ class WeChatChatPostCell: UITableViewCell {
                 longPress.minimumPressDuration = 0.35
                 button.addGestureRecognizer(longPress)
             }
+            TopicDetailPressChrome.install(on: button)
             button.setContentHuggingPriority(.required, for: .horizontal)
             NSLayoutConstraint.activate([
                 button.heightAnchor.constraint(equalToConstant: Metrics.actionBarHeight),
