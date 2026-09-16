@@ -15,6 +15,9 @@ build/
 # Local config (contains DEVELOPMENT_TEAM etc.)
 .mise.local.toml
 
+# Local agent/session scratch
+.omo/
+
 # macOS
 .DS_Store
 *.swp
