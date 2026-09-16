@@ -123,6 +123,31 @@ final class DiscourseChatEndpointTests: XCTestCase {
             "/chat/api/channels/42/messages?page_size=50"
         )
         XCTAssertEqual(DiscourseChatEndpoint.channels(), "/chat/api/me/channels")
+        XCTAssertEqual(
+            DiscourseChatEndpoint.read(channelId: 9),
+            "/chat/api/channels/9/read"
+        )
+        XCTAssertEqual(
+            DiscourseChatEndpoint.read(channelId: 9, messageId: 88),
+            "/chat/api/channels/9/read?message_id=88"
+        )
+    }
+
+    func testReadReceiptReportsOnlyNewerMessageIds() throws {
+        let messages = try JSONDecoder().decode(
+            [DiscourseChatMessage].self,
+            from: Data(#"[{"id":10},{"id":40}]"#.utf8)
+        )
+        XCTAssertEqual(
+            ChatReadReceiptPolicy.messageIdToReport(from: messages, previouslyReported: 0),
+            40
+        )
+        XCTAssertNil(ChatReadReceiptPolicy.messageIdToReport(from: messages, previouslyReported: 40))
+        XCTAssertEqual(
+            ChatReadReceiptPolicy.messageIdToReport(from: messages, previouslyReported: 25),
+            40
+        )
+        XCTAssertNil(ChatReadReceiptPolicy.messageIdToReport(from: [], previouslyReported: 0))
     }
 
     func testPublicChannelDecodesCategoryLogoObject() throws {
@@ -446,8 +471,10 @@ final class DiscourseChatEndpointTests: XCTestCase {
         """
         let response = try JSONDecoder().decode(DiscourseChatChannelsResponse.self, from: Data(json.utf8))
         XCTAssertEqual(response.entryBadgeCount, 7)
+        XCTAssertEqual(response.entryBadgeCount(zeroing: [9]), 2)
         XCTAssertEqual(response.unreadCount(for: response.publicChannels[0]), 12)
         XCTAssertEqual(response.unreadCount(for: response.directMessageChannels[0]), 4)
+        XCTAssertEqual(response.unreadCount(for: response.directMessageChannels[0], zeroing: [9]), 0)
     }
 
     func testEntryBadgeFallsBackToMembershipWhenTrackingMissing() throws {

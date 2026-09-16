@@ -467,8 +467,12 @@ struct DiscourseChatChannelsResponse: Decodable {
     /// FluxDo / official chat-channel-unread-indicator: DM = unread + mention;
     /// public channels = mentions only; muted channels are ignored.
     var entryBadgeCount: Int {
-        badgeCount(in: directMessageChannels, includeUnread: true)
-            + badgeCount(in: publicChannels, includeUnread: false)
+        entryBadgeCount(zeroing: [])
+    }
+
+    func entryBadgeCount(zeroing channelIds: Set<Int>) -> Int {
+        badgeCount(in: directMessageChannels, includeUnread: true, zeroing: channelIds)
+            + badgeCount(in: publicChannels, includeUnread: false, zeroing: channelIds)
     }
 
     static func badgeText(for count: Int) -> String? {
@@ -476,13 +480,23 @@ struct DiscourseChatChannelsResponse: Decodable {
         return count > 99 ? "99+" : String(count)
     }
 
-    func unreadCount(for channel: DiscourseChatChannel) -> Int {
-        channelTracking[channel.id]?.unreadCount ?? channel.unreadCount
+    func unreadCount(for channel: DiscourseChatChannel, zeroing channelIds: Set<Int> = []) -> Int {
+        if channelIds.contains(channel.id) { return 0 }
+        return channelTracking[channel.id]?.unreadCount ?? channel.unreadCount
     }
 
-    private func badgeCount(in channels: [DiscourseChatChannel], includeUnread: Bool) -> Int {
+    func mentionCount(for channel: DiscourseChatChannel) -> Int {
+        channelTracking[channel.id]?.mentionCount ?? channel.mentionCount
+    }
+
+    private func badgeCount(
+        in channels: [DiscourseChatChannel],
+        includeUnread: Bool,
+        zeroing: Set<Int>
+    ) -> Int {
         channels.reduce(0) { partial, channel in
             if channel.currentUserMembership?.muted == true { return partial }
+            if zeroing.contains(channel.id) { return partial }
             let tracking = channelTracking[channel.id]
             let mentions = tracking?.mentionCount ?? channel.mentionCount
             let unread = includeUnread ? (tracking?.unreadCount ?? channel.unreadCount) : 0
@@ -787,6 +801,15 @@ enum DiscourseChatEndpoint {
     static func sendMessageModern(channelId: Int) -> String {
         "/chat/api/channels/\(channelId)/messages"
     }
+
+    /// FluxDo: `PUT /chat/api/channels/:id/read?message_id=` (monotonic last_read).
+    static func read(channelId: Int, messageId: Int? = nil) -> String {
+        var path = "/chat/api/channels/\(channelId)/read"
+        if let messageId {
+            path += "?message_id=\(messageId)"
+        }
+        return path
+    }
 }
 
 struct DiscourseChatChannelCreateResponse: Decodable {
@@ -904,6 +927,15 @@ enum ChatListFilterPolicy {
             if left != right { return left > right }
             return $0.displayTitle.localizedCaseInsensitiveCompare($1.displayTitle) == .orderedAscending
         }
+    }
+}
+
+enum ChatReadReceiptPolicy {
+    /// Newest loaded id, but never lower than a previously reported watermark.
+    static func messageIdToReport(from messages: [DiscourseChatMessage], previouslyReported: Int) -> Int? {
+        let latest = messages.map(\.id).max() ?? 0
+        guard latest > 0, latest > previouslyReported else { return nil }
+        return latest
     }
 }
 
@@ -1084,6 +1116,14 @@ extension DiscourseAPI {
         guard let data = response.data, !data.isEmpty else { return [] }
         let decoded = try JSONDecoder().decode(DiscourseChatMessagesResponse.self, from: data)
         return decoded.messages
+    }
+
+    func markChatChannelRead(channelId: Int, messageId: Int? = nil) async throws {
+        let response = await session.request(
+            baseURL + DiscourseChatEndpoint.read(channelId: channelId, messageId: messageId),
+            method: .put
+        ).serializingData().response
+        try throwIfUnsuccessfulChatResponse(response)
     }
 
     func sendChatMessage(

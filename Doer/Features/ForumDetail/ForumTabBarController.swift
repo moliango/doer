@@ -611,6 +611,13 @@ final class ForumTabBarController: UITabBarController {
         }
     }
 
+    /// After a channel is marked read: refresh the chat tab badge and drop
+    /// leftover chat notification unread on the bell.
+    func noteChatChannelRead() {
+        refreshChatTabBadge()
+        Task { await notificationCoordinator.refresh(deliverAlerts: false) }
+    }
+
 }
 
 private extension ForumTabBarController {

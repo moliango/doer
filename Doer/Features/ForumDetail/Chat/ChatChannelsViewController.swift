@@ -8,6 +8,8 @@ final class ChatChannelsViewController: ObservableViewController {
     private var isLoading = false
     private var errorMessage: String?
     private var loadGeneration = 0
+    /// Channels opened this session whose server unread may still lag the read receipt.
+    private var locallyReadChannelIds: Set<Int> = []
 
     private var visibleChannels: [DiscourseChatChannel] {
         ChatListFilterPolicy.visible(in: channelList, tab: selectedTab)
@@ -179,6 +181,9 @@ final class ChatChannelsViewController: ObservableViewController {
     }
 
     private func openChannel(_ channel: DiscourseChatChannel) {
+        locallyReadChannelIds.insert(channel.id)
+        applyEntryTabBadge(currentEntryBadgeCount)
+        tableView.reloadData()
         navigationController?.pushViewController(
             ChatRoomViewController(api: api, channel: channel),
             animated: true
@@ -195,7 +200,11 @@ final class ChatChannelsViewController: ObservableViewController {
             let response = try await api.fetchChatChannels()
             guard generation == loadGeneration else { return }
             channelList = response
-            applyEntryTabBadge(response.entryBadgeCount)
+            locallyReadChannelIds = locallyReadChannelIds.filter { id in
+                guard let channel = response.all.first(where: { $0.id == id }) else { return false }
+                return response.unreadCount(for: channel) > 0 || response.mentionCount(for: channel) > 0
+            }
+            applyEntryTabBadge(currentEntryBadgeCount)
         } catch {
             guard generation == loadGeneration else { return }
             errorMessage = error.localizedDescription
@@ -210,6 +219,15 @@ final class ChatChannelsViewController: ObservableViewController {
         item?.badgeValue = DiscourseChatChannelsResponse.badgeText(for: count)
         item?.badgeColor = .systemRed
     }
+
+    private var currentEntryBadgeCount: Int {
+        channelList?.entryBadgeCount(zeroing: locallyReadChannelIds) ?? 0
+    }
+
+    private func unreadCount(for channel: DiscourseChatChannel) -> Int {
+        channelList?.unreadCount(for: channel, zeroing: locallyReadChannelIds)
+            ?? (locallyReadChannelIds.contains(channel.id) ? 0 : channel.unreadCount)
+    }
 }
 
 extension ChatChannelsViewController: UITableViewDataSource, UITableViewDelegate {
@@ -221,7 +239,7 @@ extension ChatChannelsViewController: UITableViewDataSource, UITableViewDelegate
         let channel = visibleChannels[indexPath.row]
         let layout = TopicListLayoutKind.current
         let time = channel.lastMessageSentAt.map { TopicCell.formatDate($0) }
-        let unread = channelList?.unreadCount(for: channel) ?? channel.unreadCount
+        let unread = unreadCount(for: channel)
         let badge = DiscourseChatChannelsResponse.badgeText(for: unread)
         let avatarURL = channel.avatarURL(baseURL: api.baseURL)
         let item = TopicListSessionItem(
@@ -264,6 +282,8 @@ final class ChatRoomViewController: ObservableViewController, UITableViewDataSou
     private var messages: [DiscourseChatMessage] = []
     private var isLoading = false
     private var isSending = false
+    /// Monotonic last_read watermark; Discourse rejects a lower message id.
+    private var reportedReadMessageId = 0
     /// Keep the transcript pinned to the latest message (open, send, keyboard).
     private var pinsToLatestMessage = true
     private var currentUsername: String? {
@@ -309,6 +329,7 @@ final class ChatRoomViewController: ObservableViewController, UITableViewDataSou
     init(api: DiscourseAPI, channel: DiscourseChatChannel) {
         self.api = api
         self.channel = channel
+        self.reportedReadMessageId = channel.currentUserMembership?.lastReadMessageId ?? 0
         super.init(nibName: nil, bundle: nil)
         // Must be set before push for UIKit to hide the tab bar.
         hidesBottomBarWhenPushed = true
@@ -391,6 +412,11 @@ final class ChatRoomViewController: ObservableViewController, UITableViewDataSou
             await api.loadOrFetchEmojiMap()
             await loadMessages()
         }
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        reportReadReceiptIfNeeded()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -580,12 +606,32 @@ final class ChatRoomViewController: ObservableViewController, UITableViewDataSou
         isLoading = true
         do {
             messages = try await api.fetchChatMessages(channelId: channel.id)
+            reportReadReceiptIfNeeded()
         } catch {
             DoerFeedback.presentToast(error.localizedDescription, on: self)
             messages = []
         }
         isLoading = false
         updateUI()
+    }
+
+    private func reportReadReceiptIfNeeded() {
+        guard let messageId = ChatReadReceiptPolicy.messageIdToReport(
+            from: messages,
+            previouslyReported: reportedReadMessageId
+        ) else { return }
+        reportedReadMessageId = messageId
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await api.markChatChannelRead(channelId: channel.id, messageId: messageId)
+                await MainActor.run {
+                    (self.tabBarController as? ForumTabBarController)?.noteChatChannelRead()
+                }
+            } catch {
+                // Best-effort. A new room visit retries from membership last_read.
+            }
+        }
     }
 
     @objc private func openChannelInfo() {
