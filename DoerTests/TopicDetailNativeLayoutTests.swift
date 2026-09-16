@@ -17,6 +17,15 @@ final class TopicDetailNativeLayoutTests: XCTestCase {
         XCTAssertGreaterThan(foreground.relativeLuminanceForTesting, 0.7)
     }
 
+    @MainActor
+    func testEmptyTableNumberOfRowsDoesNotThrow() {
+        let table = UITableView(frame: .zero, style: .plain)
+        XCTAssertEqual(table.numberOfSections, 0)
+        XCTAssertEqual(table.doer_numberOfRows(inSection: 0), 0)
+        XCTAssertFalse(table.doer_hasRow(at: IndexPath(row: 0, section: 0)))
+        XCTAssertFalse(table.doer_scrollRow(at: IndexPath(row: 0, section: 0), position: .top, animated: false))
+    }
+
     func testTopicDetailPushDoesNotShiftRootViewHorizontally() {
         XCTAssertEqual(TopicDetailTransitionGeometry.pushInitialTransform.tx, 0, accuracy: 0.001)
     }
@@ -201,6 +210,19 @@ final class TopicDetailNativeLayoutTests: XCTestCase {
             idOrder[116] ?? Int.max,
             "floor 1 must sort before floor 16"
         )
+    }
+
+    func testJumpScrollOffsetPinsRowToTopWhenMovingUpward() {
+        let row = CGRect(x: 0, y: 8_400, width: 390, height: 220)
+        let y = TopicDetailJumpScrollPolicy.contentOffsetY(
+            rowRect: row,
+            viewportHeight: 800,
+            contentHeight: 20_000,
+            insetTop: 47,
+            insetBottom: 100,
+            position: .top
+        )
+        XCTAssertEqual(y, 8_400 - 47, accuracy: 0.5)
     }
 
     func testJumpWindowAroundFloorSixteenDoesNotIncludeOPUnlessNearHead() {
@@ -578,6 +600,20 @@ final class TopicDetailNativeLayoutTests: XCTestCase {
             XCTAssertEqual(button.fixedIconView.bounds.size, PostActionButton.iconSize)
             XCTAssertEqual(button.bounds.height, PostNativeCell.bottomBarHeight, accuracy: 0.5)
         }
+    }
+
+    @MainActor
+    func testPostActionButtonShowsPressHaloOnTouchDown() {
+        let button = PostActionButton(type: .system)
+        button.bounds = CGRect(x: 0, y: 0, width: 36, height: 36)
+        button.setFixedIcon(UIImage(systemName: "heart"), tintColor: .secondaryLabel)
+        XCTAssertFalse(button.isShowingPressHalo)
+
+        button.sendActions(for: .touchDown)
+        XCTAssertTrue(button.isShowingPressHalo)
+
+        button.isEnabled = false
+        XCTAssertFalse(button.isShowingPressHalo)
     }
 
     func testPostFooterKeepsSingleRowWithSupplementaryActions() throws {

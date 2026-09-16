@@ -19,6 +19,16 @@ extension UITableView {
     private static var scrollSettleWorkItemKey: UInt8 = 0
     private static var scrollSettledHandlerKey: UInt8 = 0
 
+    /// `numberOfRows(inSection:)` throws if the section does not exist.
+    func doer_numberOfRows(inSection section: Int) -> Int {
+        guard section >= 0, numberOfSections > section else { return 0 }
+        return numberOfRows(inSection: section)
+    }
+
+    func doer_hasRow(at indexPath: IndexPath) -> Bool {
+        indexPath.row >= 0 && indexPath.row < doer_numberOfRows(inSection: indexPath.section)
+    }
+
     /// True while any Diffable `apply` / structural mutation is in flight.
     var doer_isMutatingData: Bool {
         get { doer_mutationDepth > 0 }
@@ -135,7 +145,7 @@ extension UITableView {
             return
         }
         // Table must already have sections; empty tables crash on beginUpdates mid-teardown.
-        guard numberOfSections > 0, numberOfRows(inSection: 0) > 0 else {
+        guard doer_numberOfRows(inSection: 0) > 0 else {
             doer_hasPendingHeightPass = false
             return
         }
@@ -145,5 +155,47 @@ extension UITableView {
             self.beginUpdates()
             self.endUpdates()
         }
+    }
+
+    /// Two-pass jump so upward floor targeting is not stuck on estimated heights.
+    @discardableResult
+    func doer_scrollRow(
+        at indexPath: IndexPath,
+        position: UITableView.ScrollPosition,
+        animated: Bool
+    ) -> Bool {
+        guard doer_hasRow(at: indexPath) else { return false }
+
+        func applyPreciseOffset() {
+            guard doer_hasRow(at: indexPath) else { return }
+            layoutIfNeeded()
+            guard doer_hasRow(at: indexPath) else { return }
+            let rect = rectForRow(at: indexPath)
+            guard rect.height > 1 else { return }
+            let inset = adjustedContentInset
+            let y = TopicDetailJumpScrollPolicy.contentOffsetY(
+                rowRect: rect,
+                viewportHeight: bounds.height,
+                contentHeight: contentSize.height,
+                insetTop: inset.top,
+                insetBottom: inset.bottom,
+                position: position
+            )
+            setContentOffset(CGPoint(x: 0, y: y), animated: false)
+        }
+
+        var didScroll = false
+        UIView.performWithoutAnimation {
+            self.layoutIfNeeded()
+            guard self.doer_hasRow(at: indexPath) else { return }
+            self.scrollToRow(at: indexPath, at: position, animated: false)
+            applyPreciseOffset()
+            applyPreciseOffset()
+            didScroll = true
+        }
+        if didScroll, animated {
+            applyPreciseOffset()
+        }
+        return didScroll
     }
 }

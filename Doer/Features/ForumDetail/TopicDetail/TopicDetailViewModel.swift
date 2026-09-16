@@ -475,6 +475,32 @@ enum TopicDetailPaginationPolicy {
     }
 }
 
+/// Precise floor-jump offset. `scrollToRow` with estimated heights undershoots
+/// when moving upward; use the row rect after a layout pass instead.
+enum TopicDetailJumpScrollPolicy {
+    static func contentOffsetY(
+        rowRect: CGRect,
+        viewportHeight: CGFloat,
+        contentHeight: CGFloat,
+        insetTop: CGFloat,
+        insetBottom: CGFloat,
+        position: UITableView.ScrollPosition
+    ) -> CGFloat {
+        let y: CGFloat
+        switch position {
+        case .bottom:
+            y = rowRect.maxY - viewportHeight + insetBottom
+        case .middle:
+            y = rowRect.midY - viewportHeight / 2
+        default:
+            y = rowRect.minY - insetTop
+        }
+        let minY = -insetTop
+        let maxY = max(minY, contentHeight - viewportHeight + insetBottom)
+        return min(max(y, minY), maxY)
+    }
+}
+
 enum TopicDetailFirstPaintPolicy {
     /// Default / floor-1 entry paints the OP via `posts#by_number` before TopicView.
     /// Notification / deep-link jumps to another floor must not flash post 1 first.

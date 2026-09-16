@@ -77,8 +77,8 @@ extension TopicDetailViewController: TopicDetailBottomBarDelegate {
     }
 
     func scrollToTop() {
-        guard tableView.numberOfRows(inSection: 0) > 0 else { return }
-        tableView.scrollToRow(at: IndexPath(row: 0, section: 0), at: .top, animated: true)
+        let top = -tableView.adjustedContentInset.top
+        tableView.setContentOffset(CGPoint(x: 0, y: top), animated: true)
     }
 
     func jumpRelativeFloor(_ delta: Int) {
@@ -294,7 +294,9 @@ extension TopicDetailViewController: TopicDetailBottomBarDelegate {
         guard floor <= total else { return }
 
         let postId = viewModel.allPostIds[floor - 1]
-        if scrollToPostIdIfVisible(postId, animated: true) {
+        if scrollToPostIdIfVisible(postId, animated: false) {
+            pendingScrollToFloor = floor
+            view.setNeedsLayout()
             return
         }
 
@@ -328,10 +330,8 @@ extension TopicDetailViewController: TopicDetailBottomBarDelegate {
         guard tableView.numberOfSections > 0,
               let indexPath = dataSource.indexPath(for: postId)
         else { return false }
-        let rowCount = tableView.numberOfRows(inSection: indexPath.section)
-        guard rowCount > 0, indexPath.row >= 0, indexPath.row < rowCount else { return false }
-        tableView.scrollToRow(at: indexPath, at: .top, animated: animated)
-        return true
+        guard tableView.doer_hasRow(at: indexPath) else { return false }
+        return tableView.doer_scrollRow(at: indexPath, position: .top, animated: animated)
     }
 
     func showJumpOverlay() {

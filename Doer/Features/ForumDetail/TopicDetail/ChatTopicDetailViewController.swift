@@ -866,7 +866,7 @@ class ChatTopicDetailViewController: ObservableViewController {
     func scrollToPostId(_ postId: Int) {
         guard let index = dataSource.snapshot().indexOfItem(postId) else { return }
         let indexPath = IndexPath(row: index, section: 0)
-        tableView.scrollToRow(at: indexPath, at: jumpScrollPosition(), animated: false)
+        _ = tableView.doer_scrollRow(at: indexPath, position: jumpScrollPosition(), animated: false)
     }
 
     func shouldStayAtOpeningPost(floor: Int? = nil, postNumber: Int? = nil, postId: Int? = nil) -> Bool {
@@ -977,7 +977,7 @@ class ChatTopicDetailViewController: ObservableViewController {
         guard count > 0 else { return }
         tableView.layoutIfNeeded()
         let indexPath = IndexPath(row: count - 1, section: 0)
-        tableView.scrollToRow(at: indexPath, at: .bottom, animated: false)
+        _ = tableView.doer_scrollRow(at: indexPath, position: .bottom, animated: false)
     }
 
     func jumpToFloor(_ floor: Int) async {
@@ -987,9 +987,10 @@ class ChatTopicDetailViewController: ObservableViewController {
         let ids = viewModel.allPostIds
         guard floor >= 1, floor <= ids.count else { return }
         let postId = ids[floor - 1]
-        Task { @MainActor in
-            self.scrollToPostId(postId)
-        }
+        let top = -tableView.adjustedContentInset.top
+        tableView.setContentOffset(CGPoint(x: 0, y: top), animated: false)
+        tableView.layoutIfNeeded()
+        scrollToPostId(postId)
     }
 
     // MARK: - Auth / errors
@@ -1450,6 +1451,22 @@ class ChatTopicDetailViewController: ObservableViewController {
 /// start vertical scrolling. No `require(toFail:)` on the edge recognizer —
 /// waiting on it delays every left-edge pan and can freeze.
 final class TopicDetailPopAwareTableView: UITableView {
+    override init(frame: CGRect, style: UITableView.Style) {
+        super.init(frame: frame, style: style)
+        delaysContentTouches = false
+        canCancelContentTouches = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func touchesShouldCancel(in view: UIView) -> Bool {
+        if view is UIControl { return true }
+        return super.touchesShouldCancel(in: view)
+    }
+
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         if gestureRecognizer === panGestureRecognizer,
            let pan = gestureRecognizer as? UIPanGestureRecognizer {
@@ -1502,7 +1519,7 @@ extension ChatTopicDetailViewController: UITableViewDelegate {
             postRowHeightCache[postId] = cell.frame.height
         }
         var ahead: [Int] = [postId]
-        let total = tableView.numberOfRows(inSection: 0)
+        let total = tableView.doer_numberOfRows(inSection: 0)
         if !scrollBusy {
             for offset in 1...3 {
                 let next = indexPath.row + offset

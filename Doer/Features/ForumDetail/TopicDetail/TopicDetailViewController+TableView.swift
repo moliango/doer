@@ -156,7 +156,7 @@ extension TopicDetailViewController: UITableViewDelegate {
             displayedPostId = postId
             if !scrollBusy {
                 var ahead: [Int] = [postId]
-                let total = tableView.numberOfRows(inSection: 0)
+                let total = tableView.doer_numberOfRows(inSection: 0)
                 for offset in 1...3 {
                     let next = indexPath.row + offset
                     guard next < total,
@@ -174,7 +174,7 @@ extension TopicDetailViewController: UITableViewDelegate {
 
         // Next-window readiness: keep ~one page ahead of the visible stream index.
         // Backup: also fire near the end of the current table snapshot.
-        let totalRows = tableView.numberOfRows(inSection: 0)
+        let totalRows = tableView.doer_numberOfRows(inSection: 0)
         let nearSnapshotEnd = indexPath.row >= max(0, totalRows - TopicDetailPaginationPolicy.displayPrefetchRowThreshold)
         let streamIndex = displayedPostId.flatMap { id in viewModel.allPostIds.firstIndex(of: id) }
         if let streamIndex {

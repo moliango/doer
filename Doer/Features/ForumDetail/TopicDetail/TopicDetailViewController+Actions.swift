@@ -610,7 +610,7 @@ extension TopicDetailViewController {
     }
 
     func isReadingNearBottomForLiveSync() -> Bool {
-        let total = tableView.numberOfRows(inSection: 0)
+        let total = tableView.doer_numberOfRows(inSection: 0)
         guard total > 0 else { return true }
         let threshold = TopicDetailPaginationPolicy.liveSyncNearBottomRows
         let maxVisible = tableView.indexPathsForVisibleRows?.map(\.row).max() ?? 0

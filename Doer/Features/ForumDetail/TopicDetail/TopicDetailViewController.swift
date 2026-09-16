@@ -1547,6 +1547,10 @@ final class TopicDetailViewController: ObservableViewController {
                             earlierAnchor: pending.earlierAnchor
                         )
                     } else if self.pendingScrollToFloor != nil {
+                        // Jump replaced the window while we were far down. Keep the old
+                        // offset and upward targeting undershoots on estimated heights.
+                        let top = -self.tableView.adjustedContentInset.top
+                        self.tableView.setContentOffset(CGPoint(x: 0, y: top), animated: false)
                         self.view.setNeedsLayout()
                     }
                     self.updateVisibleReadingPosts()
