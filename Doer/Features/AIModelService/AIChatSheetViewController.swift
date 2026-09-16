@@ -568,7 +568,7 @@ final class AIChatSheetViewController: UIViewController, UITableViewDataSource, 
 
     private func updateStreamingRow() {
         let streamingIndex = IndexPath(row: messages.count, section: 0)
-        guard tableView.numberOfRows(inSection: 0) > streamingIndex.row else {
+        guard tableView.doer_numberOfRows(inSection: 0) > streamingIndex.row else {
             tableView.reloadData()
             return
         }
@@ -583,7 +583,7 @@ final class AIChatSheetViewController: UIViewController, UITableViewDataSource, 
     }
 
     private func scrollToBottom(animated: Bool) {
-        let rows = tableView.numberOfRows(inSection: 0)
+        let rows = tableView.doer_numberOfRows(inSection: 0)
         guard rows > 0 else { return }
         tableView.scrollToRow(at: IndexPath(row: rows - 1, section: 0), at: .bottom, animated: animated)
     }

@@ -473,7 +473,7 @@ final class HomeCategoryDrawerView: UIView {
         activeTagGroupIndex = sender.tag
         rebuildTagGroupChips()
         let section = sender.tag
-        if tableView.numberOfSections > section, tableView.numberOfRows(inSection: section) > 0 {
+        if tableView.doer_numberOfRows(inSection: section) > 0 {
             tableView.scrollToRow(at: IndexPath(row: 0, section: section), at: .top, animated: true)
         } else if tableView.numberOfSections > section {
             // header only

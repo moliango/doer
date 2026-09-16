@@ -533,7 +533,7 @@ extension HomeViewController: UITableViewDelegate {
         // Follow-scroll avatar warm-up (not only the first page of the list).
         prefetchAvatarsAroundVisibleRows(around: indexPath)
 
-        let totalRows = tableView.numberOfRows(inSection: 0)
+        let totalRows = tableView.doer_numberOfRows(inSection: 0)
         if indexPath.row >= totalRows - 5,
            viewModel.canLoadMore,
            viewModel.loadMoreErrorMessage == nil,

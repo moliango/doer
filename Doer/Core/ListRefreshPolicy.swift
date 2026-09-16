@@ -57,7 +57,7 @@ final class DoerListRefreshPolicy: NSObject {
 
     func handleWillDisplay(at indexPath: IndexPath) {
         guard let tableView else { return }
-        let totalRows = tableView.numberOfRows(inSection: 0)
+        let totalRows = tableView.doer_numberOfRows(inSection: 0)
         guard totalRows > 0, indexPath.row >= totalRows - 6 else { return }
         guard !isRefreshing, !isLoadingMore else { return }
         isLoadingMore = true

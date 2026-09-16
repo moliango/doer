@@ -345,7 +345,7 @@ extension CategoryTopicsViewController: UITableViewDelegate {
     }
 
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
-        let totalRows = tableView.numberOfRows(inSection: 0)
+        let totalRows = tableView.doer_numberOfRows(inSection: 0)
         if indexPath.row >= totalRows - 5 {
             Task {
                 await viewModel.loadMoreTopics()
