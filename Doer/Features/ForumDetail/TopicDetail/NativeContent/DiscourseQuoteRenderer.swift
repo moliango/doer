@@ -49,7 +49,7 @@ enum DiscourseQuoteRenderer: BlockRenderer {
 
         AvatarImageLoader.setImage(
             on: avatarImageView,
-            url: AvatarImageLoader.url(from: avatarURL, baseURL: config.baseURL ?? "", size: 48),
+            url: AvatarImageLoader.url(from: avatarURL, baseURL: config.baseURL ?? "", size: AvatarImageLoader.primaryAvatarPixelSize),
             placeholder: UIImage(systemName: "person.crop.circle")
         )
 

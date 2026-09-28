@@ -39,6 +39,6 @@ final class MessagesViewModel: DoerObservableObject {
     func avatarURL(for topic: DiscourseTopicList.Topic, baseURL: String) -> URL? {
         guard let userId = topic.posters?.first?.userId,
               let template = usersById[userId]?.avatarTemplate else { return nil }
-        return AvatarImageLoader.url(from: template, baseURL: baseURL, size: 96)
+        return AvatarImageLoader.url(from: template, baseURL: baseURL, size: AvatarImageLoader.primaryAvatarPixelSize)
     }
 }

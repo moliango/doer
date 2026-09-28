@@ -166,7 +166,7 @@ enum AvatarImageLoader {
         DohDebugLog.record("avatar caches cleared (user-requested)", subsystem: "Avatar")
     }
 
-    static func url(from template: String?, baseURL: String, size: Int = 96) -> URL? {
+    static func url(from template: String?, baseURL: String, size: Int = primaryAvatarPixelSize) -> URL? {
         guard let template else { return nil }
         let sized = template
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -191,8 +191,9 @@ enum AvatarImageLoader {
         template: String?,
         baseURL: String,
         userId: Int? = nil,
-        size: Int = 96,
-        placeholder: UIImage? = defaultPlaceholder
+        size: Int = primaryAvatarPixelSize,
+        placeholder: UIImage? = defaultPlaceholder,
+        completed: SDExternalCompletionBlock? = nil
     ) {
         let url = url(from: template, baseURL: baseURL, size: size)
         setImage(
@@ -201,7 +202,8 @@ enum AvatarImageLoader {
             placeholder: placeholder,
             cloudflareBaseURL: baseURL,
             avatarBaseURL: baseURL,
-            userId: userId
+            userId: userId,
+            completed: completed
         )
     }
 
@@ -211,7 +213,8 @@ enum AvatarImageLoader {
         placeholder: UIImage? = defaultPlaceholder,
         cloudflareBaseURL: String? = nil,
         avatarBaseURL: String? = nil,
-        userId: Int? = nil
+        userId: Int? = nil,
+        completed: SDExternalCompletionBlock? = nil
     ) {
         imageView.tintColor = .tertiaryLabel
         guard let url else {
@@ -219,8 +222,10 @@ enum AvatarImageLoader {
             ImagePaintPolicy.prepareForLoad(on: imageView)
             if let cached = cachedUserAvatar(baseURL: avatarBaseURL ?? cloudflareBaseURL, userId: userId) {
                 imageView.image = cached.image
+                completed?(cached.image, nil, .memory, cached.url)
             } else {
                 imageView.image = placeholder
+                completed?(nil, nil, .none, nil)
             }
             return
         }
@@ -235,6 +240,7 @@ enum AvatarImageLoader {
                 baseURL: avatarBaseURL ?? cloudflareBaseURL,
                 userId: userId
             )
+            completed?(cachedImage, nil, .memory, url)
             return
         }
 
@@ -243,6 +249,20 @@ enum AvatarImageLoader {
         let cachedUserAvatar = cachedUserAvatar(baseURL: avatarBaseURL ?? cloudflareBaseURL, userId: userId)
         if let cachedUserAvatar {
             imageView.image = cachedUserAvatar.image
+            if AvatarCachePolicy.shouldSkipNetworkAfterUserCacheHit(
+                cachedURL: cachedUserAvatar.url,
+                requestedURL: url
+            ) {
+                ImagePaintPolicy.paint(cachedUserAvatar.image, on: imageView, source: .memory)
+                inMemoryCache.setObject(
+                    cachedUserAvatar.image,
+                    forKey: cacheKey,
+                    cost: cachedUserAvatar.image.avatarCacheCost
+                )
+                imageView.sd_cancelCurrentImageLoad()
+                completed?(cachedUserAvatar.image, nil, .memory, url)
+                return
+            }
         }
         ImagePaintPolicy.applyWaitingFillIfNeeded(on: imageView)
 
@@ -265,7 +285,7 @@ enum AvatarImageLoader {
             options: loadOptions,
             context: context(for: url, cloudflareBaseURL: cloudflareBaseURL),
             progress: nil,
-            completed: { image, _, cacheType, _ in
+            completed: { image, error, cacheType, imageURL in
                 if let image {
                     ImagePaintPolicy.paint(image, on: imageView, source: ImagePaintCacheSource(cacheType))
                     inMemoryCache.setObject(image, forKey: cacheKey, cost: image.avatarCacheCost)
@@ -279,6 +299,7 @@ enum AvatarImageLoader {
                     imageView.image = placeholder
                     imageView.tintColor = .tertiaryLabel
                 }
+                completed?(image, error, cacheType, imageURL)
             }
         )
     }
@@ -720,6 +741,32 @@ enum AvatarImageLoader {
         components.port = base.port
         components.path = "/"
         return components.string
+    }
+}
+
+/// Reuse a cached avatar across `{size}` variants so home/topic/notification
+/// chrome does not each hit Cloudflare for the same person.
+enum AvatarCachePolicy {
+    static func shouldSkipNetworkAfterUserCacheHit(cachedURL: URL, requestedURL: URL) -> Bool {
+        avatarIdentity(cachedURL) == avatarIdentity(requestedURL)
+    }
+
+    static func avatarIdentity(_ url: URL) -> String {
+        let parts = url.path.split(separator: "/").map(String.init)
+        if let index = parts.firstIndex(of: "user_avatar"), index + 4 < parts.count {
+            let forum = parts[index + 1].lowercased()
+            let username = parts[index + 2].lowercased()
+            let file = parts[index + 4].lowercased()
+            return "user_avatar:\(forum):\(username):\(file)"
+        }
+        if let index = parts.firstIndex(of: "letter_avatar_proxy"), parts.count > index + 1 {
+            let identity = parts[index..<(parts.count - 1)].joined(separator: "/").lowercased()
+            return "letter:\(identity)"
+        }
+        if let host = url.host {
+            return "\(host.lowercased())\(url.path.lowercased())"
+        }
+        return url.absoluteString.lowercased()
     }
 }
 

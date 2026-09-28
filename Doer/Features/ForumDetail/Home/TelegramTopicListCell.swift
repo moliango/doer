@@ -293,12 +293,11 @@ final class TelegramTopicListCell: UITableViewCell {
     func configure(
         with topic: DiscourseTopicList.Topic,
         avatarURL: URL?,
-        avatarUserId: Int? = nil, // kept for call-site parity with other list cells
+        avatarUserId: Int? = nil,
         categoryName: String?,
         tags: [String] = [],
         categoryBaseURL: String? = nil
     ) {
-        _ = avatarUserId
         let accent = UIColor(red: 0.20, green: 0.56, blue: 0.93, alpha: 1) // #3390EC
         let isDark = traitCollection.userInterfaceStyle == .dark
 
@@ -396,11 +395,13 @@ final class TelegramTopicListCell: UITableViewCell {
         monogramLabel.isHidden = false
         avatarImageView.backgroundColor = Self.avatarColor(for: plain)
         avatarImageView.image = nil
-        ForumImageLoader.setImage(
+        AvatarImageLoader.setImage(
             on: avatarImageView,
             url: avatarURL,
             placeholder: nil,
-            cloudflareBaseURL: categoryBaseURL
+            cloudflareBaseURL: categoryBaseURL,
+            avatarBaseURL: categoryBaseURL,
+            userId: avatarUserId
         ) { [weak self] image, _, _, _ in
             self?.monogramLabel.isHidden = (image != nil)
         }
@@ -491,11 +492,12 @@ final class TelegramTopicListCell: UITableViewCell {
             baseURL: item.baseURL ?? "",
             size: AvatarImageLoader.primaryAvatarPixelSize
         )
-        ForumImageLoader.setImage(
+        AvatarImageLoader.setImage(
             on: avatarImageView,
             url: resolvedURL,
             placeholder: nil,
-            cloudflareBaseURL: item.baseURL
+            cloudflareBaseURL: item.baseURL,
+            avatarBaseURL: item.baseURL
         ) { [weak self] image, _, _, _ in
             self?.monogramLabel.isHidden = (image != nil)
             if image != nil {

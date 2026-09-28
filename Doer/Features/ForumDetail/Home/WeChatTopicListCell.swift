@@ -317,11 +317,12 @@ final class WeChatTopicListCell: UITableViewCell {
         currentAvatarURL = resolvedURL
         avatarImageView.layer.cornerRadius = 6
         applySessionMonogram(item)
-        ForumImageLoader.setImage(
+        AvatarImageLoader.setImage(
             on: avatarImageView,
             url: resolvedURL,
             placeholder: nil,
-            cloudflareBaseURL: item.baseURL
+            cloudflareBaseURL: item.baseURL,
+            avatarBaseURL: item.baseURL
         ) { [weak self] image, _, _, _ in
             self?.monogramLabel.isHidden = (image != nil)
             if image != nil {

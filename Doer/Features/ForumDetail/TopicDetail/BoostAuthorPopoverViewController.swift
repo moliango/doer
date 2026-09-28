@@ -117,7 +117,7 @@ final class BoostAuthorPopoverViewController: UIViewController {
         avatar.backgroundColor = .tertiarySystemFill
         AvatarImageLoader.setImage(
             on: avatar,
-            url: AvatarImageLoader.url(from: boost.user.avatarTemplate, baseURL: baseURL, size: 96),
+            url: AvatarImageLoader.url(from: boost.user.avatarTemplate, baseURL: baseURL, size: AvatarImageLoader.primaryAvatarPixelSize),
             placeholder: UIImage(systemName: "person.crop.circle.fill")
         )
 

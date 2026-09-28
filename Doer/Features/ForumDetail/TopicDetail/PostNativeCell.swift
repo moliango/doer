@@ -903,6 +903,7 @@ final class PostNativeCell: UITableViewCell {
             on: avatarImageView,
             template: post.avatarTemplate,
             baseURL: baseURL,
+            userId: post.userId,
             size: currentAvatarTemplateSize
         )
         // Self-sizing can lock in a short height on first pass (code blocks / wrapped text).

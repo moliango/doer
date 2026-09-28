@@ -828,7 +828,7 @@ private final class NotificationCell: UITableViewCell {
 
     static func avatarURL(for notification: DiscourseNotification, baseURL: String) -> URL? {
         guard let template = notification.actingUserAvatarTemplate ?? notification.data.avatarTemplate else { return nil }
-        return AvatarImageLoader.url(from: template, baseURL: baseURL, size: 96)
+        return AvatarImageLoader.url(from: template, baseURL: baseURL, size: AvatarImageLoader.primaryAvatarPixelSize)
     }
 
     static func formatDate(_ string: String) -> String {

@@ -261,7 +261,7 @@ struct DiscourseChatChannel: Decodable, Identifiable, Equatable {
         if let template = chatable?.users?.first(where: {
             ($0.avatarTemplate?.isEmpty == false)
         })?.avatarTemplate {
-            return AvatarImageLoader.url(from: template, baseURL: baseURL, size: 96)
+            return AvatarImageLoader.url(from: template, baseURL: baseURL, size: AvatarImageLoader.primaryAvatarPixelSize)
         }
         return nil
     }

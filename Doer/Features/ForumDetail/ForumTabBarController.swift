@@ -843,7 +843,7 @@ private extension ForumTabBarController {
     }
 
     func applyMeTabAvatar(template: String?, at index: Int, avatarKey: String) {
-        guard let url = AvatarImageLoader.url(from: template, baseURL: api.baseURL, size: 96) else {
+        guard let url = AvatarImageLoader.url(from: template, baseURL: api.baseURL, size: AvatarImageLoader.primaryAvatarPixelSize) else {
             renderedMeAvatarKey = nil
             applyDefaultMeTabIcon(at: index)
             return

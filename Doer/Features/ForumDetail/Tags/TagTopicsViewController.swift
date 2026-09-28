@@ -157,7 +157,7 @@ final class TagTopicsViewController: ObservableViewController {
             let avatarURL = AvatarImageLoader.url(
                 from: self.viewModel.avatarTemplate(for: topic),
                 baseURL: self.api.baseURL,
-                size: 96
+                size: AvatarImageLoader.primaryAvatarPixelSize
             )
             cell.configure(
                 with: topic,
