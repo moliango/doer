@@ -49,17 +49,12 @@ nonisolated enum EncryptedDnsService {
     private static var lastApplied: ResolverSpec?
 
     static func apply(_ spec: ResolverSpec) {
-        var ips = spec.bootstrapIPs
-        var system: [String] = []
-        if let host = spec.url.host {
-            system = DohBootstrapTransport.systemAddresses(for: host)
-        }
-        // Clash fake-ip on another path is ignored. Encrypted DNS talks to
-        // the DoH host's own IPs (system DNS of that host, minus fake-ip).
-        for ip in system.reversed() where !ips.contains(ip) && !isTunnelFakeIP(ip) {
-            ips.insert(ip, at: 0)
-        }
-        ips = usableEncryptedDNSBootstrapIPs(ips, serverURL: spec.url)
+        let system = spec.url.host.map { DohBootstrapTransport.systemAddresses(for: $0) } ?? []
+        let ips = encryptedDNSBootstrapIPs(
+            configured: spec.bootstrapIPs,
+            system: system,
+            serverURL: spec.url
+        )
         guard !ips.isEmpty else {
             disable()
             DohDebugLog.record("Encrypted DNS skipped: no bootstrap IPs")
@@ -125,6 +120,21 @@ nonisolated enum EncryptedDnsService {
 
     static func usableBootstrapIPs(_ ips: [String]) -> [String] {
         orderedBootstrapIPs(ips.filter { !isTunnelFakeIP($0) }, preferIPv6: false)
+    }
+
+    /// FluxDo path: live system IPs of the DoH host first, configured IPs as
+    /// fallback. Only Clash / Surge fake-ip is dropped; catalog filtering left
+    /// Encrypted DNS on dead anycast bootstraps.
+    static func encryptedDNSBootstrapIPs(
+        configured: [String],
+        system: [String],
+        serverURL: URL
+    ) -> [String] {
+        var ips = configured
+        for ip in system.reversed() where !ips.contains(ip) && !isTunnelFakeIP(ip) {
+            ips.insert(ip, at: 0)
+        }
+        return usableBootstrapIPs(ips)
     }
 
     /// Encrypted DNS must reach the DoH hostname, not an unrelated recursive

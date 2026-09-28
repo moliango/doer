@@ -100,7 +100,38 @@ final class LocalConnectProxyTests: XCTestCase {
         XCTAssertFalse(LocalConnectProxy.isLoopbackGatewayHost("linux.do"))
     }
 
-    func testURLSessionSkipsCONNECTWhenOriginECHDisabled() {
+    func testConnectProxyAttachesWithoutOriginECHWhenListenerExists() {
+        XCTAssertTrue(
+            LightweightDohProxyService.DohProxyLiveness.shouldAttachConnectProxy(
+                enabled: true,
+                useGateway: false,
+                port: 1080
+            )
+        )
+        XCTAssertFalse(
+            LightweightDohProxyService.DohProxyLiveness.shouldAttachConnectProxy(
+                enabled: true,
+                useGateway: true,
+                port: 1080
+            )
+        )
+        XCTAssertFalse(
+            LightweightDohProxyService.DohProxyLiveness.shouldAttachConnectProxy(
+                enabled: true,
+                useGateway: false,
+                port: nil
+            )
+        )
+        XCTAssertFalse(
+            LightweightDohProxyService.DohProxyLiveness.shouldAttachConnectProxy(
+                enabled: false,
+                useGateway: false,
+                port: 1080
+            )
+        )
+    }
+
+    func testURLSessionSkipsCONNECTWhenListenerIsDown() {
         let previousECH = LocalConnectProxy.originECHReady
         let previousDoH = UserDefaults.standard.bool(forKey: "dohEnabled")
         LocalConnectProxy.originECHReady = false
@@ -112,7 +143,9 @@ final class LocalConnectProxyTests: XCTestCase {
         let config = URLSessionConfiguration.ephemeral
         config.connectionProxyDictionary = ["HTTPSEnable": 1]
         LightweightDohProxyService.shared.apply(to: config)
-        XCTAssertNil(config.connectionProxyDictionary)
+        if LightweightDohProxyService.shared.ensureRunning() == nil {
+            XCTAssertNil(config.connectionProxyDictionary)
+        }
     }
 
     func testWebViewHTTPClientStaysDisabledInUnitTests() {

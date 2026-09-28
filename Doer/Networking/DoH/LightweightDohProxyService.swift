@@ -38,6 +38,17 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             if signatureChanged { return true }
             return enabled && !isLive
         }
+
+        /// API sessions use the loopback CONNECT proxy so name lookup stays on
+        /// the HTTP/1.1 DoH client. Apple Encrypted DNS speaks HTTP/2 to the
+        /// same Cloudflare host and fails the request before any HTTP status.
+        static func shouldAttachConnectProxy(
+            enabled: Bool,
+            useGateway: Bool,
+            port: UInt16?
+        ) -> Bool {
+            enabled && !useGateway && port != nil
+        }
     }
 
     var currentSignature: String {
@@ -236,7 +247,9 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     /// iOS 16 WKWebView cannot attach CONNECT; skip the listener.
     func prepareBrowserProxy() async {
         guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
-        guard LocalConnectProxy.supportsWebViewCONNECTProxy else { return }
+        guard LocalConnectProxy.supportsWebViewCONNECTProxy,
+              LocalConnectProxy.originECHReady
+        else { return }
         startWebViewProxyNow()
         for _ in 0..<40 {
             if ensureRunning() != nil { break }
@@ -265,6 +278,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             self.lock.lock()
             self.consecutiveStartFailures = 0
             self.configurationVersion += 1
+            self.stackReady = true
             self.lock.unlock()
             self.publishAppClients()
         }
@@ -452,8 +466,9 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         return config.connectionProxyDictionary
     }
 
-    /// Attach CONNECT only for MITM/Gateway. Pass-through CONNECT RSTs
-    /// linux.do TLS; Encrypted DNS is the URLSession path.
+    /// URLSession stays on Encrypted DNS so the system TLS stack presents
+    /// the fingerprint Cloudflare already cleared. CONNECT is only attached
+    /// when origin ECH MITM is on.
     func apply(
         to sessionConfiguration: URLSessionConfiguration,
         hostURL: String? = nil,
@@ -462,7 +477,15 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         let enabled = UserDefaults.standard.bool(forKey: "dohEnabled")
         let config = AppSettings.dohProxyConfig(from: .standard)
         let useGateway = preferGateway && config.isGatewayMode && LocalConnectProxy.originECHReady
-        guard enabled, LocalConnectProxy.originECHReady, !useGateway, let port = ensureRunning() else {
+        let port = ensureRunning()
+        guard LocalConnectProxy.originECHReady,
+              DohProxyLiveness.shouldAttachConnectProxy(
+                enabled: enabled,
+                useGateway: useGateway,
+                port: port
+              ),
+              let port
+        else {
             clearProxy(on: sessionConfiguration)
             return
         }

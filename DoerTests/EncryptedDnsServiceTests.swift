@@ -80,7 +80,7 @@ final class EncryptedDnsServiceTests: XCTestCase {
                 ["198.18.10.184", "119.29.29.29", "104.21.16.56", "172.67.210.33"],
                 serverURL: url
             ),
-            ["104.21.16.56", "172.67.210.33"]
+            ["104.21.16.56", "172.67.210.33", "119.29.29.29"]
         )
         let tencent = try XCTUnwrap(URL(string: "https://dns.pub/dns-query"))
         XCTAssertEqual(
@@ -89,6 +89,30 @@ final class EncryptedDnsServiceTests: XCTestCase {
                 serverURL: tencent
             ),
             ["119.29.29.29", "119.28.28.28"]
+        )
+    }
+
+    func testCustomDoHPutsSystemIPsBeforeConfiguredBootstrap() throws {
+        let url = try XCTUnwrap(URL(string: "https://ld.ddd.oaifree.com/query-dns"))
+        XCTAssertEqual(
+            EncryptedDnsService.encryptedDNSBootstrapIPs(
+                configured: ["119.29.29.29"],
+                system: ["104.21.16.56", "172.67.210.33"],
+                serverURL: url
+            ),
+            ["104.21.16.56", "172.67.210.33", "119.29.29.29"]
+        )
+    }
+
+    func testSystemDNSIPsArePrependedAndFakeIPDropped() throws {
+        let url = try XCTUnwrap(URL(string: "https://dns.pub/dns-query"))
+        XCTAssertEqual(
+            EncryptedDnsService.encryptedDNSBootstrapIPs(
+                configured: ["119.29.29.29", "119.28.28.28"],
+                system: ["1.12.12.21", "198.18.0.5"],
+                serverURL: url
+            ),
+            ["1.12.12.21", "119.29.29.29", "119.28.28.28"]
         )
     }
 
