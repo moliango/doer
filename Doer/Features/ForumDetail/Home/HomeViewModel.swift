@@ -417,7 +417,7 @@ final class HomeViewModel: DoerObservableObject {
             if generation == loadGeneration {
                 isLoading = false
                 DohDebugLog.record(
-                    "refresh end topics=\(topics.count) error=\(errorMessage != nil) cf=\(isBlockedByCloudflare) waitNet=\(isWaitingForNetwork)",
+                    "refresh end topics=\(topics.count) error=\(errorMessage != nil) cf=\(isBlockedByCloudflare) waitNet=\(isWaitingForNetwork) msg=\(errorMessage ?? "-")",
                     subsystem: "home.refresh"
                 )
                 notifyChanged(.all)
@@ -444,6 +444,7 @@ final class HomeViewModel: DoerObservableObject {
                 return
             }
             guard generation == loadGeneration else { return }
+            DohDebugLog.record("refresh access failed: \(error)", subsystem: "home.refresh")
             isBlockedByCloudflare = isCloudflareChallenge(error)
             errorMessage = error.localizedDescription
             isWaitingForNetwork = true
@@ -497,6 +498,7 @@ final class HomeViewModel: DoerObservableObject {
                 clearProtectedContentForLoginRequired(invalidateSession: true)
                 return
             }
+            DohDebugLog.record("refresh fetch failed: \(error)", subsystem: "home.refresh")
             isBlockedByCloudflare = isCloudflareChallenge(error)
             errorMessage = error.localizedDescription
             isWaitingForNetwork = !isBlockedByCloudflare

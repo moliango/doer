@@ -9,6 +9,7 @@ extension DiscourseAPI {
         guard let currentUser = response.currentUser else {
             throw DiscourseAPIError(messages: [String(localized: "login.required.message")], errorType: "not_logged_in")
         }
+        Self.noteNativeSessionHealthy(baseURL: baseURL)
         return currentUser
     }
 

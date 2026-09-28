@@ -45,6 +45,30 @@ final class WebCookieStoreSessionTests: XCTestCase {
         XCTAssertTrue(forInjection.contains(where: { $0.name == "cf_clearance" }))
     }
 
+    func testInjectionKeepsASingleAuthCookiePerName() throws {
+        let hostOnly = try XCTUnwrap(HTTPCookie(properties: [
+            .name: "_t",
+            .value: "new-ticket",
+            .domain: probeHost,
+            .path: "/",
+            .secure: "TRUE",
+            .expires: Date().addingTimeInterval(3600),
+        ]))
+        let domainWide = try XCTUnwrap(HTTPCookie(properties: [
+            .name: "_t",
+            .value: "old-ticket",
+            .domain: ".\(probeHost)",
+            .path: "/",
+            .secure: "TRUE",
+            .expires: Date().addingTimeInterval(1800),
+        ]))
+        WebCookieStore.shared.setCookies([hostOnly, domainWide])
+        let injected = WebCookieStore.shared.siteCookiesForInjection(forHost: probeHost)
+        let tickets = injected.filter { $0.name == "_t" }
+        XCTAssertEqual(tickets.count, 1, "WK must not be primed with two _t identities")
+        XCTAssertEqual(tickets.first?.value, "new-ticket")
+    }
+
     func testSiteCookiesForInjectionIncludesAuthForApexHost() throws {
         let auth = try XCTUnwrap(HTTPCookie(properties: [
             .name: "_t",

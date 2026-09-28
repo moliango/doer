@@ -19,9 +19,12 @@ final class ForumContainerViewController: UIViewController, AuthGating {
     private var launchOverlayObservationToken: NSObjectProtocol?
     private var launchOverlayFallbackTask: Task<Void, Never>?
     private var authObservationToken: AnyCancellable?
+    private var sessionInvalidationObservationToken: NSObjectProtocol?
+    private var didPresentRemoteLogoutAlert = false
     private var cloudflareChallengeObservationToken: NSObjectProtocol?
     private var cloudflareCompletionObservationToken: NSObjectProtocol?
     private var cloudflareNeedsUserObservationToken: NSObjectProtocol?
+    private var nativeSessionHealthyObservationToken: NSObjectProtocol?
     private var appUpdateObservationToken: NSObjectProtocol?
     private var appDidBecomeActiveObservationToken: NSObjectProtocol?
     private var notificationRouteObservationToken: AnyCancellable?
@@ -177,6 +180,50 @@ final class ForumContainerViewController: UIViewController, AuthGating {
         authObservationToken = authManager.objectWillChange.sink { [weak self] in
             self?.configureNavItems()
         }
+        sessionInvalidationObservationToken = NotificationCenter.default.addObserver(
+            forName: AuthManager.sessionInvalidatedNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            self?.handleRemoteSessionInvalidated(notification)
+        }
+    }
+
+    private func handleRemoteSessionInvalidated(_ notification: Notification) { 
+        let baseURL = notification.userInfo?[AuthManager.sessionInvalidatedBaseURLUserInfoKey] as? String
+            ?? forum.baseURL
+        guard normalizedBaseURL(baseURL) == normalizedBaseURL(forum.baseURL) else { return }
+        guard !didPresentRemoteLogoutAlert else { return }
+        didPresentRemoteLogoutAlert = true
+
+        dismissCloudflareSheetIfNeeded(animated: true)
+        setCloudflareShieldButtonVisible(false, animated: true)
+        pendingCloudflareBaseURL = nil
+        pendingCloudflareResponseURL = nil
+        refreshForumFromDatabase()
+
+        let alert = UIAlertController(
+            title: String(localized: "auth.session_expired.title", defaultValue: "Signed out"),
+            message: String(
+                localized: "auth.session_expired.message",
+                defaultValue: "Your login ended on another device. Please sign in again."
+            ),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(
+            title: String(localized: "me.login"),
+            style: .default
+        ) { [weak self] _ in
+            self?.didPresentRemoteLogoutAlert = false
+            self?.performLogin()
+        })
+        alert.addAction(UIAlertAction(
+            title: String(localized: "action.cancel"),
+            style: .cancel
+        ) { [weak self] _ in
+            self?.didPresentRemoteLogoutAlert = false
+        })
+        present(alert, animated: true)
     }
 
     private func startObservingCloudflareChallenges() {
@@ -201,6 +248,13 @@ final class ForumContainerViewController: UIViewController, AuthGating {
         ) { [weak self] notification in
             self?.handleCloudflareNeedsUserInteraction(notification)
         }
+        nativeSessionHealthyObservationToken = NotificationCenter.default.addObserver(
+            forName: DiscourseAPI.nativeSessionHealthyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            self?.handleNativeSessionHealthy(notification)
+        }
     }
 
     @MainActor deinit {
@@ -216,6 +270,12 @@ final class ForumContainerViewController: UIViewController, AuthGating {
         }
         if let cloudflareNeedsUserObservationToken {
             NotificationCenter.default.removeObserver(cloudflareNeedsUserObservationToken)
+        }
+        if let nativeSessionHealthyObservationToken {
+            NotificationCenter.default.removeObserver(nativeSessionHealthyObservationToken)
+        }
+        if let sessionInvalidationObservationToken {
+            NotificationCenter.default.removeObserver(sessionInvalidationObservationToken)
         }
         if let appUpdateObservationToken {
             NotificationCenter.default.removeObserver(appUpdateObservationToken)
@@ -807,7 +867,27 @@ final class ForumContainerViewController: UIViewController, AuthGating {
         guard let baseURLString = notification.userInfo?[DiscourseAPI.cloudflareBaseURLUserInfoKey] as? String else { return }
         guard normalizedBaseURL(baseURLString) == normalizedBaseURL(forum.baseURL) else { return }
         logCloudflareState("verification completed base=\(baseURLString)")
+        finishForegroundCloudflareRecovery(baseURLString: baseURLString)
+        Task { await self.probeCurrentUserAfterCloudflarePass() }
+    }
+
+    private func handleNativeSessionHealthy(_ notification: Notification) {
+        let baseURLString = notification.userInfo?[DiscourseAPI.cloudflareBaseURLUserInfoKey] as? String
+            ?? forum.baseURL
+        guard normalizedBaseURL(baseURLString) == normalizedBaseURL(forum.baseURL) else { return }
+        guard CloudflareVerificationPolicy.shouldReleaseForegroundChallengeWhenNativeSessionHealthy(
+            isPresentingChallenge: isPresentingCloudflareVerification
+        ) else { return }
+        logCloudflareState("native session healthy; releasing stuck challenge base=\(baseURLString)")
+        finishForegroundCloudflareRecovery(baseURLString: baseURLString)
+    }
+
+    private func finishForegroundCloudflareRecovery(baseURLString: String) {
         CloudflareVerificationPolicy.markVerificationGrace(baseURL: baseURLString)
+        WebSessionRefreshService.shared.markSynced(baseURL: baseURLString, reason: "cf_pass")
+        if let baseURL = URL(string: baseURLString) ?? URL(string: forum.baseURL) {
+            CloudflareBackgroundVerificationService.shared.endForegroundVerification(baseURL: baseURL)
+        }
         pendingCloudflareBaseURL = nil
         pendingCloudflareResponseURL = nil
         suppressCloudflareShieldTemporarily()
@@ -822,6 +902,19 @@ final class ForumContainerViewController: UIViewController, AuthGating {
         // Unstick interaction on the whole container tree (transparent blockers / stuck flags).
         reenableInteractionAfterCloudflare()
         refreshVisiblePageAfterCloudflareVerification()
+    }
+
+    private func probeCurrentUserAfterCloudflarePass() async {
+        do {
+            _ = try await api.fetchCurrentUser()
+        } catch {
+            guard AuthSessionInvalidationPolicy.shouldInvalidateWebSession(
+                error: error,
+                baseURL: forum.baseURL
+            ) else { return }
+            authManager.invalidateWebSession(for: forum.baseURL)
+            refreshForumFromDatabase()
+        }
     }
 
     private func dismissCloudflareSheetIfNeeded(animated: Bool) {

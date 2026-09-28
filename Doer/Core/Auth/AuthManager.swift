@@ -2,6 +2,8 @@ import Foundation
 
 final class AuthManager: DoerObservableObject, @unchecked Sendable {
     static let shared = AuthManager()
+    static let sessionInvalidatedNotification = Notification.Name("AuthManager.sessionInvalidated")
+    static let sessionInvalidatedBaseURLUserInfoKey = "baseURL"
 
     // Per-baseURL username cache (populated from DB or after login)
     private var usernameCache: [String: String] = [:]
@@ -149,7 +151,18 @@ final class AuthManager: DoerObservableObject, @unchecked Sendable {
         ForumLocalNotificationPresenter.shared.removeApplicationBadge(baseURL: baseURL)
         BackgroundTopicUpdateStore.shared.clear(baseURL: baseURL)
         usernameCache.removeValue(forKey: baseURL)
+        if var stored = try? DatabaseManager.shared.fetchAllForums().first(where: {
+            normalizedBaseURL($0.baseURL).caseInsensitiveCompare(baseURL) == .orderedSame
+        }) {
+            stored.username = nil
+            _ = try? DatabaseManager.shared.saveForum(&stored)
+        }
         notifyChanged()
+        NotificationCenter.default.post(
+            name: Self.sessionInvalidatedNotification,
+            object: nil,
+            userInfo: [Self.sessionInvalidatedBaseURLUserInfoKey: baseURL]
+        )
     }
 
     func restoreAuthState(for forum: ForumInstance) {

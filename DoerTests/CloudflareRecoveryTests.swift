@@ -332,8 +332,24 @@ final class CloudflareRecoveryTests: XCTestCase {
     func testChallengeSourceControlsImageGatePause() {
         XCTAssertTrue(DiscourseAPI.shouldPauseImageGate(forChallengeSource: "image.avatar"))
         XCTAssertTrue(DiscourseAPI.shouldPauseImageGate(forChallengeSource: "api.foreground"))
+        XCTAssertFalse(DiscourseAPI.shouldPauseImageGate(forChallengeSource: "api.background"))
+        XCTAssertFalse(DiscourseAPI.shouldPauseImageGate(forChallengeSource: "api.background.refresh"))
+        XCTAssertFalse(DiscourseAPI.shouldPauseImageGate(forChallengeSource: "api.topicTimings"))
         XCTAssertFalse(DiscourseAPI.shouldPauseImageGate(forChallengeSource: "metaverse.oauth"))
         XCTAssertFalse(DiscourseAPI.shouldPauseImageGate(forChallengeSource: "extension.cdk"))
+    }
+
+    func testNativeSessionHealthReleasesStuckForegroundChallenge() {
+        XCTAssertTrue(
+            CloudflareVerificationPolicy.shouldReleaseForegroundChallengeWhenNativeSessionHealthy(
+                isPresentingChallenge: true
+            )
+        )
+        XCTAssertFalse(
+            CloudflareVerificationPolicy.shouldReleaseForegroundChallengeWhenNativeSessionHealthy(
+                isPresentingChallenge: false
+            )
+        )
     }
 
     func testImageGateCoalescesRepeatedChallengePostsWithinCooldown() throws {

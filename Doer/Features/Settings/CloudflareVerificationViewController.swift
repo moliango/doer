@@ -207,6 +207,14 @@ enum CloudflareVerificationPolicy {
     static func shouldTreatCooldownAsVerified(isInGrace: Bool) -> Bool {
         isInGrace
     }
+
+    /// Native `/session/current.json` already returned a logged-in user. A leftover
+    /// `/challenge` sheet must not keep covering the forum.
+    static func shouldReleaseForegroundChallengeWhenNativeSessionHealthy(
+        isPresentingChallenge: Bool
+    ) -> Bool {
+        isPresentingChallenge
+    }
 }
 
 /// After CF verification: only rebuild Topic Detail when the page is empty or already

@@ -22,4 +22,23 @@ enum AuthSessionInvalidationPolicy {
         }
         return true
     }
+
+    /// Dead sessions must not go through WK cookie refresh — that reuses `_t`
+    /// and trips Cloudflare instead of showing signed-out UI.
+    static func shouldSkipWebSessionRefresh(
+        isCurrentUserRoute: Bool,
+        statusCode: Int?,
+        data: Data?
+    ) -> Bool {
+        if isCurrentUserRoute {
+            if statusCode == 401 || statusCode == 403 { return true }
+            if statusCode == 200, data?.isEmpty != false { return true }
+        }
+        return isNotLoggedInResponseBody(data)
+    }
+
+    static func isNotLoggedInResponseBody(_ data: Data?) -> Bool {
+        guard let data, !data.isEmpty else { return false }
+        return DiscourseAPI.errorFromForbiddenStatus(data: data).isNotLoggedIn
+    }
 }

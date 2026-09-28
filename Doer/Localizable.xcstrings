@@ -12444,6 +12444,38 @@
         }
       }
     },
+    "auth.session_expired.message" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your login ended on another device. Please sign in again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "登录已在其他设备失效，请重新登录。"
+          }
+        }
+      }
+    },
+    "auth.session_expired.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Signed out"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你已退出登录"
+          }
+        }
+      }
+    },
     "login.required.message" : {
       "localizations" : {
         "en" : {

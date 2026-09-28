@@ -2,19 +2,79 @@ import Foundation
 import WebKit
 
 enum WebSessionRefreshPolicy {
+    /// Discourse login cookies. Cloudflare `_cfuvid` / analytics must not start a WK refresh.
+    static let discourseSessionCookieNames: Set<String> = ["_t", "_forum_session"]
+
     /// A failed, timed-out, or Cloudflare-challenge WK load must not pull cookies
     /// into the jar. Challenge hops often mint a short-lived `cf_clearance` that
     /// would replace a still-valid token.
-    static func shouldImportWebViewCookies(didFinishLoad: Bool, isChallengePage: Bool = false) -> Bool {
-        didFinishLoad && !isChallengePage
+    static func shouldImportWebViewCookies(
+        didFinishLoad: Bool,
+        isChallengePage: Bool = false,
+        isLoginPage: Bool = false
+    ) -> Bool {
+        didFinishLoad && !isChallengePage && !isLoginPage
     }
 
     static func isSuccessfulRefresh(
         didFinishLoad: Bool,
         isChallengePage: Bool,
-        hasSessionCookie: Bool
+        hasSessionCookie: Bool,
+        probesCloudflareBlocked: Bool = false
     ) -> Bool {
-        didFinishLoad && !isChallengePage && hasSessionCookie
+        didFinishLoad && !isChallengePage && hasSessionCookie && !probesCloudflareBlocked
+    }
+
+    /// API `Set-Cookie` already updated the jar. A hidden WK homepage + csrf/current
+    /// probe is what retriggers Cloudflare right after a pass.
+    static func shouldSkipWebViewRefresh(reason: String) -> Bool {
+        reason == "api_response_cookie"
+    }
+
+    static func shouldRefreshAfterStoredCookies(_ names: [String]) -> Bool {
+        names.contains { discourseSessionCookieNames.contains($0) }
+    }
+
+    static func shouldRunFingerprintAndProbes(reason: String) -> Bool {
+        // Hidden 1×1 WK is a different TLS/UA client than the login WebView.
+        // FluxDo: posting fingerprint / csrf/current while WK still has two `_t`
+        // variants sends the rotated-away ticket first and Discourse kills the session.
+        _ = reason
+        return false
+    }
+
+    /// WK landing on `/login` is usually CF or a failed cookie prime — not
+    /// Discourse "log out everywhere". 1.8.4 kept the jar ticket in this case.
+    static func shouldInvalidateSessionAfterLoginLanding(hasJarSessionCookie: Bool) -> Bool {
+        !hasJarSessionCookie
+    }
+
+    static func areBrowserProbesCloudflareBlocked(json: String?) -> Bool {
+        guard let json, let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return isCloudflareBlockedStatus(object["csrf"])
+            || isCloudflareBlockedStatus(object["current"])
+    }
+
+    private static func isCloudflareBlockedStatus(_ value: Any?) -> Bool {
+        let status: Int?
+        if let int = value as? Int {
+            status = int
+        } else if let number = value as? NSNumber {
+            status = number.intValue
+        } else {
+            status = nil
+        }
+        guard let status else { return false }
+        return status == 403 || status == 429
+    }
+
+    static func isLoginPage(url: URL?, title: String?) -> Bool {
+        guard let path = url?.path.lowercased() else { return false }
+        return path == "/login"
+            || path.hasPrefix("/login/")
+            || path.hasPrefix("/session/email")
     }
 
     static func isChallengePage(url: URL?, title: String?) -> Bool {
@@ -101,6 +161,14 @@ final class WebSessionRefreshService: NSObject {
             return false
         }
 
+        if WebSessionRefreshPolicy.shouldSkipWebViewRefresh(reason: reason) {
+            DohDebugLog.record(
+                "web session refresh skipped reason=\(reason) skip=cookie_already_merged",
+                subsystem: "Auth"
+            )
+            return true
+        }
+
         let token = WebCookieStore.shared.cookieValue(named: "_t", for: base)
         if !force, let state = lastSuccess[baseURL],
            state.token == token,
@@ -183,13 +251,49 @@ final class WebSessionRefreshService: NSObject {
             url: webView.url,
             title: webView.title
         )
+        let isLoginPage = WebSessionRefreshPolicy.isLoginPage(
+            url: webView.url,
+            title: webView.title
+        )
+        if isLoginPage {
+            let hasJarSession = WebCookieStore.shared.hasDiscourseWebSessionCookie(for: baseURL)
+            DohDebugLog.record(
+                "web session refresh landed on login page reason=\(reason) jarSession=\(hasJarSession)",
+                subsystem: "Auth"
+            )
+            if WebSessionRefreshPolicy.shouldInvalidateSessionAfterLoginLanding(
+                hasJarSessionCookie: hasJarSession
+            ) {
+                AuthManager.shared.invalidateWebSession(for: baseURL.absoluteString)
+            }
+            webView.stopLoading()
+            webView.navigationDelegate = nil
+            return false
+        }
+        await WebCookieStore.shared.collapseWebViewAuthCookies(in: dataStore, for: baseURL)
+        var probesCloudflareBlocked = false
         if WebSessionRefreshPolicy.shouldImportWebViewCookies(
             didFinishLoad: didFinishLoad,
-            isChallengePage: isChallengePage
+            isChallengePage: isChallengePage,
+            isLoginPage: isLoginPage
         ) {
-            await runSessionBootstrap(in: webView, baseURL: baseURL)
-            await runBrowserProbes(in: webView)
-            await WebCookieStore.shared.syncFromWebView(dataStore, for: baseURL)
+            if WebSessionRefreshPolicy.shouldRunFingerprintAndProbes(reason: reason) {
+                await runSessionBootstrap(in: webView, baseURL: baseURL)
+                let probeJSON = await runBrowserProbes(in: webView)
+                probesCloudflareBlocked = WebSessionRefreshPolicy.areBrowserProbesCloudflareBlocked(
+                    json: probeJSON
+                )
+                if probesCloudflareBlocked {
+                    DohDebugLog.record(
+                        "web session refresh skipped cookie import reason=\(reason) probes_cloudflare=true",
+                        subsystem: "Auth"
+                    )
+                } else {
+                    await WebCookieStore.shared.syncFromWebView(dataStore, for: baseURL)
+                }
+            } else {
+                await WebCookieStore.shared.syncFromWebView(dataStore, for: baseURL)
+            }
         } else {
             DohDebugLog.record(
                 "web session refresh skipped cookie import reason=\(reason) finished=\(didFinishLoad) challenge=\(isChallengePage)",
@@ -211,7 +315,8 @@ final class WebSessionRefreshService: NSObject {
         let ok = WebSessionRefreshPolicy.isSuccessfulRefresh(
             didFinishLoad: didFinishLoad,
             isChallengePage: isChallengePage,
-            hasSessionCookie: hasSessionCookie
+            hasSessionCookie: hasSessionCookie,
+            probesCloudflareBlocked: probesCloudflareBlocked
         )
         let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
         DohDebugLog.record(
@@ -244,7 +349,7 @@ final class WebSessionRefreshService: NSObject {
         DohDebugLog.record("web session bootstrap result=\(result ?? "timeout")", subsystem: "Auth")
     }
 
-    private func runBrowserProbes(in webView: WKWebView) async {
+    private func runBrowserProbes(in webView: WKWebView) async -> String? {
         let timeoutNanoseconds = scriptTimeoutNanoseconds
         let script = """
         (async function() {
@@ -282,6 +387,7 @@ final class WebSessionRefreshService: NSObject {
         }
 
         DohDebugLog.record("web session browser probes result=\(result ?? "timeout")", subsystem: "Auth")
+        return result
     }
 
     private func sessionBootstrapScript(baseURL: URL) -> String {

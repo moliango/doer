@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 final class DiscourseAPI {
     static let cloudflareChallengeDetectedNotification = Notification.Name("DiscourseAPI.cloudflareChallengeDetected")
     static let cloudflareVerificationCompletedNotification = Notification.Name("DiscourseAPI.cloudflareVerificationCompleted")
+    static let nativeSessionHealthyNotification = Notification.Name("DiscourseAPI.nativeSessionHealthy")
     static let cloudflareBaseURLUserInfoKey = "baseURL"
     static let cloudflareResponseURLUserInfoKey = "responseURL"
     static let cloudflareForegroundGateDuration: TimeInterval = 20
@@ -242,6 +243,10 @@ final class DiscourseAPI {
             throw Self.cloudflareChallengeError()
         }
 
+        if let logout = remoteLogoutError(route: route, statusCode: response.response?.statusCode, data: response.data) {
+            throw logout
+        }
+
         if executionContext.allowsInteractiveWebRecovery,
            allowAuthRecovery,
            await shouldRetryAfterWebSessionRefresh(
@@ -265,10 +270,10 @@ final class DiscourseAPI {
             responseURL: url,
             statusCode: httpResponse.statusCode
            ) {
-            WebCookieStore.shared.mergeResponseHeaders(httpResponse.allHeaderFields, for: url)
-            if executionContext.allowsInteractiveWebRecovery {
-                WebSessionRefreshService.shared.ensureInBackground(baseURL: baseURL, reason: "api_response_cookie")
-            }
+            mergeWebCookiesAndMaybeRefreshSession(
+                headers: httpResponse.allHeaderFields,
+                responseURL: url
+            )
         }
 
         if let statusCode = response.response?.statusCode, !(200 ..< 300).contains(statusCode) {
@@ -368,6 +373,9 @@ final class DiscourseAPI {
         if handleCloudflareChallengeIfNeeded(route: route, response: httpResponse, data: data) {
             throw Self.cloudflareChallengeError()
         }
+        if let logout = remoteLogoutError(route: route, statusCode: httpResponse.statusCode, data: data) {
+            throw logout
+        }
         if executionContext.allowsInteractiveWebRecovery,
            allowAuthRecovery,
            await shouldRetryAfterWebSessionRefresh(
@@ -389,9 +397,9 @@ final class DiscourseAPI {
             responseURL: httpResponse.url ?? baseURL,
             statusCode: httpResponse.statusCode
         ) {
-            WebCookieStore.shared.mergeResponseHeaders(
-                httpResponse.allHeaderFields,
-                for: httpResponse.url ?? baseURL
+            mergeWebCookiesAndMaybeRefreshSession(
+                headers: httpResponse.allHeaderFields,
+                responseURL: httpResponse.url ?? baseURL
             )
         }
         if !(200 ..< 300).contains(httpResponse.statusCode) {
@@ -564,12 +572,39 @@ final class DiscourseAPI {
         error: AFError?,
         data: Data?
     ) -> String? {
+        let isCurrentUser: Bool = {
+            if case .currentUser = route { return true }
+            return false
+        }()
+        if AuthSessionInvalidationPolicy.shouldSkipWebSessionRefresh(
+            isCurrentUserRoute: isCurrentUser,
+            statusCode: statusCode,
+            data: data
+        ) {
+            return nil
+        }
         if statusCode == 401 || statusCode == 403 {
             return "api_auth_status_\(statusCode ?? 0)"
         }
         let isEmptySerializedBody = isInputDataNilOrZeroLength(error) || data?.isEmpty == true
-        if case .currentUser = route, isEmptySerializedBody {
+        if isCurrentUser, isEmptySerializedBody {
             return "api_empty_auth_response"
+        }
+        return nil
+    }
+
+    func remoteLogoutError(
+        route: DiscourseRouter,
+        statusCode: Int?,
+        data: Data?
+    ) -> DiscourseAPIError? {
+        guard let statusCode, !(200 ..< 300).contains(statusCode) else { return nil }
+        if case .currentUser = route {
+            return Self.currentUserFailure(statusCode: statusCode, data: data)
+        }
+        if statusCode == 401 || statusCode == 403 {
+            let error = Self.errorFromForbiddenStatus(data: data)
+            if error.isNotLoggedIn { return error }
         }
         return nil
     }
@@ -671,12 +706,35 @@ final class DiscourseAPI {
         )
     }
 
+    func mergeWebCookiesAndMaybeRefreshSession(
+        headers: [AnyHashable: Any],
+        responseURL: URL
+    ) {
+        let storedNames = WebCookieStore.shared.mergeResponseHeaders(headers, for: responseURL)
+        guard executionContext.allowsInteractiveWebRecovery,
+              WebSessionRefreshPolicy.shouldRefreshAfterStoredCookies(storedNames)
+        else { return }
+        WebSessionRefreshService.shared.ensureInBackground(baseURL: baseURL, reason: "api_response_cookie")
+    }
+
+    static func noteNativeSessionHealthy(baseURL: String) {
+        NotificationCenter.default.post(
+            name: nativeSessionHealthyNotification,
+            object: nil,
+            userInfo: [
+                cloudflareBaseURLUserInfoKey: baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
+            ]
+        )
+    }
+
     /// Image gate is for forum avatar/upload storms — not extension OAuth hosts
     /// and not best-effort background POSTs (timings) that CF often challenges
     /// without meaning the cookie jar is dead.
     nonisolated static func shouldPauseImageGate(forChallengeSource source: String) -> Bool {
         // Background / non-critical API must never freeze avatars for 60s.
-        if source == "api.topicTimings" || source.hasPrefix("api.background.") {
+        if source == "api.topicTimings"
+            || source == "api.background"
+            || source.hasPrefix("api.background.") {
             return false
         }
         if source.hasPrefix("image.") { return true }

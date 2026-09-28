@@ -280,11 +280,13 @@ final class WebCookieStore {
         save()
     }
 
-    func mergeResponseHeaders(_ headers: [AnyHashable: Any], for url: URL) {
+    @discardableResult
+    func mergeResponseHeaders(_ headers: [AnyHashable: Any], for url: URL) -> [String] {
         // Auth cookie deletions from failed/empty/challenge Set-Cookie are ignored
         // inside setCookies when the jar still has a valid token.
         let newCookies = Self.cookies(fromResponseHeaders: headers, for: url)
         if !newCookies.isEmpty { setCookies(newCookies) }
+        return newCookies.map(\.name)
     }
 
     /// Pull latest cf_clearance (and related) from the default WK store used by foreground verification.
@@ -564,6 +566,40 @@ final class WebCookieStore {
             DohDebugLog.record("primed WebView cookies: \(Self.cookieSummary(prepared))", subsystem: "Auth")
         }
         return true
+    }
+
+    /// After a WK navigation Discourse often Set-Cookies a rotated `_t` while the
+    /// primed host-only ticket is still in the store. Sending both logs the user out.
+    @MainActor
+    func collapseWebViewAuthCookies(in dataStore: WKWebsiteDataStore, for url: URL) async {
+        guard let host = url.host?.lowercased() else { return }
+        let cookieStore = dataStore.httpCookieStore
+        guard let existing = await WKCookieStoreIO.getAllCookies(cookieStore) else { return }
+        let root = Self.siteRootDomain(host)
+        let authCookies = existing.filter { cookie in
+            Self.isAuthCookieName(cookie.name) && Self.cookieBelongsToSite(cookie, host: host, root: root)
+        }
+        guard !authCookies.isEmpty else { return }
+
+        let groups = Dictionary(grouping: authCookies, by: \.name)
+        for (name, group) in groups {
+            let winner = group.max { lhs, rhs in
+                Self.compareCookies(lhs, rhs, host: host) < 0
+            } ?? group[0]
+            let canonical = Self.webKitReadyCookie(
+                from: Self.canonicalAuthCookie(from: winner, siteHost: host)
+            )
+            for cookie in group {
+                await WKCookieStoreIO.deleteCookie(cookie, on: cookieStore)
+            }
+            await WKCookieStoreIO.setCookie(canonical, on: cookieStore)
+            if group.count > 1 {
+                DohDebugLog.record(
+                    "collapsed WK \(name) variants=\(group.count) host=\(host)",
+                    subsystem: "Auth"
+                )
+            }
+        }
     }
 
     func clearAll() {
@@ -1028,7 +1064,12 @@ private extension WebCookieStore {
         for cookie in sorted {
             let domain = normalizedDomain(cookie.domain)
             let path = cookie.path.isEmpty ? "/" : cookie.path
-            let key = "\(cookie.name)|\(domain)|\(path)"
+            // FluxDo: WK must not hold two `_t` identities (host-only + Domain).
+            // The browser would send both; Discourse accepts the stale ticket and
+            // destroys the rotated session.
+            let key = isAuthCookieName(cookie.name)
+                ? cookie.name
+                : "\(cookie.name)|\(domain)|\(path)"
             guard let existing = selected[key] else {
                 selected[key] = cookie
                 continue
