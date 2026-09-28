@@ -56,9 +56,11 @@ enum TrustLevelWidgetRefresher {
         WidgetCenter.shared.reloadTimelines(ofKind: TrustLevelWidgetIDs.widgetKind)
     }
 
-    static func refreshIfPossible() async {
+    static func refreshIfPossible(
+        executionContext: DiscourseAPIExecutionContext = .foreground
+    ) async {
         let forum = DatabaseManager.shared.defaultForum()
-        let api = DiscourseAPI(baseURL: forum.baseURL)
+        let api = DiscourseAPI(baseURL: forum.baseURL, executionContext: executionContext)
         let username = AuthManager.shared.username(for: forum.baseURL) ?? forum.username
         let cached = username.flatMap {
             MeProfileCacheStore.cachedProfile(baseURL: forum.baseURL, username: $0)

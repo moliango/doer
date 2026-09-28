@@ -53,6 +53,12 @@ struct BackgroundNotificationSyncResult {
         !wasCancelled && !failures.contains { $0.kind == .transient }
     }
 
+    /// Widget summary uses a live DiscourseAPI. A Cloudflare 429 there presents the
+    /// human sheet, so skip it when this background pass already hit CF.
+    var shouldRefreshTrustWidget: Bool {
+        !wasCancelled && !failures.contains { $0.kind == .cloudflare }
+    }
+
     static let noWork = BackgroundNotificationSyncResult(
         eligibleBaseURLs: [],
         snapshots: [],

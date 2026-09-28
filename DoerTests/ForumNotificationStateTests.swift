@@ -206,6 +206,44 @@ final class ForumNotificationStateTests: XCTestCase {
         ).taskSucceeded)
     }
 
+    func testBackgroundSyncSkipsTrustWidgetAfterCloudflareFailure() {
+        let cloudflareFailure = BackgroundNotificationSyncFailure(
+            baseURL: "https://linux.do",
+            kind: .cloudflare,
+            message: "challenge"
+        )
+        let transientFailure = BackgroundNotificationSyncFailure(
+            baseURL: "https://linux.do",
+            kind: .transient,
+            message: "offline"
+        )
+
+        XCTAssertTrue(BackgroundNotificationSyncResult(
+            eligibleBaseURLs: ["https://linux.do"],
+            snapshots: [],
+            failures: [],
+            wasCancelled: false
+        ).shouldRefreshTrustWidget)
+        XCTAssertFalse(BackgroundNotificationSyncResult(
+            eligibleBaseURLs: ["https://linux.do"],
+            snapshots: [],
+            failures: [cloudflareFailure],
+            wasCancelled: false
+        ).shouldRefreshTrustWidget)
+        XCTAssertTrue(BackgroundNotificationSyncResult(
+            eligibleBaseURLs: ["https://linux.do"],
+            snapshots: [],
+            failures: [transientFailure],
+            wasCancelled: false
+        ).shouldRefreshTrustWidget)
+        XCTAssertFalse(BackgroundNotificationSyncResult(
+            eligibleBaseURLs: [],
+            snapshots: [],
+            failures: [],
+            wasCancelled: true
+        ).shouldRefreshTrustWidget)
+    }
+
     func testOnlyNotificationAuthenticationFailureClearsBadge() {
         let notificationFailure = BackgroundNotificationSyncFailure(
             baseURL: "https://linux.do",
