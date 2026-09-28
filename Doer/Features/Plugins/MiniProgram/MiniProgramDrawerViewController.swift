@@ -1,5 +1,20 @@
 import UIKit
 
+/// Header chrome for the mini-program drawer. Keep the close pill inside the
+/// rounded screen corners and below the status bar / Dynamic Island.
+enum MiniProgramDrawerChromePolicy {
+    static let closeButtonSize: CGFloat = 32
+    static let closeButtonCornerRadius: CGFloat = 16
+    static let horizontalInset: CGFloat = 20
+    static let grabberTopSpacing: CGFloat = 8
+    /// Overlay children of `UITabBarController` often report `safeAreaInsets.top == 0`.
+    static let minimumStatusBarInset: CGFloat = 54
+
+    static func headerTopInset(viewSafeAreaTop: CGFloat, windowSafeAreaTop: CGFloat) -> CGFloat {
+        max(viewSafeAreaTop, windowSafeAreaTop, minimumStatusBarInset) + grabberTopSpacing
+    }
+}
+
 /// WeChat-like full-screen mini-program drawer.
 /// - Fixed 2×4 grids (max 8)
 /// - No vertical scrolling; upward pan / fling closes
@@ -26,6 +41,7 @@ final class MiniProgramDrawerViewController: UIViewController {
     private var animationGeneration = 0
     private var panelTopConstraint: NSLayoutConstraint?
     private var panelHeightConstraint: NSLayoutConstraint?
+    private var grabberTopConstraint: NSLayoutConstraint?
     private var filteredQuery = ""
 
     private enum DragSource {
@@ -79,7 +95,7 @@ final class MiniProgramDrawerViewController: UIViewController {
         imageView.contentMode = .scaleAspectFill
         imageView.tintColor = .tertiaryLabel
         imageView.backgroundColor = UIColor.white.withAlphaComponent(0.12)
-        imageView.layer.cornerRadius = 18
+        imageView.layer.cornerRadius = 16
         imageView.clipsToBounds = true
         return imageView
     }()
@@ -107,12 +123,12 @@ final class MiniProgramDrawerViewController: UIViewController {
         var config = UIButton.Configuration.plain()
         config.image = UIImage(
             systemName: "chevron.up",
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .bold)
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .bold)
         )
         config.baseForegroundColor = UIColor.white.withAlphaComponent(0.9)
         config.background.backgroundColor = UIColor.white.withAlphaComponent(0.14)
-        config.background.cornerRadius = 18
-        config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10)
+        config.background.cornerRadius = MiniProgramDrawerChromePolicy.closeButtonCornerRadius
+        config.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
         let button = UIButton(configuration: config)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.accessibilityLabel = String(localized: "mini_program.drawer.close", defaultValue: "收起小程序")
@@ -269,8 +285,23 @@ final class MiniProgramDrawerViewController: UIViewController {
         reloadContent()
     }
 
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        updateHeaderSafeAreaInsets()
+    }
+
+    private func updateHeaderSafeAreaInsets() {
+        let inset = MiniProgramDrawerChromePolicy.headerTopInset(
+            viewSafeAreaTop: view.safeAreaInsets.top,
+            windowSafeAreaTop: view.window?.safeAreaInsets.top ?? 0
+        )
+        guard grabberTopConstraint?.constant != inset else { return }
+        grabberTopConstraint?.constant = inset
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updateHeaderSafeAreaInsets()
         let height = max(view.bounds.height, 1)
         let previous = panelHeightConstraint?.constant ?? height
         panelHeightConstraint?.constant = height
@@ -296,6 +327,7 @@ final class MiniProgramDrawerViewController: UIViewController {
             host.bringSubviewToFront(view)
         }
         view.layoutIfNeeded()
+        updateHeaderSafeAreaInsets()
 
         let height = max(view.bounds.height, 1)
         panelHeightConstraint?.constant = height
@@ -544,6 +576,14 @@ final class MiniProgramDrawerViewController: UIViewController {
         panelHeightConstraint = heightConstraint
         let topConstraint = panelView.topAnchor.constraint(equalTo: view.topAnchor, constant: -initialHeight)
         panelTopConstraint = topConstraint
+        let grabberTop = grabberView.topAnchor.constraint(
+            equalTo: panelView.topAnchor,
+            constant: MiniProgramDrawerChromePolicy.headerTopInset(
+                viewSafeAreaTop: 0,
+                windowSafeAreaTop: 0
+            )
+        )
+        grabberTopConstraint = grabberTop
 
         NSLayoutConstraint.activate([
             dimmingView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -560,28 +600,38 @@ final class MiniProgramDrawerViewController: UIViewController {
             headerContainer.leadingAnchor.constraint(equalTo: panelView.leadingAnchor),
             headerContainer.trailingAnchor.constraint(equalTo: panelView.trailingAnchor),
 
-            grabberView.topAnchor.constraint(equalTo: headerContainer.safeAreaLayoutGuide.topAnchor, constant: 8),
+            grabberTop,
             grabberView.centerXAnchor.constraint(equalTo: headerContainer.centerXAnchor),
             grabberView.widthAnchor.constraint(equalToConstant: 36),
             grabberView.heightAnchor.constraint(equalToConstant: 5),
 
-            avatarImageView.leadingAnchor.constraint(equalTo: headerContainer.leadingAnchor, constant: 16),
-            avatarImageView.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 14),
-            avatarImageView.widthAnchor.constraint(equalToConstant: 36),
-            avatarImageView.heightAnchor.constraint(equalToConstant: 36),
+            avatarImageView.leadingAnchor.constraint(
+                equalTo: view.leadingAnchor,
+                constant: MiniProgramDrawerChromePolicy.horizontalInset
+            ),
+            avatarImageView.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 12),
+            avatarImageView.widthAnchor.constraint(equalToConstant: 32),
+            avatarImageView.heightAnchor.constraint(equalToConstant: 32),
 
-            nameLabel.leadingAnchor.constraint(equalTo: avatarImageView.trailingAnchor, constant: 10),
+            nameLabel.leadingAnchor.constraint(equalTo: avatarImageView.trailingAnchor, constant: 8),
             nameLabel.centerYAnchor.constraint(equalTo: avatarImageView.centerYAnchor),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: titleLabel.leadingAnchor, constant: -8),
 
             titleLabel.centerXAnchor.constraint(equalTo: headerContainer.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: avatarImageView.centerYAnchor),
             titleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 120),
+            titleLabel.trailingAnchor.constraint(
+                lessThanOrEqualTo: closeButton.leadingAnchor,
+                constant: -8
+            ),
 
-            closeButton.trailingAnchor.constraint(equalTo: headerContainer.trailingAnchor, constant: -12),
+            closeButton.trailingAnchor.constraint(
+                equalTo: view.trailingAnchor,
+                constant: -MiniProgramDrawerChromePolicy.horizontalInset
+            ),
             closeButton.centerYAnchor.constraint(equalTo: avatarImageView.centerYAnchor),
-            closeButton.widthAnchor.constraint(equalToConstant: 44),
-            closeButton.heightAnchor.constraint(equalToConstant: 44),
+            closeButton.widthAnchor.constraint(equalToConstant: MiniProgramDrawerChromePolicy.closeButtonSize),
+            closeButton.heightAnchor.constraint(equalToConstant: MiniProgramDrawerChromePolicy.closeButtonSize),
 
             searchContainer.topAnchor.constraint(equalTo: avatarImageView.bottomAnchor, constant: 14),
             searchContainer.leadingAnchor.constraint(equalTo: headerContainer.leadingAnchor, constant: 16),

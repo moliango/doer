@@ -2,6 +2,33 @@ import XCTest
 @testable import Doer
 
 final class MiniProgramBackGestureTests: XCTestCase {
+    func testDrawerCloseButtonFitsInsideRoundedCorners() {
+        XCTAssertEqual(MiniProgramDrawerChromePolicy.closeButtonSize, 32)
+        XCTAssertEqual(MiniProgramDrawerChromePolicy.closeButtonCornerRadius, 16)
+        XCTAssertGreaterThanOrEqual(MiniProgramDrawerChromePolicy.horizontalInset, 16)
+        XCTAssertLessThan(
+            MiniProgramDrawerChromePolicy.closeButtonSize + MiniProgramDrawerChromePolicy.horizontalInset,
+            56,
+            "Close pill plus trailing inset must stay clear of the status-bar battery corner"
+        )
+    }
+
+    func testDrawerHeaderUsesWindowSafeAreaWhenOverlayReportsZero() {
+        XCTAssertEqual(
+            MiniProgramDrawerChromePolicy.headerTopInset(viewSafeAreaTop: 0, windowSafeAreaTop: 59),
+            59 + MiniProgramDrawerChromePolicy.grabberTopSpacing
+        )
+        XCTAssertEqual(
+            MiniProgramDrawerChromePolicy.headerTopInset(viewSafeAreaTop: 0, windowSafeAreaTop: 0),
+            MiniProgramDrawerChromePolicy.minimumStatusBarInset
+                + MiniProgramDrawerChromePolicy.grabberTopSpacing
+        )
+        XCTAssertEqual(
+            MiniProgramDrawerChromePolicy.headerTopInset(viewSafeAreaTop: 59, windowSafeAreaTop: 47),
+            59 + MiniProgramDrawerChromePolicy.grabberTopSpacing
+        )
+    }
+
     func testHostPanBeginsOnHorizontalEdgeWhenWebCanGoBack() {
         XCTAssertTrue(
             MiniProgramBackGesturePolicy.shouldBeginHostPan(
