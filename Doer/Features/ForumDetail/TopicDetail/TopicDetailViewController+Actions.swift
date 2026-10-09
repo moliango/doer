@@ -126,24 +126,20 @@ extension TopicDetailViewController {
     }
 
     func configureTopicActions() {
-        let searchButton = UIBarButtonItem(
-            image: UIImage(systemName: "magnifyingglass"),
-            style: .plain,
-            target: self,
-            action: #selector(searchTopicTapped)
-        )
-        searchButton.accessibilityLabel = String(localized: "topic.search", defaultValue: "搜索话题")
-
-        let moreButton = UIBarButtonItem(
-            image: UIImage(systemName: "ellipsis.circle"),
-            style: .plain,
-            target: self,
-            action: #selector(presentTopicMoreMenu)
-        )
-        moreButton.accessibilityLabel = String(localized: "topic.more", defaultValue: "更多操作")
-
+        let cluster = TopicDetailNavActionsView()
+        cluster.onSearch = { [weak self] in
+            self?.searchTopicTapped()
+        }
+        cluster.onMore = { [weak self] in
+            self?.presentTopicMoreMenu()
+        }
+        let item = UIBarButtonItem(customView: cluster)
+        // One designed capsule. iOS 26 would otherwise wrap the custom view in a second glass plate.
+        if #available(iOS 26.0, *) {
+            item.hidesSharedBackground = true
+        }
         // FluxDo chrome: search + more only; quick actions live inside more popup.
-        navigationItem.rightBarButtonItems = [moreButton, searchButton]
+        navigationItem.rightBarButtonItems = [item]
     }
 
     @objc func presentTopicMoreMenu() {
@@ -691,5 +687,140 @@ extension TopicDetailViewController {
                 jumpToFloor(viewModel.totalFloors)
             }
         }
+    }
+}
+
+/// Search and more as one capsule. The old pair put `ellipsis.circle` inside the
+/// system glass pill, so the more glyph carried its own ring.
+final class TopicDetailNavActionsView: UIView {
+    var onSearch: (() -> Void)?
+    var onMore: (() -> Void)?
+
+    private enum Metrics {
+        static let width: CGFloat = 92
+        static let hitHeight: CGFloat = 44
+        static let pillHeight: CGFloat = 32
+    }
+
+    private let pillView: UIVisualEffectView = {
+        let view = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.isUserInteractionEnabled = false
+        view.clipsToBounds = true
+        view.layer.cornerRadius = Metrics.pillHeight / 2
+        view.layer.cornerCurve = .continuous
+        view.layer.borderWidth = 1.0 / UIScreen.main.scale
+        return view
+    }()
+
+    private let divider: UIView = {
+        let view = UIView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.backgroundColor = UIColor.separator.withAlphaComponent(0.55)
+        view.isUserInteractionEnabled = false
+        return view
+    }()
+
+    private let searchButton = UIButton(type: .system)
+    private let moreButton = UIButton(type: .system)
+
+    override init(frame: CGRect) {
+        super.init(frame: CGRect(x: 0, y: 0, width: Metrics.width, height: Metrics.hitHeight))
+        translatesAutoresizingMaskIntoConstraints = false
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentHuggingPriority(.required, for: .vertical)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .vertical)
+        isAccessibilityElement = false
+
+        let symbol = UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        configure(
+            searchButton,
+            systemName: "magnifyingglass",
+            symbol: symbol,
+            label: String(localized: "topic.search", defaultValue: "搜索话题"),
+            action: #selector(searchTapped)
+        )
+        configure(
+            moreButton,
+            systemName: "ellipsis",
+            symbol: symbol,
+            label: String(localized: "topic.more", defaultValue: "更多操作"),
+            action: #selector(moreTapped)
+        )
+
+        addSubview(pillView)
+        addSubview(searchButton)
+        addSubview(divider)
+        addSubview(moreButton)
+        refreshPillBorder()
+
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: Metrics.width),
+            heightAnchor.constraint(equalToConstant: Metrics.hitHeight),
+
+            pillView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            pillView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            pillView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            pillView.heightAnchor.constraint(equalToConstant: Metrics.pillHeight),
+
+            searchButton.leadingAnchor.constraint(equalTo: leadingAnchor),
+            searchButton.topAnchor.constraint(equalTo: topAnchor),
+            searchButton.bottomAnchor.constraint(equalTo: bottomAnchor),
+            searchButton.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.5),
+
+            divider.centerXAnchor.constraint(equalTo: centerXAnchor),
+            divider.centerYAnchor.constraint(equalTo: centerYAnchor),
+            divider.widthAnchor.constraint(equalToConstant: 1.0 / UIScreen.main.scale),
+            divider.heightAnchor.constraint(equalToConstant: 16),
+
+            moreButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+            moreButton.topAnchor.constraint(equalTo: topAnchor),
+            moreButton.bottomAnchor.constraint(equalTo: bottomAnchor),
+            moreButton.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.5),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: Metrics.width, height: Metrics.hitHeight)
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        refreshPillBorder()
+    }
+
+    private func refreshPillBorder() {
+        pillView.layer.borderColor = UIColor.separator
+            .withAlphaComponent(0.45)
+            .resolvedColor(with: traitCollection)
+            .cgColor
+    }
+
+    private func configure(
+        _ button: UIButton,
+        systemName: String,
+        symbol: UIImage.SymbolConfiguration,
+        label: String,
+        action: Selector
+    ) {
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setImage(UIImage(systemName: systemName, withConfiguration: symbol), for: .normal)
+        button.tintColor = .label
+        button.accessibilityLabel = label
+        button.addTarget(self, action: action, for: .touchUpInside)
+    }
+
+    @objc private func searchTapped() {
+        onSearch?()
+    }
+
+    @objc private func moreTapped() {
+        onMore?()
     }
 }
