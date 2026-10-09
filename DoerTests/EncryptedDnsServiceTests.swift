@@ -80,7 +80,7 @@ final class EncryptedDnsServiceTests: XCTestCase {
                 ["198.18.10.184", "119.29.29.29", "104.21.16.56", "172.67.210.33"],
                 serverURL: url
             ),
-            ["104.21.16.56", "172.67.210.33", "119.29.29.29"]
+            ["104.21.16.56", "172.67.210.33"]
         )
         let tencent = try XCTUnwrap(URL(string: "https://dns.pub/dns-query"))
         XCTAssertEqual(
@@ -100,7 +100,28 @@ final class EncryptedDnsServiceTests: XCTestCase {
                 system: ["104.21.16.56", "172.67.210.33"],
                 serverURL: url
             ),
-            ["104.21.16.56", "172.67.210.33", "119.29.29.29"]
+            ["104.21.16.56", "172.67.210.33"]
+        )
+    }
+
+    func testCustomDoHDoesNotUseForeignResolverAsOnlyBootstrap() throws {
+        let url = try XCTUnwrap(URL(string: "https://edge.1molchuan.top/linuxdo"))
+        XCTAssertEqual(
+            EncryptedDnsService.encryptedDNSBootstrapIPs(
+                configured: ["119.29.29.29"],
+                system: [],
+                serverURL: url
+            ),
+            []
+        )
+        let dnsPub = try XCTUnwrap(URL(string: "https://dns.pub/dns-query"))
+        XCTAssertEqual(
+            EncryptedDnsService.encryptedDNSBootstrapIPs(
+                configured: ["119.29.29.29"],
+                system: [],
+                serverURL: dnsPub
+            ),
+            ["119.29.29.29"]
         )
     }
 

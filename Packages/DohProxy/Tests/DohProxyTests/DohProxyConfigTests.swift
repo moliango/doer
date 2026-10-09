@@ -87,4 +87,13 @@ final class DohProxyConfigTests: XCTestCase {
         XCTAssertNotEqual(base.signature, ech.signature)
         XCTAssertNotEqual(base.signature, noGateway.signature)
     }
+
+    func testSkipSystemAddressLookupRoundTrip() {
+        let previous = DohBootstrapTransport.skipSystemAddressLookup
+        DohBootstrapTransport.skipSystemAddressLookup = false
+        XCTAssertFalse(DohBootstrapTransport.skipSystemAddressLookup)
+        DohBootstrapTransport.skipSystemAddressLookup = true
+        XCTAssertTrue(DohBootstrapTransport.skipSystemAddressLookup)
+        DohBootstrapTransport.skipSystemAddressLookup = previous
+    }
 }

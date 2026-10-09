@@ -131,21 +131,24 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     /// them without requiring a process kill.
     func ensureProxyAlive() {
         guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
-        lock.lock()
-        consecutiveStartFailures = 0
-        let isLive = proxy?.isRunning == true
-        let starting = isStartingProxy
-        let ready = stackReady
-        lock.unlock()
-        reassertNameResolution()
-        if isLive || starting || ready {
-            if isLive {
-                publishAppClients()
+        startQueue.async { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            self.consecutiveStartFailures = 0
+            let isLive = self.proxy?.isRunning == true
+            let starting = self.isStartingProxy
+            let ready = self.stackReady
+            self.lock.unlock()
+            self.reassertNameResolution()
+            if isLive || starting || ready {
+                if isLive {
+                    self.publishAppClients()
+                }
+                return
             }
-            return
+            DohDebugLog.record("DoH proxy not alive; restarting")
+            self.configureFromSettings()
         }
-        DohDebugLog.record("DoH proxy not alive; restarting")
-        configureFromSettings()
     }
 
     /// Wi‑Fi ↔ cellular keeps the path `.satisfied`, so Encrypted DNS and

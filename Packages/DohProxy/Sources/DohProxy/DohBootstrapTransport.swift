@@ -7,6 +7,24 @@ import Network
 public enum DohBootstrapTransport {
     public static var log: ((String) -> Void)?
 
+    private static let skipSystemLookupLock = NSLock()
+    private static var skipSystemAddressLookupLocked = false
+
+    /// When Apple Encrypted DNS is already required, `getaddrinfo` for the
+    /// DoH hostname recurses through the same resolver and can stall ~30s.
+    public static var skipSystemAddressLookup: Bool {
+        get {
+            skipSystemLookupLock.lock()
+            defer { skipSystemLookupLock.unlock() }
+            return skipSystemAddressLookupLocked
+        }
+        set {
+            skipSystemLookupLock.lock()
+            skipSystemAddressLookupLocked = newValue
+            skipSystemLookupLock.unlock()
+        }
+    }
+
     static func query(
         endpoint: DohEndpoint,
         dnsQuery: Data,
@@ -18,7 +36,7 @@ public enum DohBootstrapTransport {
             return
         }
         var addresses = endpoint.bootstrapIPs
-        if !DohProxyConfig.looksLikeIPAddress(endpoint.host) {
+        if !DohProxyConfig.looksLikeIPAddress(endpoint.host), !skipSystemAddressLookup {
             let resolved = systemAddresses(for: endpoint.host)
             if !resolved.isEmpty {
                 log?("DoH server \(endpoint.host) system DNS -> \(resolved.joined(separator: ", "))")

@@ -47,9 +47,28 @@ nonisolated enum EncryptedDnsService {
 
     private static let applyLock = NSLock()
     private static var lastApplied: ResolverSpec?
+    private static var lastLiveSystemIPs: [String] = []
+    private static var encryptedResolutionEnabled = false
 
     static func apply(_ spec: ResolverSpec) {
-        let system = spec.url.host.map { DohBootstrapTransport.systemAddresses(for: $0) } ?? []
+        applyLock.lock()
+        let alreadyEncrypted = encryptedResolutionEnabled
+        let cachedSystem = lastLiveSystemIPs
+        applyLock.unlock()
+
+        let system: [String]
+        if alreadyEncrypted {
+            // `getaddrinfo` honors PrivacyContext. Probing the DoH host after
+            // Encrypted DNS is on waits on the same resolver (~30s timeout).
+            system = cachedSystem
+        } else if let host = spec.url.host {
+            system = DohBootstrapTransport.systemAddresses(for: host)
+            applyLock.lock()
+            lastLiveSystemIPs = system
+            applyLock.unlock()
+        } else {
+            system = []
+        }
         let ips = encryptedDNSBootstrapIPs(
             configured: spec.bootstrapIPs,
             system: system,
@@ -57,14 +76,16 @@ nonisolated enum EncryptedDnsService {
         )
         guard !ips.isEmpty else {
             disable()
-            DohDebugLog.record("Encrypted DNS skipped: no bootstrap IPs")
+            DohDebugLog.record("Encrypted DNS skipped: no usable bootstrap IPs")
             return
         }
         let normalized = ResolverSpec(url: spec.url, bootstrapIPs: ips)
         applyLock.lock()
         let alreadyApplied = lastApplied == normalized
         lastApplied = normalized
+        encryptedResolutionEnabled = true
         applyLock.unlock()
+        DohBootstrapTransport.skipSystemAddressLookup = true
         let endpoints = bootstrapEndpoints(ips)
         let resolver = NWParameters.PrivacyContext.ResolverConfiguration.https(
             normalized.url,
@@ -94,7 +115,10 @@ nonisolated enum EncryptedDnsService {
     static func disable() {
         applyLock.lock()
         lastApplied = nil
+        lastLiveSystemIPs = []
+        encryptedResolutionEnabled = false
         applyLock.unlock()
+        DohBootstrapTransport.skipSystemAddressLookup = false
         NWParameters.PrivacyContext.default.requireEncryptedNameResolution(
             false,
             fallbackResolver: nil
@@ -122,9 +146,9 @@ nonisolated enum EncryptedDnsService {
         orderedBootstrapIPs(ips.filter { !isTunnelFakeIP($0) }, preferIPv6: false)
     }
 
-    /// FluxDo path: live system IPs of the DoH host first, configured IPs as
-    /// fallback. Only Clash / Surge fake-ip is dropped; catalog filtering left
-    /// Encrypted DNS on dead anycast bootstraps.
+    /// Live system IPs of the DoH host first, configured IPs as fallback.
+    /// Drops Clash fake-ip and recursive resolver IPs that are not this host
+    /// (e.g. `119.29.29.29` is only valid for `dns.pub`).
     static func encryptedDNSBootstrapIPs(
         configured: [String],
         system: [String],
@@ -134,7 +158,7 @@ nonisolated enum EncryptedDnsService {
         for ip in system.reversed() where !ips.contains(ip) && !isTunnelFakeIP(ip) {
             ips.insert(ip, at: 0)
         }
-        return usableBootstrapIPs(ips)
+        return usableEncryptedDNSBootstrapIPs(ips, serverURL: serverURL)
     }
 
     /// Encrypted DNS must reach the DoH hostname, not an unrelated recursive
