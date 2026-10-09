@@ -88,7 +88,14 @@ public enum DohBootstrapTransport {
         let parameters = NWParameters(tls: tls, tcp: tcp)
         let connection = NWConnection(host: endpointHost(ip), port: port, using: parameters)
         log?("bootstrap connect \(ip) SNI=\(serverHost)")
+        var buffer = Data()
+        var finished = false
         let timeout = DispatchWorkItem {
+            // Claim the attempt before cancel. Cancel delivers `.failed` on
+            // this same queue; if `finished` is still false, that path starts
+            // a second next-IP query and the caller `group.leave()`s twice.
+            guard !finished else { return }
+            finished = true
             log?("bootstrap timeout \(ip)")
             connection.cancel()
             query(
@@ -102,9 +109,6 @@ public enum DohBootstrapTransport {
                 completion: completion
             )
         }
-
-        var buffer = Data()
-        var finished = false
 
         func finish(_ result: Result<Data, Error>) {
             guard !finished else { return }

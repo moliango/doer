@@ -156,6 +156,7 @@ public final class DohBootstrapResolver: @unchecked Sendable {
                 return
             }
             group.enter()
+            var didLeave = false
             DohBootstrapTransport.query(endpoint: endpoint, dnsQuery: query, queue: queue) { result in
                 lock.lock()
                 switch result {
@@ -179,8 +180,12 @@ public final class DohBootstrapResolver: @unchecked Sendable {
                         errors.append(error)
                     }
                 }
+                let shouldLeave = !didLeave
+                didLeave = true
                 lock.unlock()
-                group.leave()
+                if shouldLeave {
+                    group.leave()
+                }
             }
         }
 
