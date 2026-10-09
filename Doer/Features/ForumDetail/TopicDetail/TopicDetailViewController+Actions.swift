@@ -217,11 +217,7 @@ extension TopicDetailViewController {
         case .openTimeline:
             showTimelineSheet()
         case .jumpToFloor(let floor):
-            if floor <= 1 {
-                scrollToContentTop(animated: true)
-            } else {
-                jumpToFloor(floor)
-            }
+            jumpToFloor(floor)
         case .readingSettings:
             navigationController?.pushViewController(ReadingSettingsViewController(), animated: true)
         case .tableOfContents:

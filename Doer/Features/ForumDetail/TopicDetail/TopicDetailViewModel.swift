@@ -1883,7 +1883,7 @@ final class TopicDetailViewModel: DoerObservableObject {
     }
 
     func jumpToFloor(_ floor: Int, containerWidth: CGFloat) async {
-        guard floor > 1 else { return }
+        guard floor >= 1 else { return }
         lastContainerWidth = containerWidth
         guard !allPostIds.isEmpty, let topicId = topic?.id else { return }
 
