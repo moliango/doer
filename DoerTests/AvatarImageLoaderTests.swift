@@ -100,6 +100,27 @@ final class AvatarImageLoaderTests: XCTestCase {
         XCTAssertTrue(imageView.image === image)
     }
 
+    func testIdentityCacheReusesAvatarWhenUserIdIsMissing() throws {
+        let image = UIImage(systemName: "person.circle")!
+        let cachedURL = try XCTUnwrap(URL(string: "https://linux.do/user_avatar/linux.do/demo/120/1.png"))
+        let requestedURL = try XCTUnwrap(URL(string: "https://linux.do/user_avatar/linux.do/demo/48/1.png"))
+        AvatarImageLoader.storeUserAvatarForTesting(
+            image,
+            url: cachedURL,
+            baseURL: "https://linux.do",
+            userId: 7
+        )
+
+        let imageView = UIImageView()
+        AvatarImageLoader.setImage(
+            on: imageView,
+            url: requestedURL,
+            cloudflareBaseURL: "https://linux.do"
+        )
+
+        XCTAssertTrue(imageView.image === image)
+    }
+
     func testLetterAvatarCacheHitSkipsNetworkForSizeVariants() throws {
         let cached = try XCTUnwrap(
             URL(string: "https://linux.do/letter_avatar_proxy/v4/letter/n/8e8ea6/120.png")
