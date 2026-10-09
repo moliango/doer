@@ -611,8 +611,13 @@ final class TopicDetailViewController: ObservableViewController {
         // Also wait out Diffable mutation / self-sizing beginUpdates to avoid
         // `_visibleRows` vs `_visibleCells` length traps.
         if !isApplyingPostSnapshot, !tableView.doer_isMutatingData, let floor = pendingScrollToFloor {
-            if floor <= 1, shouldStayAtOpeningPost(floor: floor) {
-                pendingScrollToFloor = nil
+            if floor <= 1 {
+                if let openingId = viewModel.allPostIds.first,
+                   dataSource.indexPath(for: openingId) != nil {
+                    scrollToContentTop(animated: false)
+                    pendingScrollToFloor = nil
+                    lastScrollOffset = tableView.contentOffset.y
+                }
                 return
             }
             let streamIndex = floor - 1
@@ -811,13 +816,9 @@ final class TopicDetailViewController: ObservableViewController {
 
             // After a jump, defer scroll to next layout pass so cells are sized
             if let targetFloor = viewModel.jumpTargetFloor {
-                if targetFloor <= 1 {
-                    viewModel.jumpTargetFloor = nil
-                } else {
-                    viewModel.jumpTargetFloor = nil
-                    pendingScrollToFloor = targetFloor
-                    tableView.setNeedsLayout()
-                }
+                viewModel.jumpTargetFloor = nil
+                pendingScrollToFloor = targetFloor
+                tableView.setNeedsLayout()
             }
             if shouldAnimateInitialContent {
                 animateInitialContentTransition()

@@ -49,6 +49,7 @@ class ChatTopicDetailViewController: ObservableViewController {
     private var isLoadingMore = false
     private var isLoadingEarlier = false
     private var postRowHeightCache: [Int: CGFloat] = [:]
+    private var downloadedAttachmentURLs: Set<URL> = []
     lazy var readingTracker = TopicReadingTracker(api: api)
     let findController = TopicFindBarController()
     let tocController = TopicTocController()
@@ -897,7 +898,7 @@ class ChatTopicDetailViewController: ObservableViewController {
 
     func jumpToPostId(_ postId: Int) {
         if isOpeningPostId(postId) {
-            scrollToContentTop(animated: false)
+            Task { await jumpToFloor(1) }
             return
         }
         if dataSource.snapshot().indexOfItem(postId) != nil {
@@ -910,7 +911,7 @@ class ChatTopicDetailViewController: ObservableViewController {
 
     func jumpToPostNumber(_ postNumber: Int) async {
         guard postNumber > 1 else {
-            scrollToContentTop(animated: false)
+            await jumpToFloor(1)
             return
         }
         if let post = viewModel.post(byPostNumber: postNumber) {
@@ -981,7 +982,13 @@ class ChatTopicDetailViewController: ObservableViewController {
     }
 
     func jumpToFloor(_ floor: Int) async {
-        guard floor > 1 else { return }
+        guard floor >= 1 else { return }
+        if floor <= 1,
+           let openingId = viewModel.allPostIds.first,
+           dataSource.snapshot().indexOfItem(openingId) != nil {
+            scrollToContentTop(animated: false)
+            return
+        }
         await viewModel.jumpToFloor(floor, containerWidth: view.bounds.width)
         applySnapshot()
         let ids = viewModel.allPostIds
@@ -1278,6 +1285,8 @@ class ChatTopicDetailViewController: ObservableViewController {
                     animated: true
                 )
             }
+        } else if ForumAttachmentLinkParser.isAttachmentURL(linkURL) {
+            downloadAndShareAttachment(linkURL)
         } else {
             DoerSafariPresenter.present(
                 url: linkURL,
@@ -1286,6 +1295,17 @@ class ChatTopicDetailViewController: ObservableViewController {
                 username: AuthManager.shared.username(for: api.baseURL)
             )
         }
+    }
+
+    private func downloadAndShareAttachment(_ url: URL) {
+        ForumAttachmentShareFlow.downloadAndShare(
+            url: url,
+            baseURL: baseURL,
+            from: self,
+            store: { [weak self] in self?.downloadedAttachmentURLs.insert($0) },
+            remove: { [weak self] in self?.downloadedAttachmentURLs.remove($0) },
+            onError: { [weak self] in self?.showPostActionError($0) }
+        )
     }
 
 // MARK: - Cloudflare recovery

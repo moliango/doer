@@ -96,6 +96,14 @@ final class WebCookieStore {
     static let shared = WebCookieStore()
 
     private var jar: [String: HTTPCookie] = [:]
+    /// Batch stamp for auth cookies. A later `setCookies` always beats an
+    /// older ticket, even when that ticket has a longer local expiry.
+    /// One stamp per call so a single Set-Cookie list does not order itself.
+    private var authReceiveSerial: UInt64 = 0
+    private var authReceivedSerial: [String: UInt64] = [:]
+    /// Values already replaced by a newer Set-Cookie. Sending one after
+    /// Discourse has seen the new ticket logs every session out.
+    private var revokedAuthValues: [String: [String]] = [:]
     private let lock = NSLock()
     private let filePath: URL
     nonisolated private static let maxAgeKey = HTTPCookiePropertyKey("Max-Age")
@@ -135,6 +143,8 @@ final class WebCookieStore {
         var policyChanges: [String] = []
 
         lock.lock()
+        authReceiveSerial += 1
+        let receivedSerial = authReceiveSerial
         for cookie in cookies {
             let key = key(for: cookie)
             if let kind = Self.deletionKind(cookie, now: now) {
@@ -166,7 +176,15 @@ final class WebCookieStore {
                     )
                 }
             } else {
+                if Self.isAuthCookieName(cookie.name),
+                   let previous = jar[key],
+                   previous.value != cookie.value {
+                    revokeAuthValueLocked(previous)
+                }
                 jar[key] = cookie
+                if Self.isAuthCookieName(cookie.name) {
+                    authReceivedSerial[key] = receivedSerial
+                }
                 storedCookies.append(cookie)
             }
         }
@@ -215,6 +233,7 @@ final class WebCookieStore {
             Self.cookieMatches(cookie, host: host, path: path)
         }
         let cookies = Self.selectCookiesForRequest(matchedCookies, host: host)
+            .filter { !isRevokedAuthCookieLocked($0) }
         let duplicateNames = matchedCookies.count > cookies.count
             ? Self.duplicateCookieNames(in: matchedCookies, selected: cookies)
             : []
@@ -284,9 +303,28 @@ final class WebCookieStore {
     func mergeResponseHeaders(_ headers: [AnyHashable: Any], for url: URL) -> [String] {
         // Auth cookie deletions from failed/empty/challenge Set-Cookie are ignored
         // inside setCookies when the jar still has a valid token.
-        let newCookies = Self.cookies(fromResponseHeaders: headers, for: url)
+        // Gateway rewrites the request to http://127.0.0.1. Parsing Secure
+        // Set-Cookie against that URL drops `_t`, so the client keeps replaying
+        // the rotated ticket.
+        let newCookies = Self.cookies(fromResponseHeaders: headers, for: Self.cookieParseURL(for: url))
         if !newCookies.isEmpty { setCookies(newCookies) }
         return newCookies.map(\.name)
+    }
+
+    static func cookieParseURL(for url: URL) -> URL {
+        guard let host = url.host?.lowercased(),
+              LocalConnectProxy.isLoopbackGatewayHost(host)
+        else { return url }
+        let origin = LocalConnectProxy.gatewayOriginHost
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard !origin.isEmpty,
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else { return url }
+        components.scheme = "https"
+        components.host = origin
+        components.port = nil
+        return components.url ?? url
     }
 
     /// Pull latest cf_clearance (and related) from the default WK store used by foreground verification.
@@ -465,7 +503,7 @@ final class WebCookieStore {
     /// Cookies suitable for an outgoing HTTP request to `host` (auth cookies stay host-only).
     func siteCookies(forHost host: String) -> [HTTPCookie] {
         let normalizedHost = host.lowercased()
-        let matched = rawSiteCookies(forHost: normalizedHost)
+        let matched = omittingRevokedAuthCookies(rawSiteCookies(forHost: normalizedHost))
         return Self.selectCookiesForRequest(matched, host: normalizedHost)
     }
 
@@ -474,8 +512,15 @@ final class WebCookieStore {
     /// subdomain page, so later SSO redirects to the apex host remain logged in.
     func siteCookiesForInjection(forHost host: String) -> [HTTPCookie] {
         let normalizedHost = host.lowercased()
-        let matched = rawSiteCookies(forHost: normalizedHost)
+        let matched = omittingRevokedAuthCookies(rawSiteCookies(forHost: normalizedHost))
         return Self.selectCookiesForInjection(matched, host: normalizedHost)
+    }
+
+    private func omittingRevokedAuthCookies(_ cookies: [HTTPCookie]) -> [HTTPCookie] {
+        lock.lock()
+        let filtered = cookies.filter { !isRevokedAuthCookieLocked($0) }
+        lock.unlock()
+        return filtered
     }
 
     /// Ensure session cookies carry an Expires date so WK does not treat a re-injected
@@ -605,6 +650,9 @@ final class WebCookieStore {
     func clearAll() {
         lock.lock()
         jar.removeAll()
+        authReceivedSerial.removeAll()
+        authReceiveSerial = 0
+        revokedAuthValues.removeAll()
         lock.unlock()
         userAgent = nil
         try? FileManager.default.removeItem(at: filePath)
@@ -618,6 +666,14 @@ final class WebCookieStore {
                 return Self.normalizedDomain(cookie.domain) != host
             }
             return !Self.domainMatches(host: host, cookieDomain: cookie.domain)
+        }
+        authReceivedSerial = authReceivedSerial.filter { key, _ in
+            let domain = key.split(separator: "|", maxSplits: 1).first.map(String.init) ?? ""
+            return Self.normalizedDomain(domain) != host
+        }
+        revokedAuthValues = revokedAuthValues.filter { key, _ in
+            let domain = key.split(separator: "|", maxSplits: 1).first.map(String.init) ?? ""
+            return domain != host
         }
         lock.unlock()
         save()
@@ -686,6 +742,28 @@ final class WebCookieStore {
         case .expired:
             expired.append(name)
         }
+    }
+
+    private func revokeAuthValueLocked(_ cookie: HTTPCookie) {
+        guard Self.isAuthCookieName(cookie.name), !cookie.value.isEmpty else { return }
+        let bucket = "\(Self.normalizedDomain(cookie.domain))|\(cookie.name)"
+        var values = revokedAuthValues[bucket] ?? []
+        values.removeAll { $0 == cookie.value }
+        values.append(cookie.value)
+        if values.count > 8 {
+            values.removeFirst(values.count - 8)
+        }
+        revokedAuthValues[bucket] = values
+        DohDebugLog.record(
+            "retired rotated \(cookie.name) host=\(Self.normalizedDomain(cookie.domain))",
+            subsystem: "Auth"
+        )
+    }
+
+    private func isRevokedAuthCookieLocked(_ cookie: HTTPCookie) -> Bool {
+        guard Self.isAuthCookieName(cookie.name) else { return false }
+        let bucket = "\(Self.normalizedDomain(cookie.domain))|\(cookie.name)"
+        return revokedAuthValues[bucket]?.contains(cookie.value) == true
     }
 
     private func hasValidAuthCookieLocked(named name: String, siteHost: String, now: Date) -> Bool {
@@ -971,10 +1049,14 @@ private extension WebCookieStore {
             }
 
             let winner = active.max { lhs, rhs in
-                Self.compareCookies(lhs, rhs, host: siteHost) < 0
+                let lhsAt = authReceivedSerial[key(for: lhs)] ?? 0
+                let rhsAt = authReceivedSerial[key(for: rhs)] ?? 0
+                if lhsAt != rhsAt { return lhsAt < rhsAt }
+                return Self.compareCookies(lhs, rhs, host: siteHost) < 0
             } ?? first
             let normalized = Self.canonicalAuthCookie(from: winner, siteHost: siteHost)
             let normalizedKey = key(for: normalized)
+            let winnerSerial = authReceivedSerial[key(for: winner)] ?? 0
             let alreadyCanonical = group.count == 1
                 && key(for: first) == normalizedKey
                 && first.value == normalized.value
@@ -982,10 +1064,16 @@ private extension WebCookieStore {
                 && !first.domain.hasPrefix(".")
 
             guard !alreadyCanonical else { continue }
+            for cookie in group where cookie.value != winner.value {
+                revokeAuthValueLocked(cookie)
+            }
             for cookie in group {
-                jar.removeValue(forKey: key(for: cookie))
+                let oldKey = key(for: cookie)
+                jar.removeValue(forKey: oldKey)
+                authReceivedSerial.removeValue(forKey: oldKey)
             }
             jar[normalizedKey] = normalized
+            authReceivedSerial[normalizedKey] = winnerSerial
             changes.append("\(winner.name)@\(siteHost)")
         }
 

@@ -497,56 +497,14 @@ final class TopicDetailCoordinator {
 
     func downloadAndShareAttachment(_ url: URL) {
         guard let host else { return }
-        let progressAlert = makeAttachmentDownloadAlert()
-        host.present(progressAlert, animated: true)
-        let attachmentBaseURL = baseURL
-
-        Task { @MainActor [weak self, weak host, weak progressAlert] in
-            do {
-                let fileURL = try await ForumAttachmentDownloader.download(url: url, baseURL: attachmentBaseURL)
-                guard let self, let host else {
-                    ForumAttachmentDownloader.cleanupDownloadedFile(fileURL)
-                    return
-                }
-                host.downloadedAttachmentURLs.insert(fileURL)
-                progressAlert?.dismiss(animated: true) {
-                    self.presentAttachmentShareSheet(fileURL)
-                }
-            } catch {
-                progressAlert?.dismiss(animated: true) {
-                    host?.showPostActionError(error)
-                }
-            }
-        }
-    }
-
-    private func makeAttachmentDownloadAlert() -> UIAlertController {
-        let alert = UIAlertController(
-            title: String(localized: "attachment.downloading"),
-            message: "\n\n",
-            preferredStyle: .alert
+        ForumAttachmentShareFlow.downloadAndShare(
+            url: url,
+            baseURL: baseURL,
+            from: host,
+            store: { [weak host] in host?.downloadedAttachmentURLs.insert($0) },
+            remove: { [weak host] in host?.downloadedAttachmentURLs.remove($0) },
+            onError: { [weak host] in host?.showPostActionError($0) }
         )
-        let indicator = UIActivityIndicatorView(style: .medium)
-        indicator.translatesAutoresizingMaskIntoConstraints = false
-        indicator.startAnimating()
-        alert.view.addSubview(indicator)
-        NSLayoutConstraint.activate([
-            indicator.centerXAnchor.constraint(equalTo: alert.view.centerXAnchor),
-            indicator.bottomAnchor.constraint(equalTo: alert.view.bottomAnchor, constant: -22),
-        ])
-        return alert
-    }
-
-    private func presentAttachmentShareSheet(_ fileURL: URL) {
-        guard let host else { return }
-        let activity = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
-        activity.popoverPresentationController?.sourceView = host.view
-        activity.popoverPresentationController?.sourceRect = host.view.bounds
-        activity.completionWithItemsHandler = { [weak host] _, _, _, _ in
-            host?.downloadedAttachmentURLs.remove(fileURL)
-            ForumAttachmentDownloader.cleanupDownloadedFile(fileURL)
-        }
-        host.present(activity, animated: true)
     }
 
     func openInternalViewController(_ viewController: UIViewController) {

@@ -29,6 +29,17 @@ final class NativeLoginSessionTests: XCTestCase {
         XCTFail("expected second factor from chinese error")
     }
 
+    func testCloudflareInterstitialIsNotACredentialError() {
+        let body = "<!DOCTYPE html><html><title>Just a moment...</title><body>cloudflare challenge-platform</body></html>"
+        XCTAssertTrue(NativeLoginSessionRunner.isCloudflareBlockedLogin(status: 403, body: body))
+        XCTAssertTrue(DiscourseAPI.looksLikeCloudflareChallengeHTML(body))
+        XCTAssertFalse(NativeLoginSessionRunner.isCloudflareBlockedLogin(
+            status: 200,
+            body: #"{"reason":"invalid_credentials","error":"nope"}"#
+        ))
+        XCTAssertFalse(NativeLoginSessionRunner.isCloudflareBlockedLogin(status: 403, body: ""))
+    }
+
     func testParsesSuccessUser() {
         let body = #"{"user":{"id":1,"username":"naine"}}"#
         if case .success = NativeLoginSessionRunner.parseSession(status: 200, body: body) {

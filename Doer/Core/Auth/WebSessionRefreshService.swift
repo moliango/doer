@@ -189,6 +189,11 @@ final class WebSessionRefreshService: NSObject {
         }
 
         lastAttemptAt[baseURL] = Date()
+        // WKWebView does not use Encrypted DNS. A hidden load would rotate `_t`
+        // on the system-DNS path while URLSession is still sending the old
+        // ticket, and Discourse then logs every device out. API Set-Cookie is
+        // the renewal path; AuthCookieFlightGate keeps the old ticket from
+        // overlapping the new one.
         if UserDefaults.standard.bool(forKey: "dohEnabled"), !LocalConnectProxy.originECHReady {
             DohDebugLog.record(
                 "web session refresh skipped reason=\(reason) skip=encrypted_dns",

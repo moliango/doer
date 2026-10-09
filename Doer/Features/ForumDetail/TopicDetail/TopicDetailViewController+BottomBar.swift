@@ -86,7 +86,7 @@ extension TopicDetailViewController: TopicDetailBottomBarDelegate {
         guard total > 0 else { return }
         let target = min(max(currentVisibleFloor() + delta, 1), total)
         if target <= 1 {
-            scrollToTop()
+            jumpToFloor(1)
             return
         }
         jumpToFloor(target)
@@ -248,7 +248,9 @@ extension TopicDetailViewController: TopicDetailBottomBarDelegate {
 
     func jumpToPostId(_ postId: Int) {
         if isOpeningPostId(postId) {
-            scrollToContentTop(animated: true)
+            // Mid-thread windows do not contain floor 1. Scrolling to y=0 only
+            // shows the top of the current page, so load the stream head first.
+            jumpToFloor(1)
             return
         }
         if scrollToPostIdIfVisible(postId, animated: true) {
@@ -262,7 +264,7 @@ extension TopicDetailViewController: TopicDetailBottomBarDelegate {
     /// Resolves to stream position so deleted-post gaps do not land on the wrong reply.
     func jumpToPostNumber(_ postNumber: Int) async {
         guard postNumber > 1 else {
-            scrollToContentTop(animated: true)
+            jumpToFloor(1)
             return
         }
 
@@ -289,9 +291,16 @@ extension TopicDetailViewController: TopicDetailBottomBarDelegate {
 
     /// Stream floor is 1-based index into `allPostIds` (not Discourse `post_number`).
     func jumpToFloor(_ floor: Int) {
-        guard floor > 1 else { return }
         let total = viewModel.totalFloors
-        guard floor <= total else { return }
+        guard floor >= 1, floor <= total else { return }
+
+        if floor <= 1 {
+            if let openingId = viewModel.allPostIds.first,
+               dataSource.indexPath(for: openingId) != nil {
+                scrollToContentTop(animated: true)
+                return
+            }
+        }
 
         let postId = viewModel.allPostIds[floor - 1]
         if scrollToPostIdIfVisible(postId, animated: false) {

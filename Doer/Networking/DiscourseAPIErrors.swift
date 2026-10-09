@@ -130,6 +130,27 @@ final class DiscourseAuthInterceptor: RequestInterceptor {
     }
 
     func adapt(_ urlRequest: URLRequest, for session: Session, completion: @escaping (Result<URLRequest, Error>) -> Void) {
+        let host = urlRequest.url?.host?.lowercased()
+        let token = urlRequest.url.flatMap { WebCookieStore.shared.cookieValue(named: "_t", for: $0) }
+        let proceed = { [weak self] in
+            guard let self else {
+                completion(.success(urlRequest))
+                return
+            }
+            self.adaptPrepared(urlRequest, for: session, completion: completion)
+        }
+        if let host {
+            AuthCookieFlightGate.shared.begin(host: host, token: token, proceed: proceed)
+        } else {
+            proceed()
+        }
+    }
+
+    private func adaptPrepared(
+        _ urlRequest: URLRequest,
+        for session: Session,
+        completion: @escaping (Result<URLRequest, Error>) -> Void
+    ) {
         var request = urlRequest
         if let url = request.url {
             let authMode = discourseRequestAuthMode(baseURL: baseURL, url: url)
@@ -195,6 +216,12 @@ final class DiscourseAuthInterceptor: RequestInterceptor {
             csrfLock.unlock()
         }
         getOrFetchCSRFToken(session: session) { token in
+            // The retried attempt adapts again and takes a new flight slot.
+            // Close the slot from the attempt that just failed, or the count
+            // sticks and the next rotated `_t` waits out the timeout.
+            if token != nil, let host = AuthCookieFlightGate.finishHost(for: request) {
+                AuthCookieFlightGate.shared.end(host: host)
+            }
             completion(token != nil ? .retry : .doNotRetry)
         }
     }

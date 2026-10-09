@@ -132,7 +132,7 @@ final class UserProfileModelsTests: XCTestCase {
         )
         XCTAssertEqual(
             avatarURL?.absoluteString,
-            "https://linux.do/user_avatar/linux.do/alice/\(AvatarImageLoader.primaryAvatarPixelSize)/1.png"
+            "https://cdn.ldstatic.com/user_avatar/linux.do/alice/\(AvatarImageLoader.primaryAvatarPixelSize)/1.png"
         )
     }
 

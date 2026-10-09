@@ -13,6 +13,32 @@ final class AvatarImageLoaderTests: XCTestCase {
         super.tearDown()
     }
 
+    func testLinuxDoImagesUseCDNAndKeepOriginCacheKey() {
+        let avatar = AvatarImageLoader.url(
+            from: "/user_avatar/linux.do/alice/{size}/1.png",
+            baseURL: "https://linux.do",
+            size: 96
+        )
+        XCTAssertEqual(avatar?.absoluteString, "https://cdn.ldstatic.com/user_avatar/linux.do/alice/96/1.png")
+        XCTAssertEqual(
+            AvatarImageLoader.diskCacheKey(for: avatar!),
+            "https://linux.do/user_avatar/linux.do/alice/96/1.png"
+        )
+        XCTAssertEqual(
+            AvatarCachePolicy.avatarIdentity(avatar!),
+            AvatarCachePolicy.avatarIdentity(
+                URL(string: "https://linux.do/user_avatar/linux.do/alice/120/1.png")!
+            )
+        )
+
+        let upload = AvatarImageLoader.url(
+            from: "/uploads/default/original/1X/a.png",
+            baseURL: "https://linux.do"
+        )
+        XCTAssertEqual(upload?.absoluteString, "https://linux.do/uploads/default/original/1X/a.png")
+        XCTAssertFalse(AvatarImageLoader.isForumCDN(avatar!))
+    }
+
     func testCachesSuccessfulAvatarByBaseURLAndUserId() {
         let image = UIImage(systemName: "person.circle")!
         let url = URL(string: "https://linux.do/user_avatar/linux.do/demo/120/1.png")!
@@ -95,6 +121,27 @@ final class AvatarImageLoaderTests: XCTestCase {
             url: requestedURL,
             avatarBaseURL: "https://linux.do",
             userId: 7
+        )
+
+        XCTAssertTrue(imageView.image === image)
+    }
+
+    func testIdentityCacheReusesAvatarWhenUserIdIsMissing() throws {
+        let image = UIImage(systemName: "person.circle")!
+        let cachedURL = try XCTUnwrap(URL(string: "https://linux.do/user_avatar/linux.do/demo/120/1.png"))
+        let requestedURL = try XCTUnwrap(URL(string: "https://linux.do/user_avatar/linux.do/demo/48/1.png"))
+        AvatarImageLoader.storeUserAvatarForTesting(
+            image,
+            url: cachedURL,
+            baseURL: "https://linux.do",
+            userId: 7
+        )
+
+        let imageView = UIImageView()
+        AvatarImageLoader.setImage(
+            on: imageView,
+            url: requestedURL,
+            cloudflareBaseURL: "https://linux.do"
         )
 
         XCTAssertTrue(imageView.image === image)

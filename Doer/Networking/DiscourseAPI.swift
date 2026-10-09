@@ -94,7 +94,8 @@ final class DiscourseAPI {
         return Session(
             configuration: config,
             interceptor: sessionInterceptor,
-            serverTrustManager: trustManager
+            serverTrustManager: trustManager,
+            eventMonitors: [AuthCookieFlightMonitor()]
         )
     }
 
@@ -846,6 +847,11 @@ final class DiscourseAPI {
         )
     }
 
+    /// True when a response body is a Cloudflare interstitial rather than Discourse JSON.
+    nonisolated static func looksLikeCloudflareChallengeHTML(_ body: String) -> Bool {
+        cloudflareBodyMarker(in: body.lowercased()) != nil
+    }
+
     nonisolated private static func cloudflareBodyMarker(in lowerBody: String) -> String? {
         if lowerBody.contains("cf_chl_opt") {
             return "cf_chl_opt"
@@ -884,5 +890,167 @@ final class DiscourseAPI {
             preview += "..."
         }
         return preview
+    }
+}
+
+/// Discourse rotates `_t` about every 10 minutes. A request that still carries
+/// the previous ticket after some other request has already presented the new
+/// one is treated as theft and logs the user out everywhere.
+///
+/// DoH makes that overlap common: the first response is slow, so launch sends
+/// a burst with the same ticket, then the cookie jar moves on while older
+/// requests are still on the wire. Same-ticket bursts stay parallel. A newer
+/// ticket waits until that burst has finished.
+nonisolated final class AuthCookieFlightGate: @unchecked Sendable {
+    static let shared = AuthCookieFlightGate()
+
+    private struct State {
+        var inflight = 0
+        var token: String?
+        var waiters: [Waiter] = []
+    }
+
+    private final class Waiter {
+        var fired = false
+        let proceed: () -> Void
+        init(proceed: @escaping () -> Void) {
+            self.proceed = proceed
+        }
+    }
+
+    private let lock = NSLock()
+    private var states: [String: State] = [:]
+
+    func begin(host: String, token: String?, proceed: @escaping () -> Void) {
+        let host = host.lowercased()
+        guard let token, !token.isEmpty else {
+            proceed()
+            return
+        }
+        lock.lock()
+        var state = states[host] ?? State()
+        if state.inflight == 0 || state.token == nil || state.token == token {
+            if state.inflight == 0 || state.token == nil {
+                state.token = token
+            }
+            state.inflight += 1
+            states[host] = state
+            lock.unlock()
+            proceed()
+            return
+        }
+        let waiter = Waiter(proceed: proceed)
+        state.waiters.append(waiter)
+        states[host] = state
+        DohDebugLog.record(
+            "auth flight holding newer _t host=\(host) inflight=\(state.inflight)",
+            subsystem: "Auth"
+        )
+        lock.unlock()
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 20) { [weak self] in
+            self?.admit(waiter, host: host, resetStuckFlight: true)
+        }
+    }
+
+    func end(host: String) {
+        admitFinishedFlight(host: host.lowercased())
+    }
+
+    func resetForTests(host: String) {
+        lock.lock()
+        let waiters = states[host.lowercased()]?.waiters ?? []
+        states[host.lowercased()] = nil
+        for waiter in waiters {
+            waiter.fired = true
+        }
+        lock.unlock()
+    }
+
+    static func finishHost(for request: Request) -> String? {
+        let cookie = request.lastRequest?.value(forHTTPHeaderField: "Cookie")
+            ?? request.firstRequest?.value(forHTTPHeaderField: "Cookie")
+            ?? ""
+        guard cookieHeaderContainsAuthTicket(cookie) else { return nil }
+        if let host = request.firstRequest?.url?.host?.lowercased(),
+           !LocalConnectProxy.isLoopbackGatewayHost(host) {
+            return host
+        }
+        if let host = request.request?.value(forHTTPHeaderField: "Host")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased(),
+           !host.isEmpty,
+           !LocalConnectProxy.isLoopbackGatewayHost(host) {
+            return host
+        }
+        return request.request?.url?.host?.lowercased()
+    }
+
+    static func cookieHeaderContainsAuthTicket(_ header: String) -> Bool {
+        header.split(separator: ";").contains { part in
+            let name = part.split(separator: "=", maxSplits: 1).first?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return name == "_t"
+        }
+    }
+
+    private func admitFinishedFlight(host: String) {
+        let ready = takeWaiters(host: host)
+        ready.forEach { $0.proceed() }
+    }
+
+    private func admit(_ waiter: Waiter, host: String, resetStuckFlight: Bool) {
+        lock.lock()
+        guard !waiter.fired else {
+            lock.unlock()
+            return
+        }
+        waiter.fired = true
+        var state = states[host] ?? State()
+        state.waiters.removeAll { $0 === waiter }
+        if resetStuckFlight {
+            state.inflight = 1
+            state.token = nil
+        } else if state.inflight == 0 {
+            state.inflight = 1
+        } else {
+            state.inflight += 1
+        }
+        states[host] = state
+        lock.unlock()
+        waiter.proceed()
+    }
+
+    private func takeWaiters(host: String) -> [Waiter] {
+        lock.lock()
+        var state = states[host] ?? State()
+        if state.inflight > 0 {
+            state.inflight -= 1
+        }
+        let ready: [Waiter]
+        if state.inflight == 0 {
+            ready = state.waiters
+            state.waiters = []
+            state.inflight = ready.count
+            state.token = nil
+            for waiter in ready {
+                waiter.fired = true
+            }
+        } else {
+            ready = []
+        }
+        if state.inflight == 0 && state.waiters.isEmpty {
+            states[host] = nil
+        } else {
+            states[host] = state
+        }
+        lock.unlock()
+        return ready
+    }
+}
+
+nonisolated final class AuthCookieFlightMonitor: EventMonitor, @unchecked Sendable {
+    func requestDidFinish(_ request: Request) {
+        guard let host = AuthCookieFlightGate.finishHost(for: request) else { return }
+        AuthCookieFlightGate.shared.end(host: host)
     }
 }

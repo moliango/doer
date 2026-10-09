@@ -1,3 +1,4 @@
+import CookedHTML
 import SDWebImage
 import UIKit
 
@@ -28,6 +29,10 @@ enum AvatarImageLoader {
     }()
     private static let userAvatarCacheLock = NSLock()
     private static var userAvatarCache: [String: UserAvatarCacheEntry] = [:]
+    /// Same bitmap for every size of one Discourse avatar. URL memory misses
+    /// still paint from here instead of downloading `/user_avatar/...` again.
+    private static var identityImages: [String: UIImage] = [:]
+    private static let identityImageLimit = 800
     private static var userAvatarCacheStatsByBaseURL: [String: UserAvatarCacheStats] = [:]
     private static let prefetchLock = NSLock()
     private static var prefetchedURLStrings = Set<String>()
@@ -152,6 +157,7 @@ enum AvatarImageLoader {
         inMemoryCache.removeAllObjects()
         userAvatarCacheLock.lock()
         userAvatarCache.removeAll(keepingCapacity: true)
+        identityImages.removeAll(keepingCapacity: true)
         userAvatarCacheStatsByBaseURL.removeAll(keepingCapacity: true)
         userAvatarCacheLock.unlock()
         prefetchLock.lock()
@@ -173,17 +179,22 @@ enum AvatarImageLoader {
             .replacingOccurrences(of: "{size}", with: "\(size)")
         guard !sized.isEmpty else { return nil }
 
-        if sized.hasPrefix("//") {
-            return URL(string: "https:\(sized)")
-        }
+        let resolved = URLResolver.resolve(sized, baseURL: baseURL)
+        guard !resolved.isEmpty else { return nil }
+        return URL(string: resolved)
+    }
 
-        if let absoluteURL = URL(string: sized), absoluteURL.scheme != nil {
-            return absoluteURL
-        }
-
-        let normalizedBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/"
-        guard let base = URL(string: normalizedBase) else { return URL(string: sized) }
-        return URL(string: sized, relativeTo: base)?.absoluteURL
+    /// SD cache key for a public CDN image. Downloads use `cdn.ldstatic.com`,
+    /// but previously saved files are keyed by the `linux.do` URL.
+    static func diskCacheKey(for url: URL) -> String {
+        guard url.host?.lowercased() == "cdn.ldstatic.com",
+              URLResolver.isLinuxDoPublicImagePath(url.path),
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else { return url.absoluteString }
+        components.scheme = "https"
+        components.host = "linux.do"
+        components.port = nil
+        return components.url?.absoluteString ?? url.absoluteString
     }
 
     static func setImage(
@@ -231,22 +242,25 @@ enum AvatarImageLoader {
         }
 
         let cacheKey = url as NSURL
-        if let cachedImage = cachedImage(for: url) {
+        let statsBaseURL = avatarBaseURL ?? cloudflareBaseURL
+        if let cachedImage = cachedImage(for: url) ?? imageMatchingIdentity(of: url) {
             imageView.sd_cancelCurrentImageLoad()
             ImagePaintPolicy.paint(cachedImage, on: imageView, source: .memory)
+            rememberIdentity(cachedImage, url: url)
             storeUserAvatarIfPossible(
                 cachedImage,
                 url: url,
-                baseURL: avatarBaseURL ?? cloudflareBaseURL,
+                baseURL: statsBaseURL,
                 userId: userId
             )
+            recordAvatarLoad(baseURL: statsBaseURL, hit: true)
             completed?(cachedImage, nil, .memory, url)
             return
         }
 
         ImagePaintPolicy.prepareForLoad(on: imageView)
 
-        let cachedUserAvatar = cachedUserAvatar(baseURL: avatarBaseURL ?? cloudflareBaseURL, userId: userId)
+        let cachedUserAvatar = cachedUserAvatar(baseURL: statsBaseURL, userId: userId)
         if let cachedUserAvatar {
             imageView.image = cachedUserAvatar.image
             if AvatarCachePolicy.shouldSkipNetworkAfterUserCacheHit(
@@ -259,7 +273,9 @@ enum AvatarImageLoader {
                     forKey: cacheKey,
                     cost: cachedUserAvatar.image.avatarCacheCost
                 )
+                rememberIdentity(cachedUserAvatar.image, url: url)
                 imageView.sd_cancelCurrentImageLoad()
+                recordAvatarLoad(baseURL: statsBaseURL, hit: true)
                 completed?(cachedUserAvatar.image, nil, .memory, url)
                 return
             }
@@ -289,12 +305,15 @@ enum AvatarImageLoader {
                 if let image {
                     ImagePaintPolicy.paint(image, on: imageView, source: ImagePaintCacheSource(cacheType))
                     inMemoryCache.setObject(image, forKey: cacheKey, cost: image.avatarCacheCost)
+                    rememberIdentity(image, url: url)
                     storeUserAvatarIfPossible(
                         image,
                         url: url,
-                        baseURL: avatarBaseURL ?? cloudflareBaseURL,
+                        baseURL: statsBaseURL,
                         userId: userId
                     )
+                    // `.none` is a real download. Disk/memory must not count as a miss.
+                    recordAvatarLoad(baseURL: statsBaseURL, hit: cacheType != .none)
                 } else if imageView.image == nil {
                     imageView.image = placeholder
                     imageView.tintColor = .tertiaryLabel
@@ -324,10 +343,15 @@ enum AvatarImageLoader {
     }
 
     /// 1) Already in memory/disk → skipped before this runs (zero network, zero CF risk).
-    /// 2) CF gate / missing clearance on main host → cache-only.
-    /// 3) Cap main-domain prefetch so avatar storms don't trip the shield.
+    /// 2) Forum-host avatars are not prefetched. Visible cells load them; a
+    ///    lookahead burst of `/user_avatar` is what draws `cf-mitigated: challenge`.
+    /// 3) CF gate / missing clearance on main host → cache-only.
     private static func startNetworkPrefetch(urls: [URL], cloudflareBaseURL: String?) {
-        let networkURLs = urls.filter {
+        let offHostURLs = urls.filter {
+            !CloudflareImageGate.isMainDomain($0, cloudflareBaseURL: cloudflareBaseURL)
+        }
+        guard !offHostURLs.isEmpty else { return }
+        let networkURLs = offHostURLs.filter {
             !CloudflareImageGate.shouldBlockNetworkLoad(url: $0, cloudflareBaseURL: cloudflareBaseURL)
                 && !CloudflareImageGate.shouldSkipPrefetchWithoutClearance(
                     url: $0,
@@ -398,6 +422,7 @@ enum AvatarImageLoader {
     /// linux.do upload CDN — treat like main host for prefetch caps / cookie path.
     static func isForumCDN(_ url: URL) -> Bool {
         guard let host = url.host?.lowercased() else { return false }
+        if host == "cdn.ldstatic.com" { return false }
         return host.contains("ldstatic.com") || host.contains("linuxdo-uploads")
     }
 
@@ -472,6 +497,9 @@ enum AvatarImageLoader {
             return response
         })
         context[SDWebImageContextOption.downloadResponseModifier] = responseModifier
+        context[SDWebImageContextOption.cacheKeyFilter] = SDWebImageCacheKeyFilter { requestURL in
+            diskCacheKey(for: requestURL)
+        }
         return context
     }
 
@@ -494,7 +522,7 @@ enum AvatarImageLoader {
             !Thread.isMainThread,
             "SD disk cache decode must not run on the main thread"
         )
-        let key = url.absoluteString
+        let key = diskCacheKey(for: url)
         guard let disk = SDImageCache.shared.imageFromCache(forKey: key) else {
             return nil
         }
@@ -503,14 +531,39 @@ enum AvatarImageLoader {
     }
 
     static func cachedUserAvatar(baseURL: String?, userId: Int?) -> UserAvatarCacheEntry? {
-        guard let cacheKey = userAvatarCacheKey(baseURL: baseURL, userId: userId),
-              let statsKey = normalizedUserAvatarStatsKey(baseURL: baseURL)
-        else { return nil }
+        guard let cacheKey = userAvatarCacheKey(baseURL: baseURL, userId: userId) else { return nil }
         userAvatarCacheLock.lock()
         let entry = userAvatarCache[cacheKey]
-        recordUserAvatarCacheLookupLocked(baseURL: statsKey, hit: entry != nil)
         userAvatarCacheLock.unlock()
         return entry
+    }
+
+    private static func imageMatchingIdentity(of url: URL) -> UIImage? {
+        let key = AvatarCachePolicy.avatarIdentity(url)
+        userAvatarCacheLock.lock()
+        let image = identityImages[key]
+        userAvatarCacheLock.unlock()
+        return image
+    }
+
+    private static func rememberIdentity(_ image: UIImage, url: URL) {
+        let key = AvatarCachePolicy.avatarIdentity(url)
+        userAvatarCacheLock.lock()
+        identityImages[key] = image
+        if identityImages.count > identityImageLimit {
+            let overflow = identityImages.count - identityImageLimit
+            for dropKey in identityImages.keys.prefix(overflow) where dropKey != key {
+                identityImages.removeValue(forKey: dropKey)
+            }
+        }
+        userAvatarCacheLock.unlock()
+    }
+
+    private static func recordAvatarLoad(baseURL: String?, hit: Bool) {
+        guard let statsKey = normalizedUserAvatarStatsKey(baseURL: baseURL) else { return }
+        userAvatarCacheLock.lock()
+        recordUserAvatarCacheLookupLocked(baseURL: statsKey, hit: hit)
+        userAvatarCacheLock.unlock()
     }
 
     private static func cachedImage(for url: URL) -> UIImage? {
@@ -519,7 +572,7 @@ enum AvatarImageLoader {
             return memory
         }
         // SD memory only — `imageFromCache` would synchronously decode from disk.
-        if let sdMemory = SDImageCache.shared.imageFromMemoryCache(forKey: url.absoluteString) {
+        if let sdMemory = SDImageCache.shared.imageFromMemoryCache(forKey: diskCacheKey(for: url)) {
             inMemoryCache.setObject(sdMemory, forKey: cacheKey, cost: sdMemory.avatarCacheCost)
             return sdMemory
         }
@@ -538,6 +591,14 @@ enum AvatarImageLoader {
         userAvatarCacheLock.lock()
         userAvatarCache[key] = UserAvatarCacheEntry(image: image, url: url)
         recordUserAvatarCacheStoreLocked(baseURL: statsKey)
+        let identityKey = AvatarCachePolicy.avatarIdentity(url)
+        identityImages[identityKey] = image
+        if identityImages.count > identityImageLimit {
+            let overflow = identityImages.count - identityImageLimit
+            for dropKey in identityImages.keys.prefix(overflow) where dropKey != identityKey {
+                identityImages.removeValue(forKey: dropKey)
+            }
+        }
         // Soft trim: drop ~10% oldest-iteration keys when over cap (keeps recent hot set).
         if userAvatarCache.count > maxInProcessEntryCount {
             let overflow = userAvatarCache.count - maxInProcessEntryCount
@@ -614,6 +675,7 @@ enum AvatarImageLoader {
     static func clearUserAvatarCacheForTesting() {
         userAvatarCacheLock.lock()
         userAvatarCache.removeAll(keepingCapacity: true)
+        identityImages.removeAll(keepingCapacity: true)
         userAvatarCacheStatsByBaseURL.removeAll(keepingCapacity: true)
         userAvatarCacheLock.unlock()
     }

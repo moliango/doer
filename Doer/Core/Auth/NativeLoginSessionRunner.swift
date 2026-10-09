@@ -14,12 +14,17 @@ final class NativeLoginSessionRunner: NSObject, WKScriptMessageHandler, WKNaviga
 
     private let baseURL: URL
     private let siteKey: String?
+    private weak var host: UIViewController?
     private var webView: WKWebView?
     private var overlay: UIView?
     private var identifier = ""
     private var password = ""
     private var finished = false
     private var continuation: CheckedContinuation<Outcome, Never>?
+    private var lastHCaptchaToken: String?
+    private var lastSecondFactorToken: String?
+    /// One shield sheet per attempt. A second challenge after a pass is a real failure.
+    private var cloudflareAttempted = false
 
     init(baseURL: URL, siteKey: String?) {
         self.baseURL = baseURL
@@ -35,7 +40,11 @@ final class NativeLoginSessionRunner: NSObject, WKScriptMessageHandler, WKNaviga
     ) async -> Outcome {
         self.identifier = identifier
         self.password = password
+        self.host = host
         finished = false
+        cloudflareAttempted = false
+        lastHCaptchaToken = nil
+        lastSecondFactorToken = nil
         // WKWebView ignores Encrypted DNS; attach CONNECT so login/hCaptcha
         // resolve through DoH like the Cloudflare challenge sheet.
         await LightweightDohProxyService.shared.prepareBrowserProxy()
@@ -214,6 +223,8 @@ final class NativeLoginSessionRunner: NSObject, WKScriptMessageHandler, WKNaviga
     }
 
     private func evaluateLogin(hcaptchaToken: String?, secondFactorToken: String?) {
+        lastHCaptchaToken = hcaptchaToken
+        lastSecondFactorToken = secondFactorToken
         let id = Self.jsString(identifier)
         let pwd = Self.jsString(password)
         let tok = hcaptchaToken.map(Self.jsString) ?? "null"
@@ -225,6 +236,13 @@ final class NativeLoginSessionRunner: NSObject, WKScriptMessageHandler, WKNaviga
         let phase = body["phase"] as? String ?? ""
         let status = Self.intValue(body["status"])
         let raw = body["body"] as? String ?? ""
+        if (phase == "csrf" || phase == "session" || phase == "exception"),
+           !cloudflareAttempted,
+           Self.isCloudflareBlockedLogin(status: status, body: raw) {
+            cloudflareAttempted = true
+            Task { await self.passCloudflareThenRetry() }
+            return
+        }
         switch phase {
         case "csrf":
             finish(.failure(String(localized: "native_login.csrf_failed", defaultValue: "登录校验失败，请先完成 Cloudflare 验证后重试")))
@@ -236,6 +254,65 @@ final class NativeLoginSessionRunner: NSObject, WKScriptMessageHandler, WKNaviga
             finish(Self.parseSession(status: status, body: raw))
         default:
             finish(.failure(String(localized: "native_login.unknown", defaultValue: "登录失败")))
+        }
+    }
+
+    /// `fetch('/session/csrf')` cannot draw the interstitial. Web login works
+    /// because the document itself is the shield. Same markers as API detection.
+    nonisolated static func isCloudflareBlockedLogin(status: Int, body: String) -> Bool {
+        guard !body.isEmpty else { return false }
+        if DiscourseAPI.looksLikeCloudflareChallengeHTML(body) { return true }
+        let blockedStatus = status == 403 || status == 429 || status == 503
+        let lower = body.lowercased()
+        return blockedStatus
+            && lower.contains("cloudflare")
+            && (lower.contains("<html") || lower.contains("<!doctype"))
+    }
+
+    /// Show the same shield sheet web login uses, then repeat the session POST
+    /// in the WK store that just received `cf_clearance`.
+    private func passCloudflareThenRetry() async {
+        overlay?.isHidden = true
+        DohDebugLog.record("native login hit cloudflare shield; presenting verification", subsystem: "Auth")
+        let passed = await presentCloudflareShield()
+        guard !finished else { return }
+        guard passed else {
+            finish(.failure(String(
+                localized: "native_login.csrf_failed",
+                defaultValue: "登录校验失败，请先完成 Cloudflare 验证后重试"
+            )))
+            return
+        }
+        if let webView {
+            await WebCookieStore.shared.syncToWebView(webView.configuration.websiteDataStore, for: baseURL)
+        }
+        evaluateLogin(hcaptchaToken: lastHCaptchaToken, secondFactorToken: lastSecondFactorToken)
+    }
+
+    private func presentCloudflareShield() async -> Bool {
+        guard let host, host.presentedViewController == nil else { return false }
+        let before = WebCookieStore.shared.cookieValue(named: "cf_clearance", for: baseURL)
+        return await withCheckedContinuation { continuation in
+            let gate = ResumeGate()
+            let verifier = CloudflareVerificationViewController(
+                baseURL: baseURL,
+                autoDismissOnSuccess: true
+            ) { [weak self] in
+                guard let self else {
+                    gate.resume(continuation, false)
+                    return
+                }
+                let after = WebCookieStore.shared.cookieValue(named: "cf_clearance", for: self.baseURL)
+                let passed = CloudflareVerificationPolicy.hasUsableClearance(
+                    currentValue: after,
+                    initialValue: before,
+                    requiresFreshValue: before?.isEmpty == false
+                )
+                gate.resume(continuation, passed)
+            }
+            let nav = UINavigationController(rootViewController: verifier)
+            nav.modalPresentationStyle = .pageSheet
+            host.present(nav, animated: true)
         }
     }
 
@@ -395,5 +472,15 @@ final class NativeLoginSessionRunner: NSObject, WKScriptMessageHandler, WKNaviga
         </script>
         </body></html>
         """
+    }
+}
+
+private final class ResumeGate {
+    private var fired = false
+
+    func resume(_ continuation: CheckedContinuation<Bool, Never>, _ value: Bool) {
+        guard !fired else { return }
+        fired = true
+        continuation.resume(returning: value)
     }
 }
