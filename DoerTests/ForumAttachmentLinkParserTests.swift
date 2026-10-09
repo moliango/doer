@@ -12,6 +12,16 @@ final class ForumAttachmentLinkParserTests: XCTestCase {
         XCTAssertTrue(ForumAttachmentLinkParser.isAttachmentURL(url))
     }
 
+    func testShortURLWithoutExtensionIsAttachment() {
+        let url = URL(string: "https://linux.do/uploads/short-url/8sreYeCHmxklWlWeR6AqJQIcIQi")!
+        XCTAssertTrue(ForumAttachmentLinkParser.isAttachmentURL(url))
+    }
+
+    func testRelativeShortURLWithoutExtensionIsAttachment() {
+        let url = URL(string: "/uploads/short-url/8sreYeCHmxklWlWeR6AqJQIcIQi")!
+        XCTAssertTrue(ForumAttachmentLinkParser.isAttachmentURL(url))
+    }
+
     func testPDFUploadPath() {
         let url = URL(string: "https://linux.do/uploads/default/original/3X/a/b/abcdef.pdf")!
         XCTAssertTrue(ForumAttachmentLinkParser.isAttachmentURL(url))

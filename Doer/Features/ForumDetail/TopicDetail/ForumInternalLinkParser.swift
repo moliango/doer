@@ -206,7 +206,12 @@ enum ForumAttachmentLinkParser {
             if fileExtensions.contains(ext) {
                 return true
             }
-            if path.contains("/uploads/short-url/") || path.contains("/secure-uploads/") {
+            // Cooked `[name|attachment](upload://token)` often has no file extension
+            // on the href (`/uploads/short-url/TOKEN`). Still a download.
+            if isDiscourseShortURL(path, lastComponent: url.lastPathComponent) {
+                return true
+            }
+            if path.contains("/secure-uploads/") {
                 return !ext.isEmpty
             }
             return false
@@ -214,6 +219,12 @@ enum ForumAttachmentLinkParser {
 
         // External links: only clear binary/document extensions. Never `.html` webpages.
         return fileExtensions.contains(ext)
+    }
+
+    private static func isDiscourseShortURL(_ path: String, lastComponent: String) -> Bool {
+        guard path.contains("/uploads/short-url/") else { return false }
+        let token = lastComponent.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return !token.isEmpty && token != "short-url"
     }
 
     private static func hasDownloadQuery(_ url: URL) -> Bool {

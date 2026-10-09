@@ -49,6 +49,7 @@ class ChatTopicDetailViewController: ObservableViewController {
     private var isLoadingMore = false
     private var isLoadingEarlier = false
     private var postRowHeightCache: [Int: CGFloat] = [:]
+    private var downloadedAttachmentURLs: Set<URL> = []
     lazy var readingTracker = TopicReadingTracker(api: api)
     let findController = TopicFindBarController()
     let tocController = TopicTocController()
@@ -1278,6 +1279,8 @@ class ChatTopicDetailViewController: ObservableViewController {
                     animated: true
                 )
             }
+        } else if ForumAttachmentLinkParser.isAttachmentURL(linkURL) {
+            downloadAndShareAttachment(linkURL)
         } else {
             DoerSafariPresenter.present(
                 url: linkURL,
@@ -1286,6 +1289,17 @@ class ChatTopicDetailViewController: ObservableViewController {
                 username: AuthManager.shared.username(for: api.baseURL)
             )
         }
+    }
+
+    private func downloadAndShareAttachment(_ url: URL) {
+        ForumAttachmentShareFlow.downloadAndShare(
+            url: url,
+            baseURL: baseURL,
+            from: self,
+            store: { [weak self] in self?.downloadedAttachmentURLs.insert($0) },
+            remove: { [weak self] in self?.downloadedAttachmentURLs.remove($0) },
+            onError: { [weak self] in self?.showPostActionError($0) }
+        )
     }
 
 // MARK: - Cloudflare recovery
