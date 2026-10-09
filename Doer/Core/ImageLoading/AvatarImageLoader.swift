@@ -1,3 +1,4 @@
+import CookedHTML
 import SDWebImage
 import UIKit
 
@@ -178,17 +179,22 @@ enum AvatarImageLoader {
             .replacingOccurrences(of: "{size}", with: "\(size)")
         guard !sized.isEmpty else { return nil }
 
-        if sized.hasPrefix("//") {
-            return URL(string: "https:\(sized)")
-        }
+        let resolved = URLResolver.resolve(sized, baseURL: baseURL)
+        guard !resolved.isEmpty else { return nil }
+        return URL(string: resolved)
+    }
 
-        if let absoluteURL = URL(string: sized), absoluteURL.scheme != nil {
-            return absoluteURL
-        }
-
-        let normalizedBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/"
-        guard let base = URL(string: normalizedBase) else { return URL(string: sized) }
-        return URL(string: sized, relativeTo: base)?.absoluteURL
+    /// SD cache key for a public CDN image. Downloads use `cdn.ldstatic.com`,
+    /// but previously saved files are keyed by the `linux.do` URL.
+    static func diskCacheKey(for url: URL) -> String {
+        guard url.host?.lowercased() == "cdn.ldstatic.com",
+              URLResolver.isLinuxDoPublicImagePath(url.path),
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else { return url.absoluteString }
+        components.scheme = "https"
+        components.host = "linux.do"
+        components.port = nil
+        return components.url?.absoluteString ?? url.absoluteString
     }
 
     static func setImage(
@@ -416,6 +422,7 @@ enum AvatarImageLoader {
     /// linux.do upload CDN — treat like main host for prefetch caps / cookie path.
     static func isForumCDN(_ url: URL) -> Bool {
         guard let host = url.host?.lowercased() else { return false }
+        if host == "cdn.ldstatic.com" { return false }
         return host.contains("ldstatic.com") || host.contains("linuxdo-uploads")
     }
 
@@ -490,6 +497,9 @@ enum AvatarImageLoader {
             return response
         })
         context[SDWebImageContextOption.downloadResponseModifier] = responseModifier
+        context[SDWebImageContextOption.cacheKeyFilter] = SDWebImageCacheKeyFilter { requestURL in
+            diskCacheKey(for: requestURL)
+        }
         return context
     }
 
@@ -512,7 +522,7 @@ enum AvatarImageLoader {
             !Thread.isMainThread,
             "SD disk cache decode must not run on the main thread"
         )
-        let key = url.absoluteString
+        let key = diskCacheKey(for: url)
         guard let disk = SDImageCache.shared.imageFromCache(forKey: key) else {
             return nil
         }
@@ -562,7 +572,7 @@ enum AvatarImageLoader {
             return memory
         }
         // SD memory only — `imageFromCache` would synchronously decode from disk.
-        if let sdMemory = SDImageCache.shared.imageFromMemoryCache(forKey: url.absoluteString) {
+        if let sdMemory = SDImageCache.shared.imageFromMemoryCache(forKey: diskCacheKey(for: url)) {
             inMemoryCache.setObject(sdMemory, forKey: cacheKey, cost: sdMemory.avatarCacheCost)
             return sdMemory
         }
