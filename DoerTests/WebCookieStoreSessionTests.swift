@@ -206,6 +206,49 @@ final class WebCookieStoreSessionTests: XCTestCase {
         XCTAssertEqual(WebCookieStore.shared.cookieValue(named: "cf_clearance", for: probeURL), "new-cf")
     }
 
+    func testLaterAuthCookieReplacesLongerLivedTicketAndIsNotResent() throws {
+        try seedValidAuthCookie(name: "_t", value: "old-token")
+
+        let rotated = try XCTUnwrap(HTTPCookie(properties: [
+            .name: "_t",
+            .value: "new-token",
+            .domain: ".\(probeHost)",
+            .path: "/",
+            .secure: "TRUE",
+            .expires: Date().addingTimeInterval(3600),
+        ]))
+        WebCookieStore.shared.setCookies([rotated])
+
+        XCTAssertEqual(WebCookieStore.shared.cookieValue(named: "_t", for: probeURL), "new-token")
+        let header = WebCookieStore.shared.cookieHeader(for: probeURL)
+        XCTAssertTrue(header.contains("_t=new-token"))
+        XCTAssertFalse(header.contains("old-token"))
+        let injected = WebCookieStore.shared.siteCookiesForInjection(forHost: probeHost)
+        XCTAssertEqual(injected.filter { $0.name == "_t" }.map(\.value), ["new-token"])
+    }
+
+    func testLoopbackSetCookieRebindsAuthTicketOntoForumHost() throws {
+        let previous = LocalConnectProxy.gatewayOriginHost
+        LocalConnectProxy.gatewayOriginHost = probeHost
+        defer { LocalConnectProxy.gatewayOriginHost = previous }
+
+        WebCookieStore.shared.mergeResponseHeaders(
+            ["Set-Cookie": "_t=from-gateway; Path=/; Secure; HttpOnly"],
+            for: URL(string: "http://127.0.0.1:9/latest.json")!
+        )
+
+        XCTAssertEqual(
+            WebCookieStore.shared.cookieValue(named: "_t", for: probeURL),
+            "from-gateway"
+        )
+        XCTAssertFalse(
+            WebCookieStore.shared.hasCookie(
+                named: "_t",
+                for: URL(string: "http://127.0.0.1:9/")!
+            )
+        )
+    }
+
     private func seedValidAuthCookie(name: String, value: String) throws {
         let auth = try XCTUnwrap(HTTPCookie(properties: [
             .name: name,

@@ -2,6 +2,39 @@ import XCTest
 @testable import Doer
 
 final class DiscourseAPIWebSessionRetryTests: XCTestCase {
+    func testAuthFlightKeepsSameTicketParallelAndHoldsTheNextTicket() {
+        let gate = AuthCookieFlightGate.shared
+        let host = "auth-flight.doer.test"
+        defer { gate.resetForTests(host: host) }
+
+        var started = 0
+        gate.begin(host: host, token: "ticket-a") { started += 1 }
+        gate.begin(host: host, token: "ticket-a") { started += 1 }
+        XCTAssertEqual(started, 2)
+
+        var rotatedStarted = false
+        gate.begin(host: host, token: "ticket-b") { rotatedStarted = true }
+        XCTAssertFalse(rotatedStarted)
+
+        gate.end(host: host)
+        XCTAssertFalse(rotatedStarted, "one of the original tickets is still in flight")
+        gate.end(host: host)
+        XCTAssertTrue(rotatedStarted)
+        gate.end(host: host)
+    }
+
+    func testAuthFlightIgnoresRequestsWithoutATicket() {
+        let gate = AuthCookieFlightGate.shared
+        let host = "auth-flight-anon.doer.test"
+        defer { gate.resetForTests(host: host) }
+
+        var started = false
+        gate.begin(host: host, token: nil) { started = true }
+        XCTAssertTrue(started)
+        XCTAssertTrue(AuthCookieFlightGate.cookieHeaderContainsAuthTicket("_forum_session=abc; _t=ticket"))
+        XCTAssertFalse(AuthCookieFlightGate.cookieHeaderContainsAuthTicket("cf_clearance=abc"))
+    }
+
     func testEmpty200DoesNotForceWebSessionRefresh() {
         XCTAssertNil(
             DiscourseAPI.webSessionRefreshRetryReason(
