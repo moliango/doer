@@ -472,9 +472,11 @@ final class ForumContainerViewController: UIViewController, AuthGating {
 
     private func setupLaunchLoadingOverlay() {
         if !isHomeInitialContentReady {
-            // Home hydrates list cache in viewDidLoad. Load it before covering the UI
-            // so a cached cold start can skip the brand overlay entirely.
-            _ = tabBarViewController?.selectedViewController?.view
+            // Home hydrates list cache in viewDidLoad. Load the nav *and* the
+            // home root — `selectedViewController.view` is only the nav chrome.
+            let selected = tabBarViewController?.selectedViewController
+            _ = selected?.view
+            _ = (selected as? UINavigationController)?.topViewController?.view
         }
         if isHomeInitialContentReady {
             launchOverlayDismissed = true
