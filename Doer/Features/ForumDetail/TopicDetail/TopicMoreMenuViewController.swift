@@ -1,6 +1,6 @@
 import UIKit
 
-/// Topic more menu — compact popover with inline expansions (no bottom action sheets).
+/// Topic more menu. A grouped sheet: icon shortcuts on top, list actions below.
 final class TopicMoreMenuViewController: UIViewController {
     struct Model {
         var isBookmarked: Bool
@@ -54,7 +54,6 @@ final class TopicMoreMenuViewController: UIViewController {
     private let scrollView = UIScrollView()
     private let stack = UIStackView()
     private var expandedSection: ExpandedSection?
-    private var expansionHost: UIStackView?
     private var scrubFloor: Int?
 
     private enum ExpandedSection: Equatable {
@@ -67,14 +66,14 @@ final class TopicMoreMenuViewController: UIViewController {
 
     private var themeStyle: AppSettings.ThemeStyle { AppSettings.shared.themeStyle }
     private var accent: UIColor { themeStyle.accentColor }
-    private var menuSurface: UIColor { .secondarySystemGroupedBackground }
-    private var menuCanvas: UIColor { .systemGroupedBackground }
+    private var menuCanvas: UIColor { themeStyle.topicListBackgroundColor }
+    private var menuSurface: UIColor { themeStyle.topicCardBackgroundColor }
 
     init(model: Model) {
         self.model = model
         super.init(nibName: nil, bundle: nil)
-        modalPresentationStyle = .popover
-        preferredContentSize = CGSize(width: 320, height: 520)
+        modalPresentationStyle = .pageSheet
+        preferredContentSize = CGSize(width: 360, height: 560)
     }
 
     @available(*, unavailable)
@@ -86,33 +85,30 @@ final class TopicMoreMenuViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = menuCanvas
 
-        let grabber = UIView()
-        grabber.translatesAutoresizingMaskIntoConstraints = false
-        grabber.backgroundColor = UIColor.tertiaryLabel.withAlphaComponent(0.35)
-        grabber.layer.cornerRadius = 2.5
-        grabber.isAccessibilityElement = false
-        view.addSubview(grabber)
+        let header = makeHeader()
+        view.addSubview(header)
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.alwaysBounceVertical = true
-        scrollView.showsVerticalScrollIndicator = true
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.contentInset = UIEdgeInsets(top: 4, left: 0, bottom: 12, right: 0)
         view.addSubview(scrollView)
 
         stack.axis = .vertical
-        stack.spacing = 2
+        stack.spacing = 0
         stack.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(stack)
 
         NSLayoutConstraint.activate([
-            grabber.topAnchor.constraint(equalTo: view.topAnchor, constant: 8),
-            grabber.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            grabber.widthAnchor.constraint(equalToConstant: 36),
-            grabber.heightAnchor.constraint(equalToConstant: 5),
+            header.topAnchor.constraint(equalTo: view.topAnchor, constant: 16),
+            header.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            header.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+            header.heightAnchor.constraint(equalToConstant: 44),
 
-            scrollView.topAnchor.constraint(equalTo: grabber.bottomAnchor, constant: 10),
+            scrollView.topAnchor.constraint(equalTo: header.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
             stack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
             stack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
@@ -129,42 +125,43 @@ final class TopicMoreMenuViewController: UIViewController {
             stack.removeArrangedSubview($0)
             $0.removeFromSuperview()
         }
-        expansionHost = nil
 
-        stack.addArrangedSubview(makeQuickActionsRow())
-        stack.setCustomSpacing(12, after: stack.arrangedSubviews.last!)
+        stack.addArrangedSubview(makeSectionLabel(
+            String(localized: "topic.menu.section.shortcuts", defaultValue: "快捷")
+        ))
+        stack.addArrangedSubview(makeShortcutCard())
 
-        // Content
+        var contentRows: [UIView] = []
         if model.canEdit {
-            stack.addArrangedSubview(makeRow(
+            contentRows.append(makeRow(
                 symbol: "pencil",
                 title: String(localized: "topic.edit", defaultValue: "编辑话题"),
                 action: .editTopic
             ))
         }
-        stack.addArrangedSubview(makeRow(
+        contentRows.append(makeRow(
             symbol: "photo",
             title: String(localized: "topic.share_image", defaultValue: "生成分享图片"),
             action: .shareImage
         ))
         if model.showExport {
-            stack.addArrangedSubview(makeExpandableRow(
+            contentRows.append(makeExpandableRow(
                 symbol: "square.and.arrow.down",
                 title: String(localized: "topic.export", defaultValue: "导出话题"),
                 section: .export,
                 isActive: false
             ))
             if expandedSection == .export {
-                stack.addArrangedSubview(makeExportPanel())
+                contentRows.append(contentsOf: makeExportRows())
             }
         }
-        stack.addArrangedSubview(makeRow(
+        contentRows.append(makeRow(
             symbol: "safari",
             title: String(localized: "topic.open_browser", defaultValue: "在浏览器打开"),
             action: .openBrowser
         ))
         if model.isPrivateMessage {
-            stack.addArrangedSubview(makeRow(
+            contentRows.append(makeRow(
                 symbol: model.messageArchived ? "tray.and.arrow.down" : "archivebox",
                 title: model.messageArchived
                     ? String(localized: "pm.move_to_inbox", defaultValue: "Move to inbox")
@@ -172,36 +169,41 @@ final class TopicMoreMenuViewController: UIViewController {
                 action: .archivePrivateMessage
             ))
         }
+        if !contentRows.isEmpty {
+            stack.addArrangedSubview(makeSectionLabel(
+                String(localized: "topic.menu.section.content", defaultValue: "内容")
+            ))
+            stack.addArrangedSubview(makeGroup(contentRows))
+        }
 
-        stack.addArrangedSubview(makeSectionDivider(title: String(localized: "topic.menu.section.reading", defaultValue: "阅读")))
-        stack.addArrangedSubview(makeTimelineCard())
-
-        stack.addArrangedSubview(makeExpandableRow(
+        var readingRows: [UIView] = [makeTimelineCard()]
+        readingRows.append(makeExpandableRow(
             symbol: "eye.slash",
             title: String(localized: "topic.mark_unread", defaultValue: "标记未读"),
             section: .markUnread,
             isActive: false
         ))
         if expandedSection == .markUnread {
-            stack.addArrangedSubview(makeMarkUnreadPanel())
+            readingRows.append(makeMarkUnreadPanel())
         }
-
-        stack.addArrangedSubview(makeRow(
+        readingRows.append(makeRow(
             symbol: "text.book.closed",
             title: String(localized: "topic.reading_settings", defaultValue: "阅读设置"),
             action: .readingSettings
         ))
-
         if model.hasTableOfContents {
-            stack.addArrangedSubview(makeRow(
+            readingRows.append(makeRow(
                 symbol: "list.bullet",
                 title: String(localized: "topic.toc", defaultValue: "目录"),
                 action: .tableOfContents
             ))
         }
+        stack.addArrangedSubview(makeSectionLabel(
+            String(localized: "topic.menu.section.reading", defaultValue: "阅读")
+        ))
+        stack.addArrangedSubview(makeGroup(readingRows))
 
         if model.canAssign {
-            stack.addArrangedSubview(makeSectionDivider(title: String(localized: "topic.menu.section.assign", defaultValue: "指定")))
             let assignTitle: String = {
                 if let name = model.assignedToUsername, !name.isEmpty {
                     return String(
@@ -211,76 +213,110 @@ final class TopicMoreMenuViewController: UIViewController {
                 }
                 return String(localized: "topic.assign", defaultValue: "指定处理人")
             }()
-            stack.addArrangedSubview(makeExpandableRow(
-                symbol: "person.badge.plus",
-                title: assignTitle,
-                section: .assign,
-                isActive: model.assignedToUsername != nil
-            ))
+            var assignRows = [
+                makeExpandableRow(
+                    symbol: "person.badge.plus",
+                    title: assignTitle,
+                    section: .assign,
+                    isActive: model.assignedToUsername != nil
+                ),
+            ]
             if expandedSection == .assign {
-                stack.addArrangedSubview(makeAssignPanel())
+                assignRows.append(makeAssignPanel())
             }
+            stack.addArrangedSubview(makeSectionLabel(
+                String(localized: "topic.menu.section.assign", defaultValue: "指定")
+            ))
+            stack.addArrangedSubview(makeGroup(assignRows))
         }
 
         refitPreferredSize()
     }
 
     private func refitPreferredSize() {
-        // Avoid layoutIfNeeded + systemLayoutSizeFitting recursion while rebuilding
-        // the stack (can EXC_BAD_ACCESS on the stack). Estimate from arranged views.
-        let width: CGFloat = 288
-        var height: CGFloat = 48
+        let width: CGFloat = 328
+        var height: CGFloat = 64
         for view in stack.arrangedSubviews {
             let fitting = view.systemLayoutSizeFitting(
                 CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
                 withHorizontalFittingPriority: .required,
                 verticalFittingPriority: .fittingSizeLevel
             )
-            height += max(fitting.height, 36) + stack.spacing
+            height += max(fitting.height, 28)
         }
-        preferredContentSize = CGSize(width: 320, height: min(max(height, 420), 720))
+        height += 36
+        preferredContentSize = CGSize(width: 360, height: min(max(height, 360), 760))
         if #available(iOS 16.0, *) {
             sheetPresentationController?.invalidateDetents()
         }
     }
 
     private func toggleExpand(_ section: ExpandedSection) {
-        if expandedSection == section {
-            expandedSection = nil
-        } else {
-            expandedSection = section
-        }
-        // Rebuild outside an animation block to avoid mid-layout mutation crashes.
+        expandedSection = expandedSection == section ? nil : section
         rebuild()
     }
 
-    // MARK: - Quick actions
+    // MARK: - Header
 
-    private func makeQuickActionsRow() -> UIView {
-        let card = UIView()
-        card.translatesAutoresizingMaskIntoConstraints = false
-        card.backgroundColor = menuSurface
-        card.layer.cornerRadius = 16
-        card.layer.cornerCurve = .continuous
-        card.layer.borderWidth = 0
-        card.layer.shadowOpacity = 0
+    private func makeHeader() -> UIView {
+        let header = UIView()
+        header.translatesAutoresizingMaskIntoConstraints = false
 
-        let row = UIStackView()
-        row.axis = .horizontal
-        row.alignment = .center
-        row.distribution = .equalSpacing
-        row.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(row)
+        let title = UILabel()
+        title.translatesAutoresizingMaskIntoConstraints = false
+        title.text = String(localized: "topic.more", defaultValue: "更多操作")
+        title.font = .systemFont(ofSize: 17, weight: .semibold)
+        title.textColor = .label
 
-        let accent = self.accent
+        let close = UIButton(type: .system)
+        close.translatesAutoresizingMaskIntoConstraints = false
+        let symbol = UIImage.SymbolConfiguration(pointSize: 12, weight: .bold)
+        close.setImage(UIImage(systemName: "xmark", withConfiguration: symbol), for: .normal)
+        close.tintColor = .secondaryLabel
+        close.accessibilityLabel = String(localized: "common.close", defaultValue: "关闭")
+        close.addAction(UIAction { [weak self] _ in
+            self?.dismiss(animated: true)
+        }, for: .touchUpInside)
+
+        let closePlate = UIView()
+        closePlate.translatesAutoresizingMaskIntoConstraints = false
+        closePlate.isUserInteractionEnabled = false
+        closePlate.backgroundColor = UIColor.tertiarySystemFill
+        closePlate.layer.cornerRadius = 14
+        closePlate.layer.cornerCurve = .continuous
+
+        header.addSubview(title)
+        header.addSubview(close)
+        close.addSubview(closePlate)
+        close.sendSubviewToBack(closePlate)
+        NSLayoutConstraint.activate([
+            title.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 4),
+            title.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            close.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            close.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            close.widthAnchor.constraint(equalToConstant: 44),
+            close.heightAnchor.constraint(equalToConstant: 44),
+            closePlate.centerXAnchor.constraint(equalTo: close.centerXAnchor),
+            closePlate.centerYAnchor.constraint(equalTo: close.centerYAnchor),
+            closePlate.widthAnchor.constraint(equalToConstant: 28),
+            closePlate.heightAnchor.constraint(equalToConstant: 28),
+        ])
+        return header
+    }
+
+    // MARK: - Shortcuts
+
+    private func makeShortcutCard() -> UIView {
         let subscribed: Bool = {
             guard let level = model.notificationLevel else { return false }
             return level == .watching || level == .tracking
         }()
-
-        let items: [(String, String, Bool, () -> Void)] = [
+        let items: [(String, String, String, Bool, () -> Void)] = [
             (
                 model.isBookmarked ? "bookmark.fill" : "bookmark",
+                model.isBookmarked
+                    ? String(localized: "topic.menu.quick.bookmarked", defaultValue: "已收藏")
+                    : String(localized: "topic.menu.quick.bookmark", defaultValue: "收藏"),
                 model.isBookmarked
                     ? String(localized: "topic.bookmark.remove", defaultValue: "取消书签")
                     : String(localized: "topic.bookmark.add", defaultValue: "添加书签"),
@@ -288,7 +324,10 @@ final class TopicMoreMenuViewController: UIViewController {
                 { [weak self] in self?.emit(.bookmark) }
             ),
             (
-                "square.stack.3d.up",
+                model.isInReadLater ? "clock.badge.checkmark" : "clock",
+                model.isInReadLater
+                    ? String(localized: "topic.menu.quick.read_later_on", defaultValue: "已加入")
+                    : String(localized: "topic.menu.quick.read_later", defaultValue: "稍后读"),
                 model.isInReadLater
                     ? String(localized: "topic.read_later.remove", defaultValue: "移出稍后阅读")
                     : String(localized: "topic.read_later.add", defaultValue: "稍后阅读"),
@@ -297,12 +336,14 @@ final class TopicMoreMenuViewController: UIViewController {
             ),
             (
                 notificationSymbol(for: model.notificationLevel),
+                String(localized: "topic.menu.quick.notify", defaultValue: "通知"),
                 String(localized: "topic.notifications", defaultValue: "通知"),
-                subscribed,
+                subscribed || expandedSection == .notification,
                 { [weak self] in self?.toggleExpand(.notification) }
             ),
             (
-                "link",
+                "square.and.arrow.up",
+                String(localized: "topic.menu.quick.share", defaultValue: "分享"),
                 String(localized: "topic.share", defaultValue: "分享"),
                 false,
                 { [weak self] in self?.emit(.shareLink) }
@@ -311,100 +352,199 @@ final class TopicMoreMenuViewController: UIViewController {
                 model.hasActiveFilter
                     ? "line.3.horizontal.decrease.circle.fill"
                     : "line.3.horizontal.decrease",
+                String(localized: "topic.menu.quick.filter", defaultValue: "筛选"),
                 String(localized: "topic.filter", defaultValue: "筛选"),
-                model.hasActiveFilter,
+                model.hasActiveFilter || expandedSection == .filter,
                 { [weak self] in self?.toggleExpand(.filter) }
             ),
         ]
 
-        for (symbol, title, active, handler) in items {
-            row.addArrangedSubview(makeQuickButton(symbol: symbol, title: title, active: active, accent: accent, handler: handler))
+        let row = UIStackView()
+        row.axis = .horizontal
+        row.distribution = .fillEqually
+        row.alignment = .top
+        row.spacing = 4
+        row.translatesAutoresizingMaskIntoConstraints = false
+        for item in items {
+            row.addArrangedSubview(makeShortcutButton(
+                symbol: item.0,
+                title: item.1,
+                accessibilityLabel: item.2,
+                active: item.3,
+                handler: item.4
+            ))
         }
 
-        NSLayoutConstraint.activate([
-            row.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
-            row.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
-            row.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
-            row.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10),
-            card.heightAnchor.constraint(equalToConstant: 56),
-        ])
-
-        let wrap = UIStackView()
-        wrap.axis = .vertical
-        wrap.spacing = 6
-        wrap.translatesAutoresizingMaskIntoConstraints = false
-        wrap.addArrangedSubview(card)
-
+        let body = UIStackView()
+        body.axis = .vertical
+        body.spacing = 12
+        body.translatesAutoresizingMaskIntoConstraints = false
+        body.isLayoutMarginsRelativeArrangement = true
+        body.layoutMargins = UIEdgeInsets(top: 14, left: 8, bottom: 12, right: 8)
+        body.addArrangedSubview(row)
         if expandedSection == .notification {
-            wrap.addArrangedSubview(makeNotificationPanel())
+            body.addArrangedSubview(makeNotificationPanel())
         }
         if expandedSection == .filter {
-            wrap.addArrangedSubview(makeFilterPanel())
+            body.addArrangedSubview(makeFilterPanel())
         }
-        return wrap
+
+        return wrapInCard(body)
     }
 
-    private func makeQuickButton(
+    private func makeShortcutButton(
         symbol: String,
         title: String,
+        accessibilityLabel: String,
         active: Bool,
-        accent: UIColor,
         handler: @escaping () -> Void
-    ) -> UIButton {
+    ) -> UIView {
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.accessibilityLabel = title
-        button.layer.cornerRadius = 16
-        button.layer.cornerCurve = .continuous
-        button.backgroundColor = active
-            ? accent.withAlphaComponent(0.16)
-            : UIColor.tertiarySystemFill
-        button.layer.borderWidth = 0
-        button.layer.borderColor = nil
-        let config = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
-        button.setImage(UIImage(systemName: symbol, withConfiguration: config), for: .normal)
-        button.tintColor = active ? accent : .label
+        button.accessibilityLabel = accessibilityLabel
         button.addAction(UIAction { _ in handler() }, for: .touchUpInside)
+
+        let well = UIView()
+        well.translatesAutoresizingMaskIntoConstraints = false
+        well.isUserInteractionEnabled = false
+        well.backgroundColor = active ? accent.withAlphaComponent(0.16) : UIColor.tertiarySystemFill
+        well.layer.cornerRadius = 16
+        well.layer.cornerCurve = .continuous
+
+        let icon = UIImageView(image: UIImage(systemName: symbol))
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.tintColor = active ? accent : .label
+        icon.contentMode = .scaleAspectFit
+        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
+        well.addSubview(icon)
+
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.text = title
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.textColor = active ? accent : .secondaryLabel
+        label.textAlignment = .center
+        label.numberOfLines = 1
+        label.adjustsFontSizeToFitWidth = true
+        label.minimumScaleFactor = 0.8
+        label.isUserInteractionEnabled = false
+
+        button.addSubview(well)
+        button.addSubview(label)
         NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: 36),
-            button.heightAnchor.constraint(equalToConstant: 36),
+            button.heightAnchor.constraint(equalToConstant: 74),
+            well.topAnchor.constraint(equalTo: button.topAnchor),
+            well.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+            well.widthAnchor.constraint(equalToConstant: 48),
+            well.heightAnchor.constraint(equalToConstant: 48),
+            icon.centerXAnchor.constraint(equalTo: well.centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: well.centerYAnchor),
+            label.topAnchor.constraint(equalTo: well.bottomAnchor, constant: 6),
+            label.leadingAnchor.constraint(equalTo: button.leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: button.trailingAnchor),
         ])
         return button
     }
 
-    // MARK: - Rows
+    // MARK: - Groups
+
+    private func makeSectionLabel(_ title: String) -> UIView {
+        let wrap = UIView()
+        wrap.translatesAutoresizingMaskIntoConstraints = false
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.text = title
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.textColor = .secondaryLabel
+        wrap.addSubview(label)
+        NSLayoutConstraint.activate([
+            wrap.heightAnchor.constraint(equalToConstant: 36),
+            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 4),
+            label.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -8),
+        ])
+        return wrap
+    }
+
+    private func wrapInCard(_ content: UIView) -> UIView {
+        let card = UIView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.backgroundColor = menuSurface
+        card.layer.cornerRadius = 16
+        card.layer.cornerCurve = .continuous
+        card.clipsToBounds = true
+        content.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: card.topAnchor),
+            content.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            content.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+        ])
+        return card
+    }
+
+    private func makeGroup(_ rows: [UIView]) -> UIView {
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.spacing = 0
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        for (index, row) in rows.enumerated() {
+            stack.addArrangedSubview(row)
+            if index < rows.count - 1 {
+                stack.addArrangedSubview(makeHairline())
+            }
+        }
+        return wrapInCard(stack)
+    }
+
+    private func makeHairline() -> UIView {
+        let wrap = UIView()
+        wrap.translatesAutoresizingMaskIntoConstraints = false
+        let line = UIView()
+        line.translatesAutoresizingMaskIntoConstraints = false
+        line.backgroundColor = UIColor.separator.withAlphaComponent(0.45)
+        wrap.addSubview(line)
+        NSLayoutConstraint.activate([
+            wrap.heightAnchor.constraint(equalToConstant: 1.0 / UIScreen.main.scale),
+            line.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 52),
+            line.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
+            line.topAnchor.constraint(equalTo: wrap.topAnchor),
+            line.bottomAnchor.constraint(equalTo: wrap.bottomAnchor),
+        ])
+        return wrap
+    }
 
     private func makeRow(symbol: String, title: String, action: Action, destructive: Bool = false) -> UIView {
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.contentHorizontalAlignment = .leading
+        button.accessibilityLabel = title
         button.addAction(UIAction { [weak self] _ in
             self?.emit(action)
         }, for: .touchUpInside)
 
-        let iconWell = makeIconWell(symbol: symbol, tint: destructive ? .systemRed : .secondaryLabel)
+        let iconWell = makeIconWell(symbol: symbol, tint: destructive ? .systemRed : accent)
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
         label.text = title
-        label.font = .systemFont(ofSize: 15, weight: .medium)
+        label.font = .systemFont(ofSize: 16, weight: .regular)
         label.textColor = destructive ? .systemRed : .label
-        label.numberOfLines = 1
+        label.isUserInteractionEnabled = false
 
         button.addSubview(iconWell)
         button.addSubview(label)
         NSLayoutConstraint.activate([
-            button.heightAnchor.constraint(equalToConstant: 44),
-            iconWell.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 4),
+            button.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
+            iconWell.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 12),
             iconWell.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-            label.leadingAnchor.constraint(equalTo: iconWell.trailingAnchor, constant: 10),
-            label.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-            label.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -6),
+            label.leadingAnchor.constraint(equalTo: iconWell.trailingAnchor, constant: 12),
+            label.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -14),
+            label.topAnchor.constraint(equalTo: button.topAnchor, constant: 14),
+            label.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -14),
         ])
-        let highlight = accent.withAlphaComponent(0.10)
+        let highlight = accent.withAlphaComponent(0.08)
         button.configurationUpdateHandler = { btn in
             btn.backgroundColor = btn.isHighlighted ? highlight : .clear
-            btn.layer.cornerRadius = 12
-            btn.layer.cornerCurve = .continuous
         }
         return button
     }
@@ -418,41 +558,42 @@ final class TopicMoreMenuViewController: UIViewController {
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.contentHorizontalAlignment = .leading
+        button.accessibilityLabel = title
         button.addAction(UIAction { [weak self] _ in
             self?.toggleExpand(section)
         }, for: .touchUpInside)
 
-        let iconWell = makeIconWell(symbol: symbol, tint: isActive ? accent : .secondaryLabel)
+        let iconWell = makeIconWell(symbol: symbol, tint: accent)
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
         label.text = title
-        label.font = .systemFont(ofSize: 15, weight: .medium)
+        label.font = .systemFont(ofSize: 16, weight: .regular)
         label.textColor = .label
+        label.isUserInteractionEnabled = false
 
-        let chevron = UIImageView(image: UIImage(systemName: expandedSection == section ? "chevron.up" : "chevron.down"))
+        let open = expandedSection == section
+        let chevron = UIImageView(image: UIImage(systemName: open ? "chevron.up" : "chevron.down"))
         chevron.translatesAutoresizingMaskIntoConstraints = false
         chevron.tintColor = .tertiaryLabel
-        chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
         chevron.setContentHuggingPriority(.required, for: .horizontal)
 
         button.addSubview(iconWell)
         button.addSubview(label)
         button.addSubview(chevron)
         NSLayoutConstraint.activate([
-            button.heightAnchor.constraint(equalToConstant: 44),
-            iconWell.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 4),
+            button.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
+            iconWell.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 12),
             iconWell.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-            label.leadingAnchor.constraint(equalTo: iconWell.trailingAnchor, constant: 10),
+            label.leadingAnchor.constraint(equalTo: iconWell.trailingAnchor, constant: 12),
             label.centerYAnchor.constraint(equalTo: button.centerYAnchor),
             label.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
-            chevron.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -6),
+            chevron.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -16),
             chevron.centerYAnchor.constraint(equalTo: button.centerYAnchor),
         ])
-        let highlight = accent.withAlphaComponent(0.10)
+        let highlight = accent.withAlphaComponent(0.08)
         button.configurationUpdateHandler = { btn in
             btn.backgroundColor = btn.isHighlighted ? highlight : .clear
-            btn.layer.cornerRadius = 12
-            btn.layer.cornerCurve = .continuous
         }
         return button
     }
@@ -460,7 +601,8 @@ final class TopicMoreMenuViewController: UIViewController {
     private func makeIconWell(symbol: String, tint: UIColor) -> UIView {
         let well = UIView()
         well.translatesAutoresizingMaskIntoConstraints = false
-        well.backgroundColor = UIColor.tertiarySystemFill
+        well.isUserInteractionEnabled = false
+        well.backgroundColor = tint.withAlphaComponent(0.12)
         well.layer.cornerRadius = 8
         well.layer.cornerCurve = .continuous
 
@@ -468,45 +610,23 @@ final class TopicMoreMenuViewController: UIViewController {
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.tintColor = tint
         icon.contentMode = .scaleAspectFit
-        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
         well.addSubview(icon)
         NSLayoutConstraint.activate([
             well.widthAnchor.constraint(equalToConstant: 28),
             well.heightAnchor.constraint(equalToConstant: 28),
             icon.centerXAnchor.constraint(equalTo: well.centerXAnchor),
             icon.centerYAnchor.constraint(equalTo: well.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 15),
-            icon.heightAnchor.constraint(equalToConstant: 15),
         ])
         return well
-    }
-
-    private func makeSectionDivider(title: String) -> UIView {
-        let wrap = UIView()
-        wrap.translatesAutoresizingMaskIntoConstraints = false
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.text = title
-        label.font = .systemFont(ofSize: 13, weight: .semibold)
-        label.textColor = .secondaryLabel
-        wrap.addSubview(label)
-        NSLayoutConstraint.activate([
-            wrap.heightAnchor.constraint(equalToConstant: 28),
-            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 8),
-            label.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -4),
-        ])
-        return wrap
     }
 
     private func makeTimelineCard() -> UIView {
         let total = max(model.totalFloors, 1)
         let current = min(max(scrubFloor ?? max(model.currentFloor, 1), 1), total)
 
-        let card = UIView()
-        card.translatesAutoresizingMaskIntoConstraints = false
-        card.backgroundColor = menuSurface
-        card.layer.cornerRadius = 16
-        card.layer.cornerCurve = .continuous
+        let wrap = UIView()
+        wrap.translatesAutoresizingMaskIntoConstraints = false
 
         let caption = UILabel()
         caption.translatesAutoresizingMaskIntoConstraints = false
@@ -516,17 +636,18 @@ final class TopicMoreMenuViewController: UIViewController {
 
         let valueLabel = UILabel()
         valueLabel.translatesAutoresizingMaskIntoConstraints = false
-        valueLabel.font = .monospacedDigitSystemFont(ofSize: 15, weight: .semibold)
-        valueLabel.textColor = .label
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        valueLabel.textColor = accent
         valueLabel.accessibilityIdentifier = "topic.menu.floor_value"
         valueLabel.text = floorProgressText(current: current, total: total)
 
         let slider = UISlider()
         slider.translatesAutoresizingMaskIntoConstraints = false
         slider.minimumValue = 1
-        slider.maximumValue = Float(total)
+        slider.maximumValue = Float(max(total, 2))
         slider.value = Float(current)
         slider.minimumTrackTintColor = accent
+        slider.isEnabled = total > 1
         slider.accessibilityLabel = String(localized: "progress_gesture.action.timeline", defaultValue: "时间线")
         slider.addAction(UIAction { [weak self] action in
             guard let slider = action.sender as? UISlider else { return }
@@ -542,38 +663,43 @@ final class TopicMoreMenuViewController: UIViewController {
 
         let openButton = UIButton(type: .system)
         openButton.translatesAutoresizingMaskIntoConstraints = false
-        openButton.setTitle(String(localized: "topic.menu.open_timeline", defaultValue: "打开楼层跳转"), for: .normal)
-        openButton.setImage(UIImage(systemName: "list.bullet.rectangle"), for: .normal)
-        openButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .medium)
-        openButton.tintColor = .label
-        openButton.setTitleColor(.label, for: .normal)
+        var config = UIButton.Configuration.plain()
+        config.title = String(localized: "topic.menu.open_timeline", defaultValue: "打开楼层跳转")
+        config.image = UIImage(systemName: "list.bullet.rectangle")
+        config.imagePadding = 6
+        config.imagePlacement = .leading
+        config.baseForegroundColor = .label
+        config.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0)
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var out = incoming
+            out.font = .systemFont(ofSize: 15, weight: .regular)
+            return out
+        }
+        openButton.configuration = config
         openButton.contentHorizontalAlignment = .leading
-        openButton.imageEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 8)
-        openButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 0)
         openButton.accessibilityLabel = String(localized: "topic.menu.open_timeline", defaultValue: "打开楼层跳转")
         openButton.addAction(UIAction { [weak self] _ in
             self?.emit(.openTimeline)
         }, for: .touchUpInside)
 
-        card.addSubview(caption)
-        card.addSubview(valueLabel)
-        card.addSubview(slider)
-        card.addSubview(openButton)
+        wrap.addSubview(caption)
+        wrap.addSubview(valueLabel)
+        wrap.addSubview(slider)
+        wrap.addSubview(openButton)
         NSLayoutConstraint.activate([
-            caption.topAnchor.constraint(equalTo: card.topAnchor, constant: 12),
-            caption.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
+            caption.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 14),
+            caption.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 14),
             valueLabel.centerYAnchor.constraint(equalTo: caption.centerYAnchor),
-            valueLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
+            valueLabel.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -14),
             slider.topAnchor.constraint(equalTo: caption.bottomAnchor, constant: 8),
-            slider.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
-            slider.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
-            openButton.topAnchor.constraint(equalTo: slider.bottomAnchor, constant: 4),
-            openButton.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
-            openButton.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
-            openButton.heightAnchor.constraint(equalToConstant: 36),
-            openButton.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -8),
+            slider.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 14),
+            slider.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -14),
+            openButton.topAnchor.constraint(equalTo: slider.bottomAnchor, constant: 2),
+            openButton.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 14),
+            openButton.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -14),
+            openButton.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -6),
         ])
-        return card
+        return wrap
     }
 
     private func floorProgressText(current: Int, total: Int) -> String {
@@ -584,48 +710,70 @@ final class TopicMoreMenuViewController: UIViewController {
         )
     }
 
-    // MARK: - Inline panels (no bottom sheets)
+    // MARK: - Inline choices
 
-    private func makeChipRow(items: [(String, Bool, () -> Void)]) -> UIView {
-        let row = UIStackView()
-        row.axis = .horizontal
-        row.spacing = 8
-        row.distribution = .fillEqually
-        row.translatesAutoresizingMaskIntoConstraints = false
+    private func makeChoiceGrid(items: [(String, Bool, () -> Void)]) -> UIView {
+        let columns = items.count <= 3 ? max(items.count, 1) : 2
+        let grid = UIStackView()
+        grid.axis = .vertical
+        grid.spacing = 8
+        grid.translatesAutoresizingMaskIntoConstraints = false
 
-        let accent = self.accent
-        for (title, active, handler) in items {
-            var config = UIButton.Configuration.filled()
-            config.title = title
-            config.cornerStyle = .capsule
-            config.baseForegroundColor = active ? .white : accent
-            config.baseBackgroundColor = active ? accent : accent.withAlphaComponent(0.12)
-            config.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10)
-            config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
-                var out = incoming
-                out.font = .systemFont(ofSize: 13, weight: .semibold)
-                return out
+        var index = 0
+        while index < items.count {
+            let row = UIStackView()
+            row.axis = .horizontal
+            row.spacing = 8
+            row.distribution = .fillEqually
+            let end = min(index + columns, items.count)
+            for item in items[index..<end] {
+                row.addArrangedSubview(makeChoiceButton(title: item.0, active: item.1, handler: item.2))
             }
-            let button = UIButton(configuration: config)
-            button.addAction(UIAction { _ in handler() }, for: .touchUpInside)
-            row.addArrangedSubview(button)
+            let missing = columns - (end - index)
+            if missing > 0 {
+                for _ in 0..<missing {
+                    let spacer = UIView()
+                    spacer.translatesAutoresizingMaskIntoConstraints = false
+                    row.addArrangedSubview(spacer)
+                }
+            }
+            grid.addArrangedSubview(row)
+            index = end
         }
 
         let wrap = UIView()
         wrap.translatesAutoresizingMaskIntoConstraints = false
-        wrap.addSubview(row)
+        wrap.addSubview(grid)
         NSLayoutConstraint.activate([
-            row.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 2),
-            row.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 4),
-            row.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -4),
-            row.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -6),
-            row.heightAnchor.constraint(equalToConstant: 34),
+            grid.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 4),
+            grid.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 12),
+            grid.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -12),
+            grid.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -12),
         ])
         return wrap
     }
 
+    private func makeChoiceButton(title: String, active: Bool, handler: @escaping () -> Void) -> UIButton {
+        var config = UIButton.Configuration.filled()
+        config.title = title
+        config.cornerStyle = .medium
+        config.baseForegroundColor = active ? .white : .label
+        config.baseBackgroundColor = active ? accent : UIColor.tertiarySystemFill
+        config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10)
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var out = incoming
+            out.font = .systemFont(ofSize: 14, weight: .medium)
+            return out
+        }
+        config.titleLineBreakMode = .byTruncatingTail
+        let button = UIButton(configuration: config)
+        button.accessibilityLabel = title
+        button.addAction(UIAction { _ in handler() }, for: .touchUpInside)
+        return button
+    }
+
     private func makeMarkUnreadPanel() -> UIView {
-        makeChipRow(items: [
+        makeChoiceGrid(items: [
             (
                 String(localized: "topic.mark_unread.step_back.short", defaultValue: "回退一层"),
                 false,
@@ -641,7 +789,7 @@ final class TopicMoreMenuViewController: UIViewController {
 
     private func makeAssignPanel() -> UIView {
         if model.assignedToUsername != nil {
-            return makeChipRow(items: [
+            return makeChoiceGrid(items: [
                 (
                     String(localized: "topic.assign.clear", defaultValue: "取消指定"),
                     false,
@@ -649,7 +797,7 @@ final class TopicMoreMenuViewController: UIViewController {
                 ),
             ])
         }
-        return makeChipRow(items: [
+        return makeChoiceGrid(items: [
             (
                 String(localized: "topic.assign.to_me", defaultValue: "指定给我"),
                 true,
@@ -690,7 +838,6 @@ final class TopicMoreMenuViewController: UIViewController {
                 { [weak self] in self?.emit(.filterNested) }
             ),
         ])
-        // FluxDo: cancel when any filter (including nested) is active.
         if model.hasActiveFilter {
             items.append((
                 String(localized: "topic.filter_clear", defaultValue: "取消筛选"),
@@ -698,7 +845,7 @@ final class TopicMoreMenuViewController: UIViewController {
                 { [weak self] in self?.emit(.filterClear) }
             ))
         }
-        return makeChipRow(items: items)
+        return makeChoiceGrid(items: items)
     }
 
     private func makeNotificationPanel() -> UIView {
@@ -708,7 +855,7 @@ final class TopicMoreMenuViewController: UIViewController {
             (.regular, String(localized: "topic.notification.regular", defaultValue: "正常")),
             (.muted, String(localized: "topic.notification.muted", defaultValue: "静音")),
         ]
-        return makeChipRow(items: levels.map { level, title in
+        return makeChoiceGrid(items: levels.map { level, title in
             (
                 title,
                 model.notificationLevel == level,
@@ -717,36 +864,19 @@ final class TopicMoreMenuViewController: UIViewController {
         })
     }
 
-    private func makeExportPanel() -> UIView {
-        let stack = UIStackView()
-        stack.axis = .vertical
-        stack.spacing = 6
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        // Common exports only — keeps the panel short.
+    private func makeExportRows() -> [UIView] {
         let commons: [(TopicExportFormat, TopicExportRange, String)] = [
             (.markdown, .loadedPosts, String(localized: "topic.export.md_all", defaultValue: "Markdown · 已加载")),
             (.markdown, .firstPost, String(localized: "topic.export.md_op", defaultValue: "Markdown · 仅主帖")),
             (.html, .loadedPosts, String(localized: "topic.export.html_all", defaultValue: "HTML · 已加载")),
         ]
-        for (format, range, title) in commons {
-            stack.addArrangedSubview(makeRow(
+        return commons.map { format, range, title in
+            makeRow(
                 symbol: format == .markdown ? "doc.plaintext" : "chevron.left.forwardslash.chevron.right",
                 title: title,
                 action: .export(format, range)
-            ))
+            )
         }
-
-        let wrap = UIView()
-        wrap.translatesAutoresizingMaskIntoConstraints = false
-        wrap.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: wrap.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -4),
-        ])
-        return wrap
     }
 
     private func notificationSymbol(for level: DiscourseTopicDetail.NotificationLevel?) -> String {
@@ -784,7 +914,7 @@ enum TopicMoreMenuPresenter {
                     let detent = UISheetPresentationController.Detent.custom(
                         identifier: .init("topic.more")
                     ) { context in
-                        min(max(menu.preferredContentSize.height + 28, 480), context.maximumDetentValue * 0.92)
+                        min(menu.preferredContentSize.height, context.maximumDetentValue * 0.92)
                     }
                     sheet.detents = [detent, .large()]
                     sheet.selectedDetentIdentifier = detent.identifier
@@ -792,15 +922,16 @@ enum TopicMoreMenuPresenter {
                     sheet.detents = [.medium(), .large()]
                     sheet.selectedDetentIdentifier = .medium
                 }
-                sheet.prefersGrabberVisible = false
-                sheet.preferredCornerRadius = 20
-                sheet.prefersScrollingExpandsWhenScrolledToEdge = false
+                sheet.prefersGrabberVisible = true
+                sheet.preferredCornerRadius = 22
+                sheet.prefersScrollingExpandsWhenScrolledToEdge = true
             }
         } else if let pop = menu.popoverPresentationController {
+            menu.modalPresentationStyle = .popover
             pop.barButtonItem = barButtonItem
             pop.permittedArrowDirections = [.up]
             pop.delegate = PassthroughPopoverDelegate.shared
-            pop.backgroundColor = .systemGroupedBackground
+            pop.backgroundColor = AppSettings.shared.themeStyle.topicListBackgroundColor
         }
         host.present(menu, animated: true)
     }
