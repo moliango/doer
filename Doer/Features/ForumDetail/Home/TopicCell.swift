@@ -111,11 +111,12 @@ final class TopicCell: UITableViewCell {
     private var renderedTitle: String?
     private var emojiBaseURL: String?
     private var emojiUpdateObserver: NSObjectProtocol?
+    private var titleHeightCapConstraint: NSLayoutConstraint?
 
     private enum Metrics {
         static let titleFontSize = AppSettings.topicTitleReferencePointSize
         static let titleLineHeight: CGFloat = 20
-        static let titleMaxLines = 3
+        static let titleMaxLines = TopicCellRowHeight.maxTitleLines
         static let titleTopPadding: CGFloat = 9
         static let titleToBadgeMinimumSpacing: CGFloat = 7
         static let badgeBottomPadding: CGFloat = 8
@@ -231,7 +232,6 @@ final class TopicCell: UITableViewCell {
             titleLabel.topAnchor.constraint(equalTo: cardView.topAnchor, constant: Metrics.titleTopPadding),
             titleLabel.leadingAnchor.constraint(equalTo: avatarImageView.trailingAnchor, constant: 10),
             titleLabel.trailingAnchor.constraint(equalTo: replyCountBadge.leadingAnchor, constant: -10),
-            titleLabel.heightAnchor.constraint(lessThanOrEqualToConstant: Metrics.titleLineHeight * CGFloat(Metrics.titleMaxLines)),
 
             replyCountBadge.centerYAnchor.constraint(
                 equalTo: titleLabel.topAnchor,
@@ -249,6 +249,10 @@ final class TopicCell: UITableViewCell {
             timeLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -12),
             timeLabel.leadingAnchor.constraint(greaterThanOrEqualTo: badgesStackView.trailingAnchor, constant: 8),
         ])
+        let cap = titleLabel.heightAnchor.constraint(lessThanOrEqualToConstant: TopicCellRowHeight.titleCap)
+        cap.priority = .required
+        cap.isActive = true
+        titleHeightCapConstraint = cap
     }
 
     func configure(
@@ -303,6 +307,7 @@ final class TopicCell: UITableViewCell {
     private func applyTypography() {
         titleLabel.font = TopicListTypography.font(for: .title, weight: .semibold)
         timeLabel.font = TopicListTypography.font(for: .meta, weight: .regular)
+        titleHeightCapConstraint?.constant = TopicCellRowHeight.titleCap
     }
 
     override func prepareForReuse() {

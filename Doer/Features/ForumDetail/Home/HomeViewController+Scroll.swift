@@ -128,12 +128,14 @@ extension HomeViewController: UITableViewDelegate {
         guard !decelerate else { return }
         settleSearchRowCollapse(animated: true)
         healTabBarVisibilityAfterScrollSettles()
+        flushDeferredVisibleRowReconfigure()
     }
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         guard scrollView === tableView else { return }
         settleSearchRowCollapse(animated: true)
         healTabBarVisibilityAfterScrollSettles()
+        flushDeferredVisibleRowReconfigure()
     }
 
     func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
@@ -512,6 +514,11 @@ extension HomeViewController: UITableViewDelegate {
     private func heightForHomeRow(at indexPath: IndexPath, allowAutomatic: Bool) -> CGFloat {
         if isCompactPinnedHomeRow(at: indexPath) {
             return CompactPinnedTopicCell.currentRowHeight
+        }
+        if homeListLayoutKind == .standard,
+           let topicId = dataSource.itemIdentifier(for: indexPath),
+           let cached = standardTopicRowHeights[topicId] {
+            return cached
         }
         if allowAutomatic {
             return UITableView.automaticDimension

@@ -11,6 +11,7 @@ extension HomeViewController {
         snapshot.appendItems(itemIdentifiers, toSection: 0)
 
         prefetchAvatarImages(for: viewModel.topics)
+        refreshStandardTopicRowHeights()
         let currentSnapshot = dataSource.snapshot()
         let currentIds = currentSnapshot.itemIdentifiers
         let needsInitialSnapshot = currentSnapshot.sectionIdentifiers.isEmpty
@@ -40,6 +41,10 @@ extension HomeViewController {
 
         if !needsInitialSnapshot, currentIds == itemIdentifiers, !layoutChanged {
             if !idsNeedingReconfigure.isEmpty {
+                guard !shouldDeferVisibleRowReconfigure else {
+                    pendingVisibleRowReconfigure = true
+                    return
+                }
                 var updatedSnapshot = currentSnapshot
                 // A topic can switch between pinned and regular cells without changing its id.
                 // Reload allows the data source to dequeue the new reuse identifier.
@@ -55,6 +60,50 @@ extension HomeViewController {
             }
             dataSource.apply(snapshot, animatingDifferences: layoutChanged ? false : shouldAnimateSnapshot)
         }
+    }
+
+    /// Standard cards only. Chat and grid layouts keep their own fixed estimates.
+    func refreshStandardTopicRowHeights() {
+        guard homeListLayoutKind == .standard else {
+            if !standardTopicRowHeights.isEmpty {
+                standardTopicRowHeights = [:]
+            }
+            return
+        }
+        let width = tableView.bounds.width
+        guard width > 1 else { return }
+        let showsCount = AppSettings.shared.showTopicCardCounts
+        let widthChanged = abs(width - standardTopicRowHeightWidth) > 0.5
+            || showsCount != standardTopicRowHeightShowsCount
+        standardTopicRowHeightWidth = width
+        standardTopicRowHeightShowsCount = showsCount
+        if widthChanged {
+            standardTopicRowHeights = [:]
+        }
+        let pinned = viewModel.pinnedTopicIds
+        for topic in viewModel.topics where !pinned.contains(topic.id) {
+            if !widthChanged, standardTopicRowHeights[topic.id] != nil { continue }
+            let title = TitleEmojiRenderer.plainTitle(fancyTitle: topic.fancyTitle, title: topic.title)
+            standardTopicRowHeights[topic.id] = TopicCellRowHeight.height(
+                title: title,
+                tableWidth: width,
+                showsReplyCount: showsCount
+            )
+        }
+        if widthChanged {
+            tableView.beginUpdates()
+            tableView.endUpdates()
+        }
+    }
+
+    var shouldDeferVisibleRowReconfigure: Bool {
+        tableView.isDragging || tableView.isDecelerating
+    }
+
+    func flushDeferredVisibleRowReconfigure() {
+        guard pendingVisibleRowReconfigure else { return }
+        pendingVisibleRowReconfigure = false
+        applyTopicSnapshot(animatingDifferences: false)
     }
 
     func topicSnapshotItemIdentifiers() -> [Int] {

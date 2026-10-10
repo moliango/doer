@@ -376,6 +376,13 @@ final class HomeViewController: ObservableViewController {
 
     /// Last applied list layout — when this changes, force cell-class swap.
     var lastAppliedHomeListLayoutKind: HomeListLayoutKind?
+    /// Precomputed standard-card heights keyed by topic id. Scrolling reads this
+    /// instead of measuring Auto Layout.
+    var standardTopicRowHeights: [Int: CGFloat] = [:]
+    var standardTopicRowHeightWidth: CGFloat = 0
+    var standardTopicRowHeightShowsCount = true
+    /// Visible-row reconfigure deferred until the finger and inertia both stop.
+    var pendingVisibleRowReconfigure = false
     var topicListLayout: any HomeTopicListLayout
 
     static func xiaohongshuRowIdentifier(for rowIndex: Int) -> Int {
@@ -702,6 +709,7 @@ final class HomeViewController: ObservableViewController {
         // Never call `updateHeaderHeight` here — it flips compact-search visibility and
         // calls `layoutIfNeeded`, which re-enters this method and pegs CPU at 100%.
         reassertHeaderHeightIfNeeded()
+        refreshStandardTopicRowHeights()
 
         hideHomeScrollIndicators()
         updateIncomingTopicsInlineHeaderFrame()
