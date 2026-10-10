@@ -36,6 +36,20 @@ final class MeViewModel: DoerObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let hasSession = AuthManager.shared.isAuthenticated(for: api.baseURL)
 
+        if ConnectivityService.shared.isKnownOffline {
+            if let username, !username.isEmpty,
+               let cached = MeProfileCacheStore.cachedProfile(baseURL: api.baseURL, username: username) {
+                apply(cached)
+            }
+            guard generation == loadGeneration else { return }
+            isLoading = false
+            if currentUser == nil, userProfile == nil {
+                errorMessage = String(localized: "error.offline", defaultValue: "当前无网络，连接后将自动刷新")
+            }
+            notifyChanged()
+            return
+        }
+
         if username == nil || username?.isEmpty == true {
             guard hasSession else {
                 MeProfileCacheStore.clear(baseURL: api.baseURL)

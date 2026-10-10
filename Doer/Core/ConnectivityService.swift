@@ -33,6 +33,11 @@ final class ConnectivityService {
     private let maxRetryBackoffSeconds = 30
 
     private(set) var isConnected = true
+    /// True only after the path monitor has reported no route.
+    /// Launch starts optimistic (`isConnected == true`) so a cold start does
+    /// not flash offline before the first path event. Callers that must not
+    /// wait out a request timeout use this flag.
+    private(set) var isKnownOffline = false
     private var lastPathStatus: NWPath.Status?
     private var lastTransport: PathTransport?
 
@@ -163,6 +168,7 @@ final class ConnectivityService {
             return
         }
         isConnected = connected
+        isKnownOffline = !connected
         NotificationCenter.default.post(
             name: Self.didChangeNotification,
             object: self,
