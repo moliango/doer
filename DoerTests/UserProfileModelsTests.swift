@@ -189,6 +189,22 @@ final class UserProfileModelsTests: XCTestCase {
             "/discourse-reactions/posts/reactions.json?username=sam&before_reaction_user_id=9"
         )
         XCTAssertEqual(DiscourseRouter.following(username: "sam").path, "/u/sam/follow/following")
+        XCTAssertEqual(
+            DiscourseRouter.groups(type: "my", filter: "trust", page: 1).path,
+            "/groups.json?page=1&type=my&filter=trust"
+        )
+        XCTAssertEqual(
+            DiscourseRouter.groups(type: nil, filter: nil, page: 0).path,
+            "/groups.json?page=0"
+        )
+        XCTAssertEqual(DiscourseRouter.groups(type: nil, filter: nil, page: 0).method, .get)
+        XCTAssertEqual(DiscourseRouter.group(name: "g-adsfree").path, "/groups/g-adsfree.json")
+        XCTAssertEqual(
+            DiscourseRouter.groupMembers(name: "g-adsfree", offset: 50, limit: 50).path,
+            "/groups/g-adsfree/members.json?offset=50&limit=50"
+        )
+        XCTAssertEqual(DiscourseRouter.joinGroup(name: "g-adsfree").method, .put)
+        XCTAssertEqual(DiscourseRouter.leaveGroup(name: "g-adsfree").method, .delete)
         XCTAssertEqual(DiscourseRouter.followers(username: "sam").path, "/u/sam/follow/followers")
         XCTAssertEqual(DiscourseRouter.drafts(offset: 20, limit: 20).path, "/drafts.json?offset=20&limit=20")
         XCTAssertEqual(

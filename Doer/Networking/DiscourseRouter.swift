@@ -56,6 +56,13 @@ enum DiscourseRouter {
     case userReactions(username: String, beforeReactionUserId: Int?)
     case following(username: String)
     case followers(username: String)
+    /// Discourse group directory (`/groups.json`). `type` is nil for every
+    /// visible group, or `my` for groups the current user has joined.
+    case groups(type: String?, filter: String?, page: Int)
+    case group(name: String)
+    case groupMembers(name: String, offset: Int, limit: Int)
+    case joinGroup(name: String)
+    case leaveGroup(name: String)
     case drafts(offset: Int, limit: Int)
     case draft(key: String)
     case saveDraft
@@ -102,9 +109,10 @@ enum DiscourseRouter {
             return .post
         case .toggleReaction, .votePoll, .follow, .userNotificationLevel, .updateTopic, .updatePost,
              .acceptPolicy, .unacceptPolicy, .removePrivateMessageUser, .removePrivateMessageGroup,
-             .archivePrivateMessage, .movePrivateMessageToInbox:
+             .archivePrivateMessage, .movePrivateMessageToInbox, .joinGroup:
             return .put
-        case .deleteBookmark, .unfollow, .deleteDraft, .clearRecentSearches, .deleteBoost, .unassignTopic:
+        case .deleteBookmark, .unfollow, .deleteDraft, .clearRecentSearches, .deleteBoost, .unassignTopic,
+             .leaveGroup:
             return .delete
         default:
             return .get
@@ -242,6 +250,21 @@ enum DiscourseRouter {
             return "/u/\(Self.pathComponent(username))/follow/following"
         case .followers(let username):
             return "/u/\(Self.pathComponent(username))/follow/followers"
+        case .groups(let type, let filter, let page):
+            var query = ["page=\(page)"]
+            if let type, !type.isEmpty {
+                query.append("type=\(Self.queryValue(type))")
+            }
+            if let filter, !filter.isEmpty {
+                query.append("filter=\(Self.queryValue(filter))")
+            }
+            return "/groups.json?\(query.joined(separator: "&"))"
+        case .group(let name):
+            return "/groups/\(Self.pathComponent(name)).json"
+        case .groupMembers(let name, let offset, let limit):
+            return "/groups/\(Self.pathComponent(name))/members.json?offset=\(offset)&limit=\(limit)"
+        case .joinGroup(let name), .leaveGroup(let name):
+            return "/groups/\(Self.pathComponent(name))/members.json"
         case .drafts(let offset, let limit):
             return "/drafts.json?offset=\(offset)&limit=\(limit)"
         case .draft(let key):

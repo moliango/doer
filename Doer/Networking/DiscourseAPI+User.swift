@@ -65,6 +65,30 @@ extension DiscourseAPI {
         return response.user
     }
 
+    func fetchGroups(type: String? = nil, filter: String? = nil, page: Int = 0) async throws -> [DiscourseGroup] {
+        let response: DiscourseGroupListResponse = try await request(
+            route: .groups(type: type, filter: filter, page: page)
+        )
+        return response.groups
+    }
+
+    func fetchGroup(name: String) async throws -> DiscourseGroup {
+        let response: DiscourseGroupShowResponse = try await request(route: .group(name: name))
+        return response.group
+    }
+
+    func fetchGroupMembers(name: String, offset: Int, limit: Int = 50) async throws -> DiscourseGroupMembersResponse {
+        try await request(route: .groupMembers(name: name, offset: offset, limit: limit))
+    }
+
+    func joinGroup(name: String, username: String) async throws {
+        try await requestVoid(route: .joinGroup(name: name), parameters: ["usernames": username])
+    }
+
+    func leaveGroup(name: String, username: String) async throws {
+        try await requestVoid(route: .leaveGroup(name: name), parameters: ["usernames": username])
+    }
+
     func fetchUserCard(username: String) async throws -> DiscourseUserProfile {
         let response: DiscourseUserCardResponse = try await request(route: .userCard(username: username))
         return response.user

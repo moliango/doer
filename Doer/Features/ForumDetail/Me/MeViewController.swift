@@ -607,6 +607,12 @@ final class MeViewController: ObservableViewController {
                 tintColor: .systemCyan,
                 action: { [weak self] in self?.openSeeking() }
             ),
+            MeQuickActionItem(
+                title: String(localized: "groups.title", defaultValue: "群组"),
+                symbolName: "person.3.fill",
+                tintColor: .systemGreen,
+                action: { [weak self] in self?.openGroups() }
+            ),
         ])
         quickActionsCard.alpha = isLoggedIn ? 1 : 0.55
         quickActionsCard.isUserInteractionEnabled = true
@@ -801,6 +807,14 @@ final class MeViewController: ObservableViewController {
             return
         }
         navigationController?.pushViewController(SeekingViewController(api: api), animated: true)
+    }
+
+    private func openGroups() {
+        guard authGate?.isAuthenticated() == true else {
+            loginTapped()
+            return
+        }
+        navigationController?.pushViewController(GroupsViewController(api: api), animated: true)
     }
 
     private func openMyTopics() {
