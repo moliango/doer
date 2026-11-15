@@ -19985,6 +19985,34 @@
         }
       }
     },
+    "native_login.cloudflare_still_blocked" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloudflare still blocks sign-in. Use web login instead"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "过盾后登录请求仍被 Cloudflare 拦截，请改用网页登录"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "過盾後登錄請求仍被 Cloudflare 攔截，請改用網頁登錄"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "過盾後登錄請求仍被 Cloudflare 攔截，請改用網頁登錄"
+          }
+        }
+      }
+    },
     "native_login.csrf_failed" : {
       "localizations" : {
         "en" : {
@@ -54614,6 +54642,118 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已回退到 Encrypted DNS"
+          }
+        }
+      }
+    },
+    "reply.slow_mode.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Slow Mode"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "话题处于慢速模式"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "話題處於慢速模式"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "話題處於慢速模式"
+          }
+        }
+      }
+    },
+    "reply.rate_limited.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Too Many Requests"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "操作太频繁"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "操作太頻繁"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "操作太頻繁"
+          }
+        }
+      }
+    },
+    "reply.rate_limited.message" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Please wait a moment before sending again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请稍等一会儿再发送。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請稍等一會兒再發送。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請稍等一會兒再發送。"
+          }
+        }
+      }
+    },
+    "reply.rate_limited.wait_seconds" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You can reply again in %d seconds."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还需等待 %d 秒才能再次回复。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還需等待 %d 秒才能再次回覆。"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還需等待 %d 秒才能再次回覆。"
           }
         }
       }
