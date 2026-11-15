@@ -44,20 +44,17 @@ final class DiscourseTopicLinkParserTests: XCTestCase {
         XCTAssertEqual(b?.postNumber, 2)
     }
 
-    func testServiceDedupMarksHash() {
+    @MainActor
+    func testServiceSkipsAlreadyHandledClipboardRevision() async {
         let suite = "clipboard.topic.link.test.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
         let service = ClipboardTopicLinkService(defaults: defaults)
-        let info = DiscourseTopicLinkInfo(
-            topicId: 1,
-            postNumber: nil,
-            slug: nil,
-            normalizedURL: "https://linux.do/t/1"
-        )
-        service.markPrompted(info)
-        // second mark should be fine
-        service.markPrompted(info)
-        defaults.removePersistentDomain(forName: suite)
+        service.markHandled()
+
+        let pending = await service.hasUnhandledClipboardLink()
+        XCTAssertFalse(pending, "A handled clipboard revision must not prompt again")
     }
 }

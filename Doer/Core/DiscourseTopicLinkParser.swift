@@ -122,44 +122,64 @@ enum DiscourseTopicLinkParser {
         return nil
     }
 
+    /// Cheap "does this look like a link" probe for the pre-iOS 16 fallback path.
+    static func containsLikelyURL(_ text: String) -> Bool {
+        guard !text.isEmpty else { return false }
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+            return text.contains("://")
+        }
+        let range = NSRange(location: 0, length: (text as NSString).length)
+        return detector.firstMatch(in: text, range: range) != nil
+    }
+
     private static func normalize(_ absolute: String) -> String {
         absolute.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 }
 
+/// Detects and resolves a copied forum topic link without triggering the system paste
+/// alert on launch. `changeCount` identifies the clipboard contents without reading
+/// them, and `detectPatterns` (iOS 16+) reports whether a link is present — only an
+/// explicit user tap reads the pasteboard, which is when iOS shows its paste prompt.
 final class ClipboardTopicLinkService {
     static let shared = ClipboardTopicLinkService()
 
     private let defaults: UserDefaults
-    private let lastHashKey = "clipboard_topic_link_last_prompted_hash"
-    private var seenHashes = Set<Int>()
-    private let maxSeen = 64
+    private let lastHandledChangeCountKey = "clipboard_topic_link_last_handled_change_count"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
     }
 
-    func check(forumBaseURL: String, enabled: Bool) -> DiscourseTopicLinkInfo? {
-        guard enabled else { return nil }
-        guard let text = UIPasteboard.general.string, !text.isEmpty else { return nil }
-        guard let info = DiscourseTopicLinkParser.firstTopicLink(in: text, forumBaseURL: forumBaseURL) else {
-            return nil
+    /// True when the clipboard holds an unhandled link-like value. Never reads the
+    /// contents on iOS 16+, so no paste alert is shown just for checking.
+    func hasUnhandledClipboardLink() async -> Bool {
+        let board = UIPasteboard.general
+        let changeCount = board.changeCount
+        guard changeCount != (defaults.object(forKey: lastHandledChangeCountKey) as? Int) else {
+            return false
         }
-        let hash = info.normalizedURL.hashValue
-        let last = defaults.object(forKey: lastHashKey) as? Int
-        if hash == last || seenHashes.contains(hash) {
-            return nil
+
+        if #available(iOS 16.0, *) {
+            let keyPath = \UIPasteboard.DetectedValues.probableWebURL
+            let detected = try? await board.detectedPatterns(for: [keyPath])
+            return detected?.contains(keyPath) ?? false
         }
-        return info
+        // iOS 15 predates the paste alert, so reading here is silent.
+        guard let text = board.string, !text.isEmpty else { return false }
+        return DiscourseTopicLinkParser.containsLikelyURL(text)
     }
 
-    func markPrompted(_ info: DiscourseTopicLinkInfo) {
-        let hash = info.normalizedURL.hashValue
-        seenHashes.insert(hash)
-        if seenHashes.count > maxSeen, let first = seenHashes.first {
-            seenHashes.remove(first)
-        }
-        defaults.set(hash, forKey: lastHashKey)
+    /// Reads the clipboard (this is what raises the system paste prompt) and parses a
+    /// topic link. Marks the clipboard handled either way so we do not nag again.
+    func takeClipboardTopicLink(forumBaseURL: String) -> DiscourseTopicLinkInfo? {
+        defer { markHandled() }
+        guard let text = UIPasteboard.general.string, !text.isEmpty else { return nil }
+        return DiscourseTopicLinkParser.firstTopicLink(in: text, forumBaseURL: forumBaseURL)
+    }
+
+    func markHandled() {
+        defaults.set(UIPasteboard.general.changeCount, forKey: lastHandledChangeCountKey)
     }
 }
 

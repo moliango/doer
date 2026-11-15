@@ -21,6 +21,10 @@ final class ForumContainerViewController: UIViewController, AuthGating {
     private var authObservationToken: AnyCancellable?
     private var sessionInvalidationObservationToken: NSObjectProtocol?
     private var didPresentRemoteLogoutAlert = false
+    private var pendingRemoteLogoutAlert = false
+    private var remoteLogoutAlertRetryTask: Task<Void, Never>?
+    private static let remoteLogoutAlertRetryDelayNanoseconds: UInt64 = 350_000_000
+    private static let remoteLogoutAlertMaxRetryCount = 16
     private var cloudflareChallengeObservationToken: NSObjectProtocol?
     private var cloudflareCompletionObservationToken: NSObjectProtocol?
     private var cloudflareNeedsUserObservationToken: NSObjectProtocol?
@@ -43,6 +47,7 @@ final class ForumContainerViewController: UIViewController, AuthGating {
 
     private let launchLoadingView = DoerLaunchLoadingView()
     private var tabBarViewController: ForumTabBarController?
+    private var clipboardLinkBanner: ClipboardLinkBannerView?
 
     private let authSyncOverlayView: UIView = {
         let view = UIView()
@@ -169,6 +174,7 @@ final class ForumContainerViewController: UIViewController, AuthGating {
         if shouldShowCloudflareShieldButton {
             installCloudflareShieldButtonIfNeeded()
         }
+        presentPendingRemoteLogoutAlertIfPossible()
         presentPendingNotificationRouteIfPossible()
         presentPendingInAppRouteIfNeeded()
         guard !showsDismissButton else { return }
@@ -193,14 +199,42 @@ final class ForumContainerViewController: UIViewController, AuthGating {
         let baseURL = notification.userInfo?[AuthManager.sessionInvalidatedBaseURLUserInfoKey] as? String
             ?? forum.baseURL
         guard normalizedBaseURL(baseURL) == normalizedBaseURL(forum.baseURL) else { return }
-        guard !didPresentRemoteLogoutAlert else { return }
-        didPresentRemoteLogoutAlert = true
 
         dismissCloudflareSheetIfNeeded(animated: true)
         setCloudflareShieldButtonVisible(false, animated: true)
         pendingCloudflareBaseURL = nil
         pendingCloudflareResponseURL = nil
         refreshForumFromDatabase()
+
+        pendingRemoteLogoutAlert = true
+        presentPendingRemoteLogoutAlertIfPossible()
+    }
+
+    /// Presenting right after `dismiss` (or while a CF sheet / composer is
+    /// dismissing) makes UIKit drop the alert silently. The old code latched
+    /// "already presented" before presenting, so a remote sign-out behind the
+    /// Cloudflare sheet never surfaced and the user only kept seeing the shield.
+    private func presentPendingRemoteLogoutAlertIfPossible() {
+        guard pendingRemoteLogoutAlert, !didPresentRemoteLogoutAlert else { return }
+        guard isViewLoaded, view.window != nil else { return }
+        guard launchOverlayDismissed, launchLoadingView.superview == nil else {
+            scheduleRemoteLogoutAlertRetryIfNeeded()
+            return
+        }
+        guard !isPresentingCloudflareVerification else {
+            scheduleRemoteLogoutAlertRetryIfNeeded()
+            return
+        }
+        guard let presenter = topMostPresenter(),
+              presenter.view.window != nil,
+              !presenter.isBeingPresented,
+              !presenter.isBeingDismissed,
+              presenter.transitionCoordinator == nil,
+              presenter.presentedViewController == nil
+        else {
+            scheduleRemoteLogoutAlertRetryIfNeeded()
+            return
+        }
 
         let alert = UIAlertController(
             title: String(localized: "auth.session_expired.title", defaultValue: "Signed out"),
@@ -215,6 +249,7 @@ final class ForumContainerViewController: UIViewController, AuthGating {
             style: .default
         ) { [weak self] _ in
             self?.didPresentRemoteLogoutAlert = false
+            self?.pendingRemoteLogoutAlert = false
             self?.performLogin()
         })
         alert.addAction(UIAlertAction(
@@ -222,8 +257,35 @@ final class ForumContainerViewController: UIViewController, AuthGating {
             style: .cancel
         ) { [weak self] _ in
             self?.didPresentRemoteLogoutAlert = false
+            self?.pendingRemoteLogoutAlert = false
         })
-        present(alert, animated: true)
+
+        didPresentRemoteLogoutAlert = true
+        pendingRemoteLogoutAlert = false
+        presenter.present(alert, animated: true) { [weak self, weak alert] in
+            guard let self, alert?.presentingViewController == nil else { return }
+            // Presentation lost a race with another transition — keep the alert pending.
+            self.didPresentRemoteLogoutAlert = false
+            self.pendingRemoteLogoutAlert = true
+            self.scheduleRemoteLogoutAlertRetryIfNeeded()
+        }
+    }
+
+    private func scheduleRemoteLogoutAlertRetryIfNeeded() {
+        guard pendingRemoteLogoutAlert, remoteLogoutAlertRetryTask == nil else { return }
+        remoteLogoutAlertRetryTask = Task { @MainActor [weak self] in
+            var attempts = 0
+            while !Task.isCancelled, attempts < Self.remoteLogoutAlertMaxRetryCount {
+                try? await Task.sleep(
+                    nanoseconds: Self.remoteLogoutAlertRetryDelayNanoseconds
+                )
+                guard let self, !Task.isCancelled else { return }
+                guard self.pendingRemoteLogoutAlert, !self.didPresentRemoteLogoutAlert else { break }
+                attempts += 1
+                self.presentPendingRemoteLogoutAlertIfPossible()
+            }
+            self?.remoteLogoutAlertRetryTask = nil
+        }
     }
 
     private func startObservingCloudflareChallenges() {
@@ -286,6 +348,7 @@ final class ForumContainerViewController: UIViewController, AuthGating {
         notificationRouteObservationToken?.cancel()
         launchOverlayFallbackTask?.cancel()
         pendingAppUpdateRetryTask?.cancel()
+        remoteLogoutAlertRetryTask?.cancel()
         NSLayoutConstraint.deactivate(cloudflareShieldButtonConstraints)
         cloudflareShieldButton.removeFromSuperview()
     }
@@ -442,27 +505,61 @@ final class ForumContainerViewController: UIViewController, AuthGating {
 
     func presentClipboardTopicLinkIfNeeded() {
         guard AppSettings.shared.clipboardTopicLinkPromptEnabled else { return }
-        guard let info = ClipboardTopicLinkService.shared.check(forumBaseURL: forum.baseURL, enabled: true) else { return }
-        // Defer slightly so we don't fight launch transitions.
+        guard clipboardLinkBanner == nil else { return }
         Task { @MainActor in
+            // Pattern detection only — does not read the clipboard, so iOS does not
+            // raise its paste alert just for opening the app.
+            guard await ClipboardTopicLinkService.shared.hasUnhandledClipboardLink() else { return }
+            // Defer slightly so we don't fight launch transitions.
             try? await Task.sleep(nanoseconds: 350_000_000)
-            // Re-check in case user already navigated away / disabled.
+            // Re-check in case user already navigated away / disabled / handled it.
             guard AppSettings.shared.clipboardTopicLinkPromptEnabled else { return }
-            guard self.presentedViewController == nil else { return }
-            let alert = UIAlertController(
-                title: String(localized: "clipboard.topic.title", defaultValue: "打开话题链接？"),
-                message: String(localized: "clipboard.topic.message", defaultValue: "检测到剪贴板中的论坛话题链接"),
-                preferredStyle: .alert
-            )
-            alert.addAction(UIAlertAction(title: String(localized: "common.cancel", defaultValue: "忽略"), style: .cancel, handler: { _ in
-                ClipboardTopicLinkService.shared.markPrompted(info)
-            }))
-            alert.addAction(UIAlertAction(title: String(localized: "clipboard.topic.open", defaultValue: "打开"), style: .default, handler: { [weak self] _ in
-                ClipboardTopicLinkService.shared.markPrompted(info)
-                self?.openTopicFromExternalLink(topicId: info.topicId, postNumber: info.postNumber)
-            }))
-            self.present(alert, animated: true)
+            guard self.presentedViewController == nil, self.view.window != nil else { return }
+            guard self.clipboardLinkBanner == nil else { return }
+            self.showClipboardLinkBanner()
         }
+    }
+
+    private func showClipboardLinkBanner() {
+        guard clipboardLinkBanner == nil else { return }
+        let banner = ClipboardLinkBannerView()
+        banner.onPaste = { [weak self] in
+            self?.handleClipboardLinkBannerPaste()
+        }
+        banner.onClose = { [weak self] in
+            // Remember this clipboard revision so we do not prompt for it again.
+            ClipboardTopicLinkService.shared.markHandled()
+            self?.hideClipboardLinkBanner()
+        }
+        view.addSubview(banner)
+        NSLayoutConstraint.activate([
+            banner.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            banner.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            banner.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
+        clipboardLinkBanner = banner
+        view.bringSubviewToFront(banner)
+        banner.present(animated: true)
+    }
+
+    private func hideClipboardLinkBanner() {
+        guard let banner = clipboardLinkBanner else { return }
+        clipboardLinkBanner = nil
+        banner.dismiss(animated: true)
+    }
+
+    private func handleClipboardLinkBannerPaste() {
+        // Reading the pasteboard here is what raises the system "Allow Paste" prompt.
+        let info = ClipboardTopicLinkService.shared.takeClipboardTopicLink(forumBaseURL: forum.baseURL)
+        hideClipboardLinkBanner()
+        guard let info else {
+            DoerFeedback.presentToast(
+                String(localized: "clipboard.link.not_found", defaultValue: "没有找到话题链接"),
+                on: self
+            )
+            return
+        }
+        openTopicFromExternalLink(topicId: info.topicId, postNumber: info.postNumber)
     }
 
     private func setupCloudflareShieldButton() {
@@ -591,6 +688,7 @@ final class ForumContainerViewController: UIViewController, AuthGating {
             queue: .main
         ) { [weak self] _ in
             self?.presentPendingAppUpdateIfPossible()
+            self?.presentPendingRemoteLogoutAlertIfPossible()
         }
     }
 
@@ -802,6 +900,8 @@ final class ForumContainerViewController: UIViewController, AuthGating {
         guard normalizedBaseURL(baseURLString) == normalizedBaseURL(forum.baseURL) else { return }
         guard let baseURL = URL(string: baseURLString) ?? URL(string: forum.baseURL) else { return }
         let responseURL = notification.userInfo?[DiscourseAPI.cloudflareResponseURLUserInfoKey] as? URL
+        // A shield can be hiding a revoked session; ask the server outside the gate.
+        authManager.probeSessionLivenessAfterChallenge(for: forum.baseURL)
         if CloudflareVerificationPolicy.isInVerificationGrace(baseURL: baseURLString) {
             logCloudflareState("challenge during grace; showing shield without auto-present base=\(baseURLString)")
             pendingCloudflareBaseURL = baseURL
@@ -849,6 +949,8 @@ final class ForumContainerViewController: UIViewController, AuthGating {
         }
         guard let baseURL = URL(string: baseURLString) ?? URL(string: forum.baseURL) else { return }
         let responseURL = notification.userInfo?[DiscourseAPI.cloudflareResponseURLUserInfoKey] as? URL
+        // A shield can be hiding a revoked session; ask the server outside the gate.
+        authManager.probeSessionLivenessAfterChallenge(for: forum.baseURL)
         pendingCloudflareBaseURL = baseURL
         pendingCloudflareResponseURL = responseURL
         setCloudflareShieldButtonVisible(true, animated: true)
@@ -1134,6 +1236,7 @@ final class ForumContainerViewController: UIViewController, AuthGating {
             return
         }
         cloudflareAutoPresentBlockedUntil = Date().addingTimeInterval(Self.cloudflareAutoPresentBlockDuration)
+        presentPendingRemoteLogoutAlertIfPossible()
         guard pendingCloudflareBaseURL != nil, !isCloudflareShieldSuppressed() else { return }
         setCloudflareShieldButtonVisible(true, animated: true)
     }
@@ -1261,6 +1364,12 @@ final class ForumContainerViewController: UIViewController, AuthGating {
                             self.hideAuthSyncOverlay()
                             return
                         }
+                        // A fresh sign-in clears the "already told the user" latch so the
+                        // next remote sign-out still surfaces an alert.
+                        self.didPresentRemoteLogoutAlert = false
+                        self.pendingRemoteLogoutAlert = false
+                        self.remoteLogoutAlertRetryTask?.cancel()
+                        self.remoteLogoutAlertRetryTask = nil
                         self.hideAuthSyncOverlay {
                             action()
                         }
