@@ -20,6 +20,10 @@ public final class DohBootstrapResolver: @unchecked Sendable {
     public static let stickyTTL: TimeInterval = 600
     public static let penaltyTTL: TimeInterval = 120
     public static let maxCacheEntries = 1000
+    /// TTL 刚过时先拿旧答案、后台刷新，别让建连等一轮三次查询。
+    public static let staleServingWindow: TimeInterval = 120
+    /// 解析失败后的短负缓存，挡住同一秒里涌进来的重试。
+    public static let negativeTTL: TimeInterval = 3
 
     private let queue = DispatchQueue(label: "doer.doh.bootstrap-resolver")
     private var config: DohProxyConfig
@@ -27,6 +31,7 @@ public final class DohBootstrapResolver: @unchecked Sendable {
     private var inflight: [String: [(Result<DohHostRecord, Error>) -> Void]] = [:]
     private var stickyUntil: [String: (ip: String, expires: Date)] = [:]
     private var penalties: [String: [String: Date]] = [:]
+    private var failures: [String: (until: Date, error: Error)] = [:]
 
     public init(config: DohProxyConfig) {
         self.config = config
@@ -38,6 +43,7 @@ public final class DohBootstrapResolver: @unchecked Sendable {
                 self.cache.removeAll()
                 self.stickyUntil.removeAll()
                 self.penalties.removeAll()
+                self.failures.removeAll()
             }
             self.config = config
         }
@@ -46,12 +52,31 @@ public final class DohBootstrapResolver: @unchecked Sendable {
     public func resolve(host rawHost: String, completion: @escaping (Result<DohHostRecord, Error>) -> Void) {
         let host = rawHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         queue.async {
-            if let cached = self.cache[host], cached.expiresAt > Date() {
-                completion(.success(self.applyingStickyAndPenalties(cached)))
-                return
+            let now = Date()
+            if let cached = self.cache[host] {
+                if cached.expiresAt > now {
+                    completion(.success(self.applyingStickyAndPenalties(cached)))
+                    return
+                }
+                // 过期不久：旧答案照发，后台刷新。代理每条 CONNECT 都会问一次，
+                // 让建连去等一轮 A/AAAA/HTTPS 查询不值当。
+                if now.timeIntervalSince(cached.expiresAt) < Self.staleServingWindow {
+                    completion(.success(self.applyingStickyAndPenalties(cached)))
+                    // 刷新失败后有 3 秒负缓存，别让每条 CONNECT 都去撞一次。
+                    let backingOff = self.failures[host].map { $0.until > now } ?? false
+                    if self.inflight[host] == nil, !backingOff {
+                        self.inflight[host] = []
+                        self.load(host: host)
+                    }
+                    return
+                }
             }
             if self.inflight[host] != nil {
                 self.inflight[host, default: []].append(completion)
+                return
+            }
+            if let failure = self.failures[host], failure.until > now {
+                completion(.failure(failure.error))
                 return
             }
             self.inflight[host] = [completion]
@@ -89,8 +114,16 @@ public final class DohBootstrapResolver: @unchecked Sendable {
         let host = rawHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         queue.async {
             var map = self.penalties[host] ?? [:]
-            map[ip] = Date().addingTimeInterval(Self.penaltyTTL)
+            let now = Date()
+            map[ip] = now.addingTimeInterval(Self.penaltyTTL)
             self.penalties[host] = map
+            // 长会话里主机名只增不减，顺手清掉过期惩罚项。
+            if self.penalties.count > 256 {
+                self.penalties = self.penalties.compactMapValues { entries in
+                    let alive = entries.filter { $0.value > now }
+                    return alive.isEmpty ? nil : alive
+                }
+            }
         }
     }
 
@@ -99,6 +132,7 @@ public final class DohBootstrapResolver: @unchecked Sendable {
             self.cache.removeAll()
             self.stickyUntil.removeAll()
             self.penalties.removeAll()
+            self.failures.removeAll()
         }
     }
 
@@ -247,6 +281,12 @@ public final class DohBootstrapResolver: @unchecked Sendable {
     }
 
     private func finish(host: String, result: Result<DohHostRecord, Error>) {
+        switch result {
+        case .success:
+            failures.removeValue(forKey: host)
+        case .failure(let error):
+            failures[host] = (Date().addingTimeInterval(Self.negativeTTL), error)
+        }
         let completions = inflight.removeValue(forKey: host) ?? []
         completions.forEach { $0(result) }
     }

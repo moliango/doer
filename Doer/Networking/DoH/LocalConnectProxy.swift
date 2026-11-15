@@ -19,7 +19,6 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
     private var gatewayOriginWaiters: [() -> Void] = []
     private let gatewayOriginLimit = 2
     private var streamContexts: [ObjectIdentifier: NWConnection.ContentContext] = [:]
-    var onTLSHandshakeReset: ((String) -> Void)?
     var onListening: ((UInt16) -> Void)?
     var onFailed: ((Error) -> Void)?
 
@@ -93,21 +92,29 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
     }
 
     func stop() {
-        let active = connections.values
-        connections.removeAll()
-        mitmBridges.removeAll()
-        originClients.removeAll()
-        ssSessions.removeAll()
-        streamContexts.removeAll()
-        gatewayOriginWaiters.removeAll()
-        gatewayOriginInflight = 0
-        active.forEach { $0.cancel() }
+        // `listener`/`boundPort` are lock-guarded, but the tunnel dictionaries are
+        // only ever touched on `queue` (`handleClient` / `close` / `pipe`). Tear
+        // them down there as well, otherwise a connection arriving mid-stop races
+        // those dictionaries. The listener itself is cancelled synchronously so
+        // `isRunning` flips immediately.
         stateLock.lock()
         let currentListener = listener
         listener = nil
         boundPort = nil
         stateLock.unlock()
         currentListener?.cancel()
+
+        queue.async { [self] in
+            let active = connections.values
+            connections.removeAll()
+            mitmBridges.removeAll()
+            originClients.removeAll()
+            ssSessions.removeAll()
+            streamContexts.removeAll()
+            gatewayOriginWaiters.removeAll()
+            gatewayOriginInflight = 0
+            active.forEach { $0.cancel() }
+        }
     }
 
     private func handleClient(_ client: NWConnection) {
@@ -319,16 +326,19 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                     DohDebugLog.record("Resolve failed for \(host): \(error.localizedDescription)")
                     self.reject(client, reason: "resolve failed", socks: readyReply == Socks5Handshake.connectOK)
                 case .success(let answer):
+                    let resolved = Self.preferredUpstreamAddresses(answer.addresses)
                     let addresses: [String]
                     if let pinned = PreferredNodeStore.shared.pinnedAddress(forHost: host) {
-                        // 优选赢家：linux.do 及子域一律先连它，不看各自的粘性 IP。
-                        addresses = [pinned]
-                        DohDebugLog.record("优选钉住 \(host) -> \(pinned)", subsystem: "优选")
-                    } else {
-                        addresses = self.rotatedAddresses(
-                            for: host,
-                            addresses: Self.preferredUpstreamAddresses(answer.addresses)
+                        // 优选赢家先连，但 DoH 解析出来的地址仍排在后面当回退：
+                        // 只给一个地址时赢家一挂，这个页面就直接打不开了。
+                        let rest = resolved.filter { $0 != pinned }
+                        addresses = [pinned] + self.rotatedAddresses(for: host, addresses: rest)
+                        DohDebugLog.record(
+                            "优选钉住 \(host) -> \(pinned)（回退 \(rest.count) 个）",
+                            subsystem: "优选"
                         )
+                    } else {
+                        addresses = self.rotatedAddresses(for: host, addresses: resolved)
                     }
                     if let ech = answer.echConfig, !ech.isEmpty {
                         DohDebugLog.record("ECH config for \(host) (\(ech.count) bytes)")
@@ -397,10 +407,12 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         let upstreamId = ObjectIdentifier(upstream)
         let gate = HandshakeGate()
         connections[upstreamId] = upstream
+        let resolver = self.resolver
         let timeout = DispatchWorkItem { [weak upstream] in
             guard let upstream else { return }
             DohDebugLog.record("Upstream timeout \(target):\(port.rawValue)")
             PreferredNodeStore.shared.reportOutcome(host: hostname, ip: target, success: false)
+            resolver.recordHostFailure(host: hostname, ip: target)
             upstream.cancel()
         }
         queue.asyncAfter(deadline: .now() + 8, execute: timeout)
@@ -413,7 +425,10 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                 gate.settle {
                     timeout.cancel()
                     DohDebugLog.record("Upstream connected \(target):\(port.rawValue)")
-                    PreferredNodeStore.shared.reportOutcome(host: hostname, ip: target, success: true)
+                    // 这里不报成功：TCP 通了只说明三次握手没问题，Cloudflare 的
+                    // 坏边缘恰恰是「TCP 通、TLS 被 RST」。成功信号留到上游真的
+                    // 回了字节（`pipe`）或 MITM 完成，否则每次 reset 之后的
+                    // 重连都会先把 `failStreak` 清零，赢家永远降不了级。
                     if let replayHello, !replayHello.isEmpty {
                         DohDebugLog.record("Replaying ClientHello to \(target)")
                         self.startByteTunnel(
@@ -446,6 +461,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                     guard let client else { return }
                     DohDebugLog.record("Upstream failed \(target):\(port.rawValue), trying next")
                     PreferredNodeStore.shared.reportOutcome(host: hostname, ip: target, success: false)
+                    self.resolver.recordHostFailure(host: hostname, ip: target)
                     self.connectUpstream(
                         addresses: addresses,
                         port: port,
@@ -498,7 +514,8 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                     hostname: hostname,
                     leftover: bufferedClientData,
                     originNeedsTLS: originNeedsTLS ?? true,
-                    echConfig: echConfig
+                    echConfig: echConfig,
+                    originAddress: addresses.indices.contains(addressIndex) ? addresses[addressIndex] : nil
                 )
                 return
             }
@@ -521,7 +538,8 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         hostname: String,
         leftover: Data,
         originNeedsTLS: Bool = false,
-        echConfig: Data? = nil
+        echConfig: Data? = nil,
+        originAddress: String? = nil
     ) {
         guard let material = MitmCertificateAuthority.shared.derMaterial(for: hostname) else {
             DohDebugLog.record("MITM identity missing for \(hostname)")
@@ -555,6 +573,28 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                         self.close(client)
                     }
                     self.close(upstream)
+                }
+            },
+            onOriginHandshake: { [weak self] ok in
+                // MITM 的上游字节由 bridge 消费，不进 `pipe`，所以成功信号
+                // 只能挂在源站 TLS/ECH 握手上：握手过了才说明这台边缘可用。
+                guard let self, let originAddress else { return }
+                self.queue.async {
+                    if ok {
+                        self.resolver.recordHostSuccess(host: hostname, ip: originAddress)
+                        PreferredNodeStore.shared.reportOutcome(
+                            host: hostname,
+                            ip: originAddress,
+                            success: true
+                        )
+                    } else {
+                        self.resolver.recordHostFailure(host: hostname, ip: originAddress)
+                        PreferredNodeStore.shared.reportOutcome(
+                            host: hostname,
+                            ip: originAddress,
+                            success: false
+                        )
+                    }
                 }
             }
         )
@@ -632,13 +672,25 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         relay: (hello: Data, addresses: [String], addressIndex: Int, hostname: String, readyReply: Data),
         sawUpstreamData: Bool = false
     ) {
-        source.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { [weak self, weak source, weak target] data, _, isComplete, error in
+        source.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self, weak source, weak target] data, _, isComplete, error in
             guard let self, let source, let target else { return }
             if let data, !data.isEmpty {
                 diagnostics?.logClientHelloIfNeeded(data)
                 let isUpstream = sourceRole == "upstream"
                 if isUpstream, !sawUpstreamData {
-                    DohDebugLog.record("Gateway origin first bytes \(data.count) from \(relay.hostname)")
+                    // 上游吐了字节，才说明这台边缘真的能用（TLS 握手过了）。
+                    // 成功信号必须在这里报，不能在 TCP `.ready`，否则「TCP 通、
+                    // TLS 被 RST」的坏边缘每次重连都先清零连败计数。
+                    if relay.addressIndex < relay.addresses.count {
+                        let live = relay.addresses[relay.addressIndex]
+                        self.resolver.recordHostSuccess(host: relay.hostname, ip: live)
+                        PreferredNodeStore.shared.reportOutcome(
+                            host: relay.hostname,
+                            ip: live,
+                            success: true
+                        )
+                    }
+                    DohDebugLog.record("Upstream first bytes \(data.count) from \(relay.hostname)")
                 }
                 var payload = data
                 if isUpstream, let ss = self.ssSessions[ObjectIdentifier(source)] {
@@ -693,6 +745,19 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
             if let error {
                 DohDebugLog.record("Tunnel receive failed (\(sourceRole)): \(error)")
                 if sourceRole == "upstream", !sawUpstreamData {
+                    // TLS 被 RST：TCP 明明连上了，坏掉的是这台边缘。
+                    // 只报给 `recordHostSuccess` 会在 `connectUpstream.ready`
+                    // 里提前抵消掉，所以这里必须显式记失败，否则优选赢家永远
+                    // 降不了级（惩罚/粘性一直按「TCP 通了」算成功）。
+                    if relay.addressIndex < relay.addresses.count {
+                        let dead = relay.addresses[relay.addressIndex]
+                        self.resolver.recordHostFailure(host: relay.hostname, ip: dead)
+                        PreferredNodeStore.shared.reportOutcome(
+                            host: relay.hostname,
+                            ip: dead,
+                            success: false
+                        )
+                    }
                     self.retryOrClose(
                         client: target,
                         upstream: source,
@@ -738,7 +803,6 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         close(upstream)
         guard !sawUpstreamData, addressIndex + 1 < addresses.count else {
             DohDebugLog.record("All DoH IPs RST TLS for \(hostname)")
-            onTLSHandshakeReset?(hostname)
             reject(client, reason: "tls reset", socks: readyReply == Socks5Handshake.connectOK)
             return
         }
@@ -1091,7 +1155,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                 socketRead: { [weak self, weak upstream] deliver in
                     guard let self, let upstream else { return }
                     func receive() {
-                        upstream.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { data, _, isComplete, error in
+                        upstream.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, isComplete, error in
                             if let data, !data.isEmpty {
                                 if !loggedInbound {
                                     loggedInbound = true
@@ -1235,7 +1299,6 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                 gate.settle {
                     timeout.cancel()
                     DohDebugLog.record("Gateway origin TCP ready \(target)")
-                    PreferredNodeStore.shared.reportOutcome(host: request.host, ip: target, success: true)
                     guard let client else {
                         self.completeGatewayOrigin()
                         self.close(upstream)
@@ -1249,9 +1312,19 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                         originAddress: target
                     ) { ok in
                         if ok {
+                            // 网关到源站的 TLS/ECH 握手成功，这台边缘才算可用。
+                            self.resolver.recordHostSuccess(host: request.host, ip: target)
+                            PreferredNodeStore.shared.reportOutcome(
+                                host: request.host,
+                                ip: target,
+                                success: true
+                            )
                             self.completeGatewayOrigin()
                             return
                         }
+                        // TCP 通了但网关 TLS/ECH 失败：这台边缘同样不可用。
+                        PreferredNodeStore.shared.reportOutcome(host: request.host, ip: target, success: false)
+                        self.resolver.recordHostFailure(host: request.host, ip: target)
                         self.close(upstream)
                         self.connectGatewayOriginTCP(
                             addresses: addresses,
@@ -1312,7 +1385,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
     }
 
     private func pipeGatewayClient(_ client: NWConnection) {
-        client.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { [weak self, weak client] data, _, isComplete, error in
+        client.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self, weak client] data, _, isComplete, error in
             guard let self, let client else { return }
             guard let origin = self.originClients[ObjectIdentifier(client)] else { return }
             if let data, !data.isEmpty {
@@ -1354,13 +1427,18 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                     DohDebugLog.record("Gateway resolve failed \(request.host): \(error)")
                     self.reject(client, reason: "resolve failed")
                 case .success(let answer):
+                    let resolved = Self.preferredUpstreamAddresses(answer.addresses)
                     let addresses: [String]
                     if let pinned = PreferredNodeStore.shared.pinnedAddress(forHost: request.host) {
-                        // 优选赢家：linux.do 及子域一律先连它，保证 CF 看到的出口 IP 不变。
-                        addresses = [pinned]
-                        DohDebugLog.record("优选钉住 \(request.host) -> \(pinned)", subsystem: "优选")
+                        // 优选赢家先连（保证 CF 看到的出口 IP 不变），解析结果排在后面当回退。
+                        let rest = resolved.filter { $0 != pinned }
+                        addresses = [pinned] + rest
+                        DohDebugLog.record(
+                            "优选钉住 \(request.host) -> \(pinned)（回退 \(rest.count) 个）",
+                            subsystem: "优选"
+                        )
                     } else {
-                        addresses = Self.preferredUpstreamAddresses(answer.addresses)
+                        addresses = resolved
                     }
                     guard !addresses.isEmpty else {
                         self.reject(client, reason: "empty resolved address")
@@ -1562,12 +1640,20 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         return unique.filter { $0.contains(":") }
     }
 
+    /// 轮转除首个以外的地址。
+    ///
+    /// 解析器已经把「上次连通过的粘性 IP / 未被惩罚的 IP」排在最前面，连它一起
+    /// 轮转等于每次建连都换一个 Cloudflare 边缘，粘性就白记了（clearance 也跟
+    /// 出口 IP 走）。首地址稳定，其余地址轮转用来分散负载、避开被投毒的那些。
     private func rotatedAddresses(for host: String, addresses: [String]) -> [String] {
-        guard !addresses.isEmpty else { return [] }
+        guard let preferred = addresses.first else { return [] }
+        let rest = Array(addresses.dropFirst())
+        guard !rest.isEmpty else { return addresses }
         let offset = hostAttemptOffsets[host, default: 0]
         hostAttemptOffsets[host] = offset + 1
-        let start = offset % addresses.count
-        return Array(addresses[start...]) + Array(addresses[..<start])
+        if hostAttemptOffsets.count > 512 { hostAttemptOffsets.removeAll() }
+        let start = offset % rest.count
+        return [preferred] + Array(rest[start...]) + Array(rest[..<start])
     }
 
     private func close(_ connection: NWConnection?) {

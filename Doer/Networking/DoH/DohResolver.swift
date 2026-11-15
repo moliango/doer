@@ -59,23 +59,6 @@ nonisolated final class DohResolver: @unchecked Sendable {
     }
 }
 
-enum DohResolverError: LocalizedError {
-    case invalidProviderURL(String)
-    case emptyAnswer(String)
-    case queryFailed(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidProviderURL(let url):
-            return "Invalid DoH provider URL: \(url)"
-        case .emptyAnswer(let host):
-            return "DoH returned no address for \(host)"
-        case .queryFailed(let host):
-            return "DoH query failed for \(host)"
-        }
-    }
-}
-
 struct DohProviderConfiguration {
     let name: String
     let url: String

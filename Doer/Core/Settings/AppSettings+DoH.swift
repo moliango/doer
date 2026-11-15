@@ -307,7 +307,7 @@ extension AppSettings {
     var dohCustomServers: [CustomDoHServer] {
         get {
             if let data = defaults.data(forKey: "dohCustomServers"),
-               let list = try? JSONDecoder().decode([CustomDoHServer].self, from: data)
+               let list = Self.decodedCustomServers(from: data)
             {
                 return list
             }
@@ -389,10 +389,8 @@ extension AppSettings {
     }
 
     nonisolated static func bootstrapExtrasMap(from defaults: UserDefaults) -> [String: [String]] {
-        guard let data = defaults.data(forKey: "dohBootstrapExtrasByURL"),
-              let map = try? JSONDecoder().decode([String: [String]].self, from: data)
-        else { return [:] }
-        return map
+        guard let data = defaults.data(forKey: "dohBootstrapExtrasByURL") else { return [:] }
+        return DohConfigMemo.decodeBootstrapExtras(data)
     }
 
     func addCustomDoHServer(name: String, url: String, bootstrapIPs: [String] = []) -> CustomDoHServer? {
@@ -521,8 +519,8 @@ extension AppSettings {
             if hostIsIP {
                 bootstrap = []
             } else {
-                let storedServers = (defaults.data(forKey: "dohCustomServers"))
-                    .flatMap { try? JSONDecoder().decode([CustomDoHServer].self, from: $0) } ?? []
+                let storedServers = defaults.data(forKey: "dohCustomServers")
+                    .flatMap { decodedCustomServers(from: $0) } ?? []
                 let match = storedServers.first { $0.url == DohServerCatalog.normalize(customURL) }
                 bootstrap = lockedBootstrapIPs(
                     for: customURL,
@@ -591,6 +589,12 @@ extension AppSettings {
     private static let upstreamPasswordTag = "com.naine.doer.doh.upstream-password"
 
     nonisolated private static func readUpstreamPassword() -> String? {
+        DohConfigMemo.lock.lock()
+        let loaded = DohConfigMemo.upstreamPasswordLoaded
+        let cached = DohConfigMemo.upstreamPassword
+        DohConfigMemo.lock.unlock()
+        if loaded { return cached }
+
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: upstreamPasswordTag,
@@ -599,11 +603,29 @@ extension AppSettings {
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        let password: String?
+        if status == errSecSuccess, let data = item as? Data {
+            password = String(data: data, encoding: .utf8)
+        } else {
+            password = nil
+        }
+        DohConfigMemo.lock.lock()
+        DohConfigMemo.upstreamPassword = password
+        DohConfigMemo.upstreamPasswordLoaded = true
+        DohConfigMemo.lock.unlock()
+        return password
+    }
+
+    /// 钥匙串读到的上游密码变了，下一次解析要重新读。
+    nonisolated private static func invalidateUpstreamPasswordCache() {
+        DohConfigMemo.lock.lock()
+        DohConfigMemo.upstreamPassword = nil
+        DohConfigMemo.upstreamPasswordLoaded = false
+        DohConfigMemo.lock.unlock()
     }
 
     nonisolated private static func writeUpstreamPassword(_ password: String) {
+        defer { invalidateUpstreamPasswordCache() }
         let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: upstreamPasswordTag,
@@ -618,5 +640,61 @@ extension AppSettings {
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
         SecItemAdd(add as CFDictionary, nil)
+    }
+
+    nonisolated static func decodedCustomServers(from data: Data) -> [AppSettings.CustomDoHServer]? {
+        DohConfigMemo.decodeCustomServers(data)
+    }
+}
+
+/// DoH 配置解析的重复开销缓存。
+///
+/// `DiscourseAPI.session` 每次访问都要拿 `DohProxyConfig.signature` 判断会话是否要
+/// 重建，于是这段解析会跟着**每一个 HTTP 请求**跑一遍：其中钥匙串查询
+/// （`SecItemCopyMatching`，跨进程 IPC）和两处 JSON 解码是唯一昂贵的部分。
+/// 这里把这两类结果缓存起来——JSON 以原始字节为键（字节相同必然解码相同，写入
+/// 新值自动失效），密码在 `writeUpstreamPassword` 里显式失效。
+nonisolated enum DohConfigMemo {
+    static let lock = NSLock()
+    static var upstreamPassword: String?
+    static var upstreamPasswordLoaded = false
+    static var customServers: (data: Data, servers: [AppSettings.CustomDoHServer])?
+    static var bootstrapExtras: (data: Data, map: [String: [String]])?
+
+    /// 解码失败返回 nil，由调用方决定是否走旧版回退路径。
+    static func decodeCustomServers(_ data: Data) -> [AppSettings.CustomDoHServer]? {
+        lock.lock()
+        if let cached = customServers, cached.data == data {
+            let servers = cached.servers
+            lock.unlock()
+            return servers
+        }
+        lock.unlock()
+
+        guard let servers = try? JSONDecoder().decode([AppSettings.CustomDoHServer].self, from: data) else {
+            return nil
+        }
+        lock.lock()
+        customServers = (data, servers)
+        lock.unlock()
+        return servers
+    }
+
+    static func decodeBootstrapExtras(_ data: Data) -> [String: [String]] {
+        lock.lock()
+        if let cached = bootstrapExtras, cached.data == data {
+            let map = cached.map
+            lock.unlock()
+            return map
+        }
+        lock.unlock()
+
+        guard let map = try? JSONDecoder().decode([String: [String]].self, from: data) else {
+            return [:]
+        }
+        lock.lock()
+        bootstrapExtras = (data, map)
+        lock.unlock()
+        return map
     }
 }

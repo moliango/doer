@@ -145,6 +145,12 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
         return statusValue
     }
 
+    /// 跟随主服务换 DoH 配置（换 provider / 自定义 URL / 上游）。
+    /// 不更新就会一直朝启动时那个端点查候选和 ECH 钥匙。
+    func updateConfig(_ config: DohProxyConfig) {
+        resolver.updateConfig(config)
+    }
+
     // MARK: - 入口
 
     /// 触发一次优选。`completion` 在主线程回调，`nil` 表示这次没选出赢家。

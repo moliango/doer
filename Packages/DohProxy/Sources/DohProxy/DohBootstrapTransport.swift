@@ -7,6 +7,15 @@ import Network
 public enum DohBootstrapTransport {
     public static var log: ((String) -> Void)?
 
+    /// 相邻两个 bootstrap IP 的启动间隔。前一个 300ms 没连上就并行试下一个，
+    /// 而不是死等满 5 秒超时——被墙 / 黑洞 IP 上这一条最省时间。
+    private static let hedgeDelay: TimeInterval = 0.3
+    /// 一轮查询的总预算。
+    private static let raceTimeout: TimeInterval = 6
+    /// 最多并行试几个地址，避免候选收集那种一次十几个端点的场景把连接数打爆。
+    private static let maxHedgedAddresses = 3
+    private static let systemAddressTTL: TimeInterval = 60
+
     private static let skipSystemLookupLock = NSLock()
     private static var skipSystemAddressLookupLocked = false
 
@@ -57,182 +66,96 @@ public enum DohBootstrapTransport {
                 addresses = v4 + v6
             }
         }
-        let path = postPath(url: endpoint.url)
-        query(
-            addresses: addresses,
-            index: 0,
-            serverHost: endpoint.host,
-            serverPort: endpoint.port,
-            request: postRequest(host: endpoint.host, path: path, dnsQuery: dnsQuery),
+        guard !addresses.isEmpty else {
+            completion(.failure(DohProxyError.bootstrapUnavailable(endpoint.host)))
+            return
+        }
+        race(
+            addresses: Array(addresses.prefix(maxHedgedAddresses)),
+            host: endpoint.host,
+            port: endpoint.port,
+            path: postPath(url: endpoint.url),
+            dnsQuery: dnsQuery,
             queue: queue,
             logger: logger,
-            lastError: nil,
             completion: completion
         )
     }
 
-    private static func query(
+    /// 错峰并发：第一个地址立刻开，之后每隔 `hedgeDelay` 再开一个，
+    /// 谁先成功用谁。连接本身按 (IP, SNI) 复用，见 `DohHTTPClient`。
+    private static func race(
         addresses: [String],
-        index: Int,
-        serverHost: String,
-        serverPort: UInt16,
-        request: Data,
+        host: String,
+        port: UInt16,
+        path: String,
+        dnsQuery: Data,
         queue: DispatchQueue,
         logger: ((String) -> Void)?,
-        lastError: Error?,
         completion: @escaping (Result<Data, Error>) -> Void
     ) {
-        guard index < addresses.count, let port = NWEndpoint.Port(rawValue: serverPort) else {
-            completion(.failure(lastError ?? DohProxyError.bootstrapUnavailable(serverHost)))
-            return
-        }
+        let lock = NSLock()
+        var settled = false
+        var remaining = addresses.count
+        var lastError: Error?
 
-        let ip = addresses[index]
-        let tls = NWProtocolTLS.Options()
-        serverHost.withCString { pointer in
-            sec_protocol_options_set_tls_server_name(tls.securityProtocolOptions, pointer)
-        }
-        "http/1.1".withCString { pointer in
-            sec_protocol_options_add_tls_application_protocol(tls.securityProtocolOptions, pointer)
-        }
-        let tcp = NWProtocolTCP.Options()
-        tcp.noDelay = true
-        let parameters = NWParameters(tls: tls, tcp: tcp)
-        let connection = NWConnection(host: endpointHost(ip), port: port, using: parameters)
-        logger?("bootstrap connect \(ip) SNI=\(serverHost)")
-        var buffer = Data()
-        var finished = false
-        let timeout = DispatchWorkItem {
-            // Claim the attempt before cancel. Cancel delivers `.failed` on
-            // this same queue; if `finished` is still false, that path starts
-            // a second next-IP query and the caller `group.leave()`s twice.
-            guard !finished else { return }
-            finished = true
-            logger?("bootstrap timeout \(ip)")
-            connection.cancel()
-            query(
-                addresses: addresses,
-                index: index + 1,
-                serverHost: serverHost,
-                serverPort: serverPort,
-                request: request,
-                queue: queue,
-                logger: logger,
-                lastError: DohProxyError.queryFailed("timeout \(ip)"),
-                completion: completion
-            )
-        }
-
-        func finish(_ result: Result<Data, Error>) {
-            guard !finished else { return }
-            finished = true
-            timeout.cancel()
-            connection.cancel()
-            completion(result)
-        }
-
-        func tryNext(_ error: Error) {
-            guard !finished else { return }
-            finished = true
-            timeout.cancel()
-            connection.cancel()
-            logger?("bootstrap failed \(ip): \(error.localizedDescription)")
-            query(
-                addresses: addresses,
-                index: index + 1,
-                serverHost: serverHost,
-                serverPort: serverPort,
-                request: request,
-                queue: queue,
-                logger: logger,
-                lastError: error,
-                completion: completion
-            )
-        }
-
-        func parseBuffered(requireComplete: Bool) -> Bool {
-            do {
-                guard let body = try DohHTTPWire.extractBody(from: buffer, requireComplete: requireComplete) else {
-                    return false
-                }
-                logger?("bootstrap ok \(ip) bytes=\(body.count)")
-                finish(.success(body))
-                return true
-            } catch {
-                tryNext(error)
-                return true
-            }
-        }
-
-        func receiveMore() {
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { data, _, isComplete, error in
-                if let data, !data.isEmpty {
-                    buffer.append(data)
-                    if parseBuffered(requireComplete: false) { return }
-                }
-                if let error {
-                    tryNext(error)
-                    return
-                }
-                if isComplete {
-                    _ = parseBuffered(requireComplete: true)
-                    if !finished {
-                        tryNext(DohProxyError.queryFailed("empty \(ip)"))
+        func settle(_ result: Result<Data, Error>) {
+            var deliver: Result<Data, Error>?
+            lock.lock()
+            if !settled {
+                switch result {
+                case .success:
+                    settled = true
+                    deliver = result
+                case .failure(let error):
+                    lastError = error
+                    remaining -= 1
+                    if remaining <= 0 {
+                        settled = true
+                        deliver = .failure(lastError ?? error)
                     }
-                    return
                 }
-                receiveMore()
             }
+            lock.unlock()
+            guard let deliver else { return }
+            queue.async { completion(deliver) }
         }
 
-        connection.stateUpdateHandler = { state in
-            switch state {
-            case .waiting(let error):
-                logger?("bootstrap waiting \(ip): \(error)")
-            case .ready:
-                logger?("bootstrap TLS ready \(ip)")
-                connection.send(
-                    content: request,
-                    contentContext: NWConnection.ContentContext(identifier: "doer.doh.bootstrap", isFinal: false),
-                    isComplete: false,
-                    completion: .contentProcessed { error in
-                        if let error {
-                            tryNext(error)
-                            return
-                        }
-                        receiveMore()
+        for (index, ip) in addresses.enumerated() {
+            queue.asyncAfter(deadline: .now() + Double(index) * hedgeDelay) {
+                lock.lock()
+                let alreadySettled = settled
+                lock.unlock()
+                guard !alreadySettled else { return }
+                logger?("bootstrap connect \(ip) SNI=\(host)")
+                DohHTTPClient.shared.post(
+                    ip: ip,
+                    host: host,
+                    port: port,
+                    path: path,
+                    body: dnsQuery,
+                    callbackQueue: queue
+                ) { result in
+                    switch result {
+                    case .success(let body):
+                        logger?("bootstrap ok \(ip) bytes=\(body.count)")
+                        settle(.success(body))
+                    case .failure(let error):
+                        logger?("bootstrap failed \(ip): \(error.localizedDescription)")
+                        settle(.failure(error))
                     }
-                )
-            case .failed(let error):
-                tryNext(error)
-            default:
-                break
+                }
             }
         }
 
-        queue.asyncAfter(deadline: .now() + 5, execute: timeout)
-        connection.start(queue: queue)
+        queue.asyncAfter(deadline: .now() + raceTimeout) {
+            settle(.failure(DohProxyError.queryFailed("timeout \(host):\(port)")))
+        }
     }
 
     private static func postPath(url: String) -> String {
         let path = URL(string: url)?.path ?? ""
         return path.isEmpty ? "/dns-query" : path
-    }
-
-    private static func postRequest(host: String, path: String, dnsQuery: Data) -> Data {
-        let header = [
-            "POST \(path) HTTP/1.1",
-            "Host: \(host)",
-            "Accept: application/dns-message",
-            "Content-Type: application/dns-message",
-            "Content-Length: \(dnsQuery.count)",
-            "Connection: close",
-            "",
-            "",
-        ].joined(separator: "\r\n")
-        var data = Data(header.utf8)
-        data.append(dnsQuery)
-        return data
     }
 
     /// Extract the HTTP/1.1 body from a raw response buffer.
@@ -244,7 +167,44 @@ public enum DohBootstrapTransport {
         try DohHTTPWire.extractBody(from: data, requireComplete: requireComplete)
     }
 
+    // MARK: - 系统解析
+
+    private static let addressCacheLock = NSLock()
+    private static var addressCache: [String: (addresses: [String], at: Date)] = [:]
+
+    /// `getaddrinfo` 是同步阻塞调用，而解析一次域名要打三个查询；不缓存就会在
+    /// 解析器的串行队列上连做三次。结果按主机名缓存一分钟。
     public static func systemAddresses(for host: String) -> [String] {
+        let key = host.lowercased()
+        addressCacheLock.lock()
+        if let cached = addressCache[key], Date().timeIntervalSince(cached.at) < systemAddressTTL {
+            let addresses = cached.addresses
+            addressCacheLock.unlock()
+            return addresses
+        }
+        addressCacheLock.unlock()
+
+        let addresses = resolveSystemAddresses(for: host)
+        addressCacheLock.lock()
+        if addressCache.count > 32 { addressCache.removeAll() }
+        addressCache[key] = (addresses, Date())
+        addressCacheLock.unlock()
+        return addresses
+    }
+
+    /// 关掉复用的 DoH 连接（换服务器 / 切网络后调用）。
+    public static func closeIdleConnections() {
+        DohHTTPClient.shared.closeIdleConnections()
+    }
+
+    /// 清掉系统解析缓存（换网络、切 DoH 服务器后调用）。
+    public static func clearSystemAddressCache() {
+        addressCacheLock.lock()
+        addressCache.removeAll()
+        addressCacheLock.unlock()
+    }
+
+    private static func resolveSystemAddresses(for host: String) -> [String] {
         var hints = addrinfo(
             ai_flags: AI_ADDRCONFIG,
             ai_family: AF_UNSPEC,
@@ -282,12 +242,6 @@ public enum DohBootstrapTransport {
     }
 
     private static func endpointHost(_ address: String) -> NWEndpoint.Host {
-        if let ipv4 = IPv4Address(address) {
-            return .ipv4(ipv4)
-        }
-        if let ipv6 = IPv6Address(address) {
-            return .ipv6(ipv6)
-        }
-        return .name(address, nil)
+        DohHTTPClient.endpointHost(address)
     }
 }

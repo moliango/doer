@@ -50,6 +50,10 @@ nonisolated enum EncryptedDnsService {
     /// 上一次验证通过的 spec。新服务器探不通时回退到它。
     private static var lastVerified: ResolverSpec?
     private static var lastLiveSystemIPs: [String] = []
+    /// 上一次清解析缓存的时刻。回前台会强制重新装 resolver，但清缓存会让
+    /// 全进程所有 host 重新解析，没必要每次都付这个代价。
+    private static var lastFlushAt: Date?
+    private static let flushCooldown: TimeInterval = 120
     private static var encryptedResolutionEnabled = false
     private static let checkQueue = DispatchQueue(
         label: "doer.encrypted-dns.bootstrap-check",
@@ -93,9 +97,12 @@ nonisolated enum EncryptedDnsService {
         let normalized = ResolverSpec(url: spec.url, bootstrapIPs: ips)
 
         applyLock.lock()
-        let unchanged = lastApplied == normalized
+        let alreadyApplied = lastApplied == normalized
+        let alreadyVerified = lastVerified == normalized
         applyLock.unlock()
-        if unchanged {
+        // 同一份 spec 已经验证过就不必再探活：探活只是防止「新换的服务器
+        // 根本连不上」，回前台 / 切网络时重复探一轮等于白开 4 条 TCP。
+        if alreadyApplied || alreadyVerified {
             commit(normalized)
             return
         }
@@ -115,7 +122,14 @@ nonisolated enum EncryptedDnsService {
     /// 真正把 resolver 交给 Network.framework。调用方已确认这台服务器可用。
     private static func commit(_ spec: ResolverSpec) {
         applyLock.lock()
-        let alreadyApplied = lastApplied == spec
+        let previous = lastApplied
+        let now = Date()
+        // 换服务器必须清；只是回前台重新装上同一份 resolver 时，跟着冷却走。
+        let changed = previous != nil && previous != spec
+        let shouldFlush = changed
+            || lastFlushAt.map { now.timeIntervalSince($0) > flushCooldown } ?? true
+        if shouldFlush { lastFlushAt = now }
+        let alreadyApplied = previous == spec
         lastApplied = spec
         lastVerified = spec
         encryptedResolutionEnabled = true
@@ -130,7 +144,7 @@ nonisolated enum EncryptedDnsService {
             true,
             fallbackResolver: resolver
         )
-        if !alreadyApplied {
+        if shouldFlush, !alreadyApplied {
             NWParameters.PrivacyContext.default.flushCache()
         }
         DohDebugLog.record(
@@ -209,7 +223,9 @@ nonisolated enum EncryptedDnsService {
     static func disable() {
         applyLock.lock()
         lastApplied = nil
+        lastVerified = nil
         lastLiveSystemIPs = []
+        lastFlushAt = nil
         encryptedResolutionEnabled = false
         applyLock.unlock()
         DohBootstrapTransport.skipSystemAddressLookup = false

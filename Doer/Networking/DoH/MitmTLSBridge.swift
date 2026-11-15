@@ -34,7 +34,8 @@ nonisolated final class MitmTLSBridge: @unchecked Sendable {
         originNeedsTLS: Bool,
         sni: String,
         echConfig: Data?,
-        completion: @escaping (Bool) -> Void
+        completion: @escaping (Bool) -> Void,
+        onOriginHandshake: @escaping (Bool) -> Void = { _ in }
     ) {
         do {
             let pipe = try MitmNIOPipe(
@@ -81,7 +82,8 @@ nonisolated final class MitmTLSBridge: @unchecked Sendable {
                             self.lock.unlock()
                         }
                     },
-                    completion: { _ in }
+                    completion: { _ in },
+                    onHandshake: onOriginHandshake
                 )
             }
             pipe.start(

@@ -288,6 +288,10 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             lastError = nil
             lock.unlock()
             resolver.updateConfig(config)
+            // 优选用自己的解析器收候选和 ECH 钥匙；换了服务器/上游之后它还拿着
+            // 启动时那份配置，会一直朝旧 DoH 端点查（换了 provider 后优选仍按
+            // 旧地址解析，表现为「优选不对」）。
+            PreferredNodeSelector.shared.updateConfig(config)
             DohDebugLog.record(
                 "DoH starting \(config.serverURL) bootstrap=\(config.bootstrapIPs.joined(separator: ","))"
             )
@@ -466,6 +470,10 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
 
     func clearCache() {
         resolver.clearCache()
+        // 解析器和 DoH 自身的缓存一起清：换网络后旧的系统解析结果和复用的
+        // DoH 连接都会指向已经不可达的出口。
+        DohBootstrapTransport.clearSystemAddressCache()
+        DohBootstrapTransport.closeIdleConnections()
         NWParameters.PrivacyContext.default.flushCache()
     }
 
