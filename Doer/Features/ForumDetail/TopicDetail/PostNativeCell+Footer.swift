@@ -5,15 +5,24 @@ extension PostNativeCell {
     // MARK: - Footer Actions
     func configureRepliesButton(count: Int) {
         var config = UIButton.Configuration.plain()
-        config.image = UIImage(systemName: "bubble.left.fill", withConfiguration: Self.actionSymbolConfig())
+        config.image = UIImage(
+            systemName: "bubble.left",
+            withConfiguration: Self.actionSymbolConfig(pointSize: 14)
+        )
         config.title = "\(count)"
-        config.imagePadding = 4
-        config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8)
+        config.imagePadding = 5
+        config.contentInsets = .zero
         config.baseForegroundColor = .secondaryLabel
         config.background.backgroundColor = Self.actionBackgroundColor
-        config.background.cornerRadius = Self.bottomBarHeight / 2
+        var title = AttributedString("\(count)")
+        title.font = BoostChipLayout.countFont()
+        config.attributedTitle = title
         showRepliesButton.configuration = config
         showRepliesButton.clipsToBounds = true
+        showRepliesButton.accessibilityLabel = String(
+            format: String(localized: "topic.nested.replies_count", defaultValue: "%d 条回复"),
+            count
+        )
     }
 
     /// FluxDo expand control under a nested node: ⊕ N 条回复 / ⊖ 收起.
@@ -180,8 +189,7 @@ extension PostNativeCell {
     }
 
     func updateFooterLayout() {
-        // FluxDo: shared-issue on its own row above actions; replies stay left of action icons.
-        bottomLeftStack.isHidden = showRepliesButton.isHidden
+        // FluxDo: shared-issue on its own row above actions; replies lead the action rail.
         let showsSharedIssue = !sharedIssueButton.isHidden
         sharedIssueButtonHeightConstraint?.constant = showsSharedIssue
             ? Metrics.sharedIssueButtonHeight
@@ -370,7 +378,7 @@ extension PostNativeCell {
 
     static func actionSymbolConfig(
         pointSize: CGFloat = actionIconPointSize,
-        weight: UIImage.SymbolWeight = .medium
+        weight: UIImage.SymbolWeight = .regular
     ) -> UIImage.SymbolConfiguration {
         UIImage.SymbolConfiguration(pointSize: pointSize, weight: weight)
     }

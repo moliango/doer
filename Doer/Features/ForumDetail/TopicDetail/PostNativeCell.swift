@@ -13,7 +13,7 @@ final class PostNativeCell: UITableViewCell {
     static let reuseIdentifier = "PostNativeCell"
     static let headerHeight: CGFloat = 44
     static let bottomBarHeight: CGFloat = 36
-    static let actionIconPointSize: CGFloat = 12
+    static let actionIconPointSize: CGFloat = 15
     nonisolated static let actionIconCanvasSize = CGSize(width: 22, height: 22)
     static var boostIconImage: UIImage {
         if let image = UIImage(named: "BoostRocket") {
@@ -53,22 +53,30 @@ final class PostNativeCell: UITableViewCell {
     enum Metrics {
         static let cardOuterVertical: CGFloat = 0
         static let cardOuterHorizontal: CGFloat = 0
-        static let replyCardOuterHorizontal: CGFloat = 8
+        /// Reading stream: replies share the OP's column, no card inset.
+        static let replyCardOuterHorizontal: CGFloat = 0
         /// FluxDo mobile nested list outer inset (flat rows, not card chrome).
         static let nestedTreeOuterHorizontal: CGFloat = 12
+        /// Single reading column shared by avatar, body, actions and dividers.
+        /// Matches the topic header's and the topic list's 16pt page gutter so
+        /// the post doesn't step inward below the title.
         static let cardInner: CGFloat = 16
-        static let headerTop: CGFloat = 14
+        /// First post sits closer to the topic header; replies breathe after the divider.
+        static let firstPostHeaderTop: CGFloat = 12
+        static let replyHeaderTop: CGFloat = 24
         static let avatarSize: CGFloat = 36
         static let maximumAvatarSize: CGFloat = 40
         static let avatarToText: CGFloat = 8
         static let contentTop: CGFloat = 10
         static let firstPostContentInset: CGFloat = 0
         static let actionTop: CGFloat = 10
+        /// Air between the action row and the divider that closes the reply.
+        static let actionBottom: CGFloat = 14
         static let sharedIssueButtonHeight: CGFloat = 30
         static let reactionSlotWidth: CGFloat = 42
         static let actionButtonWidth: CGFloat = 36
-        static let actionSpacing: CGFloat = 2
-        static let minimumReplyCardHeight: CGFloat = 80
+        static let actionSpacing: CGFloat = 18
+        static let minimumReplyCardHeight: CGFloat = 0
         /// Long posts: paint this many blocks first, finish the rest after scroll settles.
         static let progressiveInitialBlockLimit = 10
         /// Only split when body is at least this many top-level blocks.
@@ -235,7 +243,7 @@ final class PostNativeCell: UITableViewCell {
     let timeLabel: UILabel = {
         let label = UILabel()
         label.font = TopicDetailTypography.contentContextFont(
-            offsetFromBody: -1,
+            offsetFromBody: -5,
             weight: .regular,
             relativeTo: .caption1
         )
@@ -272,12 +280,12 @@ final class PostNativeCell: UITableViewCell {
 
     let floorLabel: UILabel = {
         let label = UILabel()
-        label.font = TopicDetailTypography.contentContextMonospacedFont(
-            offsetFromBody: -1,
+        label.font = TopicDetailTypography.contentContextFont(
+            offsetFromBody: -5,
             weight: .regular,
             relativeTo: .caption1
         )
-        label.textColor = .tertiaryLabel
+        label.textColor = .secondaryLabel
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
@@ -429,17 +437,7 @@ final class PostNativeCell: UITableViewCell {
 
     var reactionPillWidthConstraint: NSLayoutConstraint?
 
-    let bottomLeftStack: UIStackView = {
-        let sv = UIStackView()
-        sv.axis = .horizontal
-        sv.spacing = 4
-        sv.alignment = .center
-        sv.isHidden = true
-        sv.accessibilityIdentifier = "post.supplementary.footer"
-        sv.translatesAutoresizingMaskIntoConstraints = false
-        return sv
-    }()
-
+    /// Left-aligned action rail: [replies] [reaction] [boost] [bookmark] [reply] [more].
     let actionStackView: UIStackView = {
         let sv = UIStackView()
         sv.axis = .horizontal
@@ -451,11 +449,14 @@ final class PostNativeCell: UITableViewCell {
         return sv
     }()
 
+    /// Header top insets differ for the OP and replies; rewritten in `applyCardStyle`.
+    private var headerTopConstraints: [NSLayoutConstraint] = []
+
     let reactButton: PostActionButton = {
         let button = PostActionButton(type: .system)
         let config = PostNativeCell.actionSymbolConfig()
         button.setImage(UIImage(systemName: "heart", withConfiguration: config), for: .normal)
-        button.tintColor = .tertiaryLabel
+        button.tintColor = .secondaryLabel
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
     }()
@@ -463,7 +464,7 @@ final class PostNativeCell: UITableViewCell {
     let boostButton: PostActionButton = {
         let button = PostActionButton(type: .system)
         button.setImage(PostNativeCell.boostIconImage, for: .normal)
-        button.tintColor = .tertiaryLabel
+        button.tintColor = .secondaryLabel
         button.imageView?.contentMode = .scaleAspectFit
         button.translatesAutoresizingMaskIntoConstraints = false
         button.accessibilityLabel = String(localized: "post.boost")
@@ -474,7 +475,7 @@ final class PostNativeCell: UITableViewCell {
         let button = PostActionButton(type: .system)
         let config = PostNativeCell.actionSymbolConfig()
         button.setImage(UIImage(systemName: "bookmark", withConfiguration: config), for: .normal)
-        button.tintColor = .tertiaryLabel
+        button.tintColor = .secondaryLabel
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
     }()
@@ -483,7 +484,7 @@ final class PostNativeCell: UITableViewCell {
         let button = PostActionButton(type: .system)
         let config = PostNativeCell.actionSymbolConfig()
         button.setImage(UIImage(systemName: "ellipsis", withConfiguration: config), for: .normal)
-        button.tintColor = .tertiaryLabel
+        button.tintColor = .secondaryLabel
         button.showsMenuAsPrimaryAction = true
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
@@ -493,7 +494,7 @@ final class PostNativeCell: UITableViewCell {
         let button = PostActionButton(type: .system)
         let config = PostNativeCell.actionSymbolConfig()
         button.setImage(UIImage(systemName: "arrowshape.turn.up.left", withConfiguration: config), for: .normal)
-        button.tintColor = .tertiaryLabel
+        button.tintColor = .secondaryLabel
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
     }()
@@ -543,7 +544,6 @@ final class PostNativeCell: UITableViewCell {
         contentCardView.addSubview(contentStackView)
         sharedIssueButton.addSubview(sharedIssueCountLabel)
         // FluxDo: shared-issue sits above the action row so reactions never get half-clipped.
-        bottomLeftStack.addArrangedSubview(showRepliesButton)
         for iv in reactionImageViews {
             reactionStackView.addArrangedSubview(iv)
             iv.isHidden = true
@@ -551,6 +551,7 @@ final class PostNativeCell: UITableViewCell {
         reactionStackView.addArrangedSubview(reactionCountLabel)
         reactionCountLabel.isHidden = true
         reactionPillControl.addSubview(reactButton)
+        actionStackView.addArrangedSubview(showRepliesButton)
         actionStackView.addArrangedSubview(reactionStackView)
         actionStackView.addArrangedSubview(reactionPillControl)
         actionStackView.addArrangedSubview(boostButton)
@@ -558,7 +559,6 @@ final class PostNativeCell: UITableViewCell {
         actionStackView.addArrangedSubview(replyButton)
         actionStackView.addArrangedSubview(moreButton)
         cardView.addSubview(sharedIssueButton)
-        cardView.addSubview(bottomLeftStack)
         cardView.addSubview(actionStackView)
         cardView.addSubview(separatorLine)
         // Watermark sits above body, matching FluxDo's header-stack stamp.
@@ -603,13 +603,27 @@ final class PostNativeCell: UITableViewCell {
         self.cardLeadingConstraint = cardLeadingConstraint
         self.cardTrailingConstraint = cardTrailingConstraint
 
+        let avatarTopConstraint = avatarImageView.topAnchor.constraint(
+            equalTo: cardView.topAnchor,
+            constant: Metrics.replyHeaderTop
+        )
+        let nameTopConstraint = topLineStackView.topAnchor.constraint(
+            equalTo: cardView.topAnchor,
+            constant: Metrics.replyHeaderTop
+        )
+        let timeTopConstraint = timeLabel.topAnchor.constraint(
+            equalTo: cardView.topAnchor,
+            constant: Metrics.replyHeaderTop
+        )
+        headerTopConstraints = [avatarTopConstraint, nameTopConstraint, timeTopConstraint]
+
         NSLayoutConstraint.activate([
             cardTopConstraint,
             cardLeadingConstraint,
             cardTrailingConstraint,
             cardBottomConstraint,
 
-            avatarImageView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: Metrics.headerTop),
+            avatarTopConstraint,
             avatarImageView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: Metrics.cardInner),
             avatarWidthConstraint,
             avatarHeightConstraint,
@@ -624,7 +638,7 @@ final class PostNativeCell: UITableViewCell {
             flairImageWidthConstraint,
             flairImageHeightConstraint,
 
-            topLineStackView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: Metrics.headerTop),
+            nameTopConstraint,
             topLineStackView.leadingAnchor.constraint(equalTo: avatarImageView.trailingAnchor, constant: Metrics.avatarToText),
             topLineStackView.trailingAnchor.constraint(lessThanOrEqualTo: timeLabel.leadingAnchor, constant: -8),
 
@@ -640,7 +654,7 @@ final class PostNativeCell: UITableViewCell {
             sourceButton.widthAnchor.constraint(equalToConstant: 24),
             sourceButton.heightAnchor.constraint(equalToConstant: 24),
 
-            timeLabel.topAnchor.constraint(equalTo: cardView.topAnchor, constant: Metrics.headerTop),
+            timeTopConstraint,
             timeLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -Metrics.cardInner),
 
             floorLabel.topAnchor.constraint(equalTo: timeLabel.bottomAnchor, constant: 2),
@@ -673,14 +687,12 @@ final class PostNativeCell: UITableViewCell {
             sharedIssueCountLabel.heightAnchor.constraint(equalToConstant: 18),
             sharedIssueCountLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 18),
 
-            bottomLeftStack.centerYAnchor.constraint(equalTo: actionStackView.centerYAnchor),
-            bottomLeftStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: Metrics.cardInner),
-            bottomLeftStack.trailingAnchor.constraint(lessThanOrEqualTo: actionStackView.leadingAnchor, constant: -8),
-            bottomLeftStack.heightAnchor.constraint(equalToConstant: Self.bottomBarHeight),
-
-            actionStackView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -Metrics.cardInner),
+            actionStackView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: Metrics.cardInner),
+            actionStackView.trailingAnchor.constraint(lessThanOrEqualTo: cardView.trailingAnchor, constant: -Metrics.cardInner),
             actionStackView.heightAnchor.constraint(equalToConstant: Self.bottomBarHeight),
-            actionStackView.bottomAnchor.constraint(equalTo: separatorLine.topAnchor, constant: -8),
+            actionStackView.bottomAnchor.constraint(equalTo: separatorLine.topAnchor, constant: -Metrics.actionBottom),
+
+            showRepliesButton.heightAnchor.constraint(equalToConstant: Self.bottomBarHeight),
 
             reactButton.centerYAnchor.constraint(equalTo: reactionPillControl.centerYAnchor),
             reactButton.centerXAnchor.constraint(equalTo: reactionPillControl.centerXAnchor),
@@ -1142,49 +1154,37 @@ final class PostNativeCell: UITableViewCell {
 
     func applyCardStyle(isFirstPost: Bool, nestedDepth: Int = 0, isNestedTree: Bool = false) {
         contentStackView.spacing = 5
-        // FluxDo tree rows are flat list items, not elevated reply cards.
-        let useFlatTree = isNestedTree && !isFirstPost
-        cardMinHeightConstraint?.constant = (isFirstPost || useFlatTree) ? 0 : Metrics.minimumReplyCardHeight
-        let verticalGap: CGFloat = isFirstPost ? 0 : (useFlatTree ? 2 : 4)
+        // One flat reading stream: neither the OP nor replies wear card chrome, so the
+        // avatar, body, actions and the divider all sit on the same 24pt column.
+        cardMinHeightConstraint?.constant = 0
         let baseLeading: CGFloat = isFirstPost
             ? Metrics.cardOuterHorizontal
-            : (useFlatTree ? Metrics.nestedTreeOuterHorizontal : Metrics.replyCardOuterHorizontal)
+            : (isNestedTree ? Metrics.nestedTreeOuterHorizontal : Metrics.replyCardOuterHorizontal)
         // Roots sit at depth 0 under the sort bar; children step in per level.
         let depthInset = isFirstPost ? 0 : CGFloat(max(nestedDepth, 0)) * Metrics.nestedDepthStep
         let horizontalGap = baseLeading + depthInset
-        cardTopConstraint?.constant = verticalGap
-        cardBottomConstraint?.constant = -verticalGap
+        cardTopConstraint?.constant = 0
+        cardBottomConstraint?.constant = 0
         cardLeadingConstraint?.constant = horizontalGap
-        cardTrailingConstraint?.constant = -(isFirstPost
-            ? Metrics.cardOuterHorizontal
-            : (useFlatTree ? Metrics.nestedTreeOuterHorizontal : Metrics.replyCardOuterHorizontal))
+        cardTrailingConstraint?.constant = -baseLeading
+
+        let headerTop = isFirstPost ? Metrics.firstPostHeaderTop : Metrics.replyHeaderTop
+        headerTopConstraints.forEach { $0.constant = headerTop }
+
         let contentInset = isFirstPost ? Metrics.firstPostContentInset : 0
         contentStackTopConstraint?.constant = contentInset
         contentStackLeadingConstraint?.constant = contentInset
         contentStackTrailingConstraint?.constant = -contentInset
         contentStackBottomConstraint?.constant = -contentInset
 
-        if isFirstPost || useFlatTree {
-            cardView.backgroundColor = .clear
-            cardView.layer.cornerRadius = 0
-            cardView.layer.borderWidth = 0
-            cardView.layer.borderColor = nil
-            cardView.layer.shadowOpacity = 0
-            cardView.layer.shadowOffset = .zero
-            cardView.layer.shadowRadius = 0
-            separatorLine.backgroundColor = UIColor.separator.withAlphaComponent(useFlatTree ? 0.18 : 0.25)
-        } else {
-            cardView.backgroundColor = AppSettings.shared.themeStyle.topicCardBackgroundColor
-            cardView.layer.cornerRadius = 18
-            cardView.layer.cornerCurve = .continuous
-            cardView.layer.borderWidth = 1.0 / UIScreen.main.scale
-            cardView.layer.borderColor = UIColor.separator.withAlphaComponent(0.24).cgColor
-            cardView.layer.shadowColor = UIColor.black.cgColor
-            cardView.layer.shadowOpacity = 0.035
-            cardView.layer.shadowOffset = CGSize(width: 0, height: 2)
-            cardView.layer.shadowRadius = 8
-            separatorLine.backgroundColor = .clear
-        }
+        cardView.backgroundColor = .clear
+        cardView.layer.cornerRadius = 0
+        cardView.layer.borderWidth = 0
+        cardView.layer.borderColor = nil
+        cardView.layer.shadowOpacity = 0
+        cardView.layer.shadowOffset = .zero
+        cardView.layer.shadowRadius = 0
+        separatorLine.backgroundColor = .separator
 
         contentCardView.backgroundColor = .clear
         contentCardView.layer.borderWidth = 0
@@ -1210,13 +1210,14 @@ final class PostNativeCell: UITableViewCell {
             weight: .medium,
             relativeTo: .caption1
         )
-        floorLabel.font = TopicDetailTypography.contentContextMonospacedFont(
-            offsetFromBody: -1,
+        // Timestamp and floor share one quiet caption size, right-aligned in the header.
+        floorLabel.font = TopicDetailTypography.contentContextFont(
+            offsetFromBody: -5,
             weight: .regular,
             relativeTo: .caption1
         )
         timeLabel.font = TopicDetailTypography.contentContextFont(
-            offsetFromBody: -1,
+            offsetFromBody: -5,
             weight: .regular,
             relativeTo: .caption1
         )

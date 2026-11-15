@@ -14,8 +14,10 @@ enum DiscourseQuoteRenderer: BlockRenderer {
 
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
-        container.backgroundColor = TopicDetailContentStyle.mutedBackground.withAlphaComponent(0.46)
-        container.layer.cornerRadius = 0
+        // Neutral inset: quotes read as the same gray block as code, with no accent color.
+        container.backgroundColor = TopicDetailContentStyle.neutralInsetBackground
+        container.layer.cornerRadius = 12
+        container.layer.cornerCurve = .continuous
         container.layer.borderWidth = 0
         container.clipsToBounds = true
         if quotePostNumber != nil || topicURL != nil {
@@ -100,12 +102,6 @@ enum DiscourseQuoteRenderer: BlockRenderer {
             headerStack.addArrangedSubview(nameLabel)
         }
 
-        // Vertical bar + content
-        let bar = UIView()
-        bar.backgroundColor = AppSettings.shared.themeStyle.accentColor.withAlphaComponent(0.82)
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(bar)
-
         let contentStack = UIStackView()
         contentStack.axis = .vertical
         contentStack.spacing = 5
@@ -138,19 +134,14 @@ enum DiscourseQuoteRenderer: BlockRenderer {
         }
 
         NSLayoutConstraint.activate([
-            bar.topAnchor.constraint(equalTo: container.topAnchor),
-            bar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            bar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            bar.widthAnchor.constraint(equalToConstant: 4),
-
-            headerStack.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
-            headerStack.leadingAnchor.constraint(equalTo: bar.trailingAnchor, constant: 12),
-            headerStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+            headerStack.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
+            headerStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
+            headerStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
 
             contentStack.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 8),
-            contentStack.leadingAnchor.constraint(equalTo: bar.trailingAnchor, constant: 12),
-            contentStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-            contentStack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+            contentStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
+            contentStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
+            contentStack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12),
         ])
 
         return container

@@ -12,6 +12,7 @@ enum TopicDetailTypography {
         case floor
         case time
         case replyChip
+        case taxonomyChip
         case action
         case sortChip
         case dateChip
@@ -28,6 +29,7 @@ enum TopicDetailTypography {
             case .floor: return 13
             case .time: return 11
             case .replyChip: return 12
+            case .taxonomyChip: return 12.5
             case .action: return 12
             case .sortChip: return 13
             case .dateChip: return 13
@@ -42,7 +44,7 @@ enum TopicDetailTypography {
             case .navTitle: return .headline
             case .error: return .subheadline
             case .authorName: return .subheadline
-            case .authorMeta, .floor, .time, .replyChip, .action, .sortChip, .dateChip, .inputMeta, .adminBadge:
+            case .authorMeta, .floor, .time, .replyChip, .taxonomyChip, .action, .sortChip, .dateChip, .inputMeta, .adminBadge:
                 return .caption1
             case .inputBody: return .body
             }
@@ -51,7 +53,7 @@ enum TopicDetailTypography {
         /// When true, size tracks content (reading) scale; otherwise interface scale.
         var tracksContentScale: Bool {
             switch self {
-            case .authorName, .authorMeta, .floor, .time, .replyChip, .dateChip, .adminBadge:
+            case .authorName, .authorMeta, .floor, .time, .replyChip, .taxonomyChip, .dateChip, .adminBadge:
                 return true
             case .navTitle, .error, .action, .sortChip, .inputBody, .inputMeta:
                 return false
@@ -66,6 +68,7 @@ enum TopicDetailTypography {
             case .floor: return -1
             case .time: return -3
             case .replyChip: return -3
+            case .taxonomyChip: return -4.5
             case .dateChip: return -1
             case .adminBadge: return -3
             default: return 0

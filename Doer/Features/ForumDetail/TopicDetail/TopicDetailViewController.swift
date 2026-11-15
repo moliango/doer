@@ -831,9 +831,9 @@ final class TopicDetailViewController: ObservableViewController {
     func applyThemeStyle() {
         let accentColor = AppSettings.shared.themeStyle.accentColor
         let themeStyle = AppSettings.shared.themeStyle
-        view.backgroundColor = themeStyle.topicListBackgroundColor
+        view.backgroundColor = themeStyle.readingBackgroundColor
         tableView.backgroundColor = ForumWallpaper.storedImage == nil
-            ? themeStyle.topicListBackgroundColor
+            ? themeStyle.readingBackgroundColor
             : .clear
         ForumWallpaper.apply(to: view)
         topLoadingBar.backgroundColor = themeStyle.topicCardBackgroundColor
@@ -1210,7 +1210,7 @@ final class TopicDetailViewController: ObservableViewController {
             tagsContainer.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: hasVisibleTaxonomy ? 8 : 0),
             tagsContainer.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
             tagsContainer.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -16),
-            metadataRow.topAnchor.constraint(equalTo: tagsContainer.bottomAnchor, constant: 10),
+            metadataRow.topAnchor.constraint(equalTo: tagsContainer.bottomAnchor, constant: 12),
             metadataRow.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
             metadataRow.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -16),
             headerParticipantsView.topAnchor.constraint(equalTo: metadataRow.bottomAnchor, constant: headerParticipantsView.isHidden ? 0 : 12),
@@ -1309,8 +1309,8 @@ final class TopicDetailViewController: ObservableViewController {
             return
         }
 
-        let hSpacing: CGFloat = 6
-        let vSpacing: CGFloat = 6
+        let hSpacing: CGFloat = 8
+        let vSpacing: CGFloat = 8
         let maxWidth = tableView.bounds.width - 32 // 16pt padding on each side
 
         var badges: [TopicTaxonomyBadgeView] = []

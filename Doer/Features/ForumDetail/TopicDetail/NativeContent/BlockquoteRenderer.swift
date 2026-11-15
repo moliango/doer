@@ -29,15 +29,12 @@ enum BlockquoteRenderer: BlockRenderer {
 
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
-        container.backgroundColor = TopicDetailContentStyle.warmMutedBackground.withAlphaComponent(0.42)
-        container.layer.cornerRadius = 0
+        // Neutral inset: no accent bar, no warm tint — same gray block as code.
+        container.backgroundColor = TopicDetailContentStyle.neutralInsetBackground
+        container.layer.cornerRadius = 12
+        container.layer.cornerCurve = .continuous
         container.layer.borderWidth = 0
         container.clipsToBounds = true
-
-        let bar = UIView()
-        bar.backgroundColor = AppSettings.shared.themeStyle.hotTopicColor.withAlphaComponent(0.82)
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(bar)
 
         let stack = UIStackView()
         stack.axis = .vertical
@@ -47,11 +44,11 @@ enum BlockquoteRenderer: BlockRenderer {
 
         let quoteConfig = NativeRenderConfig(
             baseFont: config.baseFont,
-            baseColor: UIColor.label.withAlphaComponent(0.82),
+            baseColor: .secondaryLabel,
             linkColor: config.linkColor,
             codeFont: config.codeFont,
             codeBackgroundColor: config.codeBackgroundColor,
-            contentWidth: max(config.contentWidth - 18, 0),
+            contentWidth: max(config.contentWidth - 28, 0),
             baseURL: config.baseURL,
             postId: config.postId,
             galleryImageURLs: config.galleryImageURLs,
@@ -70,15 +67,10 @@ enum BlockquoteRenderer: BlockRenderer {
         }
 
         NSLayoutConstraint.activate([
-            bar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            bar.topAnchor.constraint(equalTo: container.topAnchor),
-            bar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            bar.widthAnchor.constraint(equalToConstant: 4),
-
-            stack.leadingAnchor.constraint(equalTo: bar.trailingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12),
         ])
 
         return container

@@ -173,6 +173,15 @@ extension AppSettings {
             }
         }
 
+        /// Reading surface for topic detail: pure white in light, pure black in dark
+        /// (the grouped-table gray is reserved for lists).
+        var readingBackgroundColor: UIColor {
+            guard self == .systemDefault else { return topicListBackgroundColor }
+            return UIColor { trait in
+                trait.userInterfaceStyle == .dark ? .black : .white
+            }
+        }
+
         var topicListBackgroundColor: UIColor {
             switch self {
             case .systemDefault:

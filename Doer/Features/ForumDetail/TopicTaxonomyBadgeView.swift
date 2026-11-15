@@ -8,42 +8,68 @@ final class TopicTaxonomyBadgeView: UIControl {
         var fontSize: CGFloat {
             switch self {
             case .compact: return 10
-            case .regular: return 13
+            case .regular: return 12.5
             }
         }
 
         var iconSize: CGFloat {
             switch self {
             case .compact: return 9
-            case .regular: return 13
+            case .regular: return 12
             }
         }
 
         var cornerRadius: CGFloat {
             switch self {
             case .compact: return 6
-            case .regular: return 9
+            // Regular chips are pills; the radius is derived from the laid-out height.
+            case .regular: return 999
             }
         }
+
+        var isPill: Bool { self == .regular }
 
         var contentInsets: NSDirectionalEdgeInsets {
             switch self {
             case .compact:
                 return NSDirectionalEdgeInsets(top: 3, leading: 8, bottom: 3, trailing: 8)
             case .regular:
-                return NSDirectionalEdgeInsets(top: 5, leading: 10, bottom: 5, trailing: 12)
+                return NSDirectionalEdgeInsets(top: 6, leading: 11, bottom: 6, trailing: 12)
+            }
+        }
+
+        var contentSpacing: CGFloat {
+            switch self {
+            case .compact: return 4
+            case .regular: return 5
             }
         }
 
         var maximumTextWidth: CGFloat {
             switch self {
             case .compact: return 96
-            case .regular: return 180
+            case .regular: return 190
+            }
+        }
+
+        /// Regular chips lead with a readable tint over a light color wash.
+        var fillAlpha: CGFloat {
+            switch self {
+            case .compact: return 0.10
+            case .regular: return 0.13
+            }
+        }
+
+        var borderAlpha: CGFloat {
+            switch self {
+            case .compact: return 0.18
+            case .regular: return 0.22
             }
         }
     }
 
     private let contentStack = UIStackView()
+    private var usesPillCorners = false
 
     init(
         category presentation: TopicCategoryBadgePresentation,
@@ -52,7 +78,9 @@ final class TopicTaxonomyBadgeView: UIControl {
         isInteractive: Bool = false
     ) {
         super.init(frame: .zero)
-        let fallbackColor = TopicTaxonomyColor.resolve(hex: presentation.colorHex) ?? .systemGray
+        // Categories without a server hue still get a stable, fresh tint (e.g. 运营反馈).
+        let fallbackColor = TopicTaxonomyColor.resolve(hex: presentation.colorHex)
+            ?? Self.derivedTaxonomyColor(for: presentation.name)
         let color = TopicTagVisualStyle.categoryColor(
             for: presentation.name,
             fallback: fallbackColor
@@ -64,7 +92,7 @@ final class TopicTaxonomyBadgeView: UIControl {
             isCategory: true,
             iconView: makeCategoryIconView(
                 source: presentation.iconSource,
-                color: color,
+                color: Self.readableLabelColor(color),
                 baseURL: baseURL,
                 variant: variant
             ),
@@ -85,7 +113,7 @@ final class TopicTaxonomyBadgeView: UIControl {
             ?? color
         let iconView = makeFontAwesomeIcon(
             name: tagPresentation?.iconName ?? "tag",
-            color: iconColor,
+            color: Self.readableLabelColor(iconColor),
             size: variant.iconSize
         )
         setup(
@@ -111,6 +139,13 @@ final class TopicTaxonomyBadgeView: UIControl {
         intrinsicContentSize
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if usesPillCorners {
+            layer.cornerRadius = bounds.height / 2
+        }
+    }
+
     private func setup(
         text: String,
         color: UIColor,
@@ -123,15 +158,18 @@ final class TopicTaxonomyBadgeView: UIControl {
         isUserInteractionEnabled = isInteractive
         accessibilityLabel = text
         accessibilityTraits = isInteractive ? .button : .staticText
-        backgroundColor = color.withAlphaComponent(isCategory ? 0.08 : 0.10)
+        backgroundColor = color.withAlphaComponent(
+            isCategory ? variant.fillAlpha * 0.85 : variant.fillAlpha
+        )
         layer.cornerRadius = variant.cornerRadius
+        usesPillCorners = variant.isPill
         layer.cornerCurve = .continuous
-        layer.borderColor = color.withAlphaComponent(isCategory ? 0.20 : 0.18).cgColor
+        layer.borderColor = color.withAlphaComponent(variant.borderAlpha).cgColor
         layer.borderWidth = 1
 
         contentStack.axis = .horizontal
         contentStack.alignment = .center
-        contentStack.spacing = 4
+        contentStack.spacing = variant.contentSpacing
         contentStack.isLayoutMarginsRelativeArrangement = true
         contentStack.directionalLayoutMargins = variant.contentInsets
         contentStack.isUserInteractionEnabled = false
@@ -144,10 +182,12 @@ final class TopicTaxonomyBadgeView: UIControl {
 
         let label = UILabel()
         label.text = text
-        label.font = Self.interfaceFont(ofSize: variant.fontSize, weight: .medium)
+        label.font = variant == .regular
+            ? TopicDetailTypography.chromeFont(.taxonomyChip, weight: .medium)
+            : Self.interfaceFont(ofSize: variant.fontSize, weight: .medium)
         label.textColor = isCategory && variant == .compact && AppSettings.shared.themeStyle == .systemDefault
             ? .label
-            : color
+            : Self.readableLabelColor(color)
         label.lineBreakMode = .byTruncatingTail
         label.isUserInteractionEnabled = false
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -248,6 +288,34 @@ final class TopicTaxonomyBadgeView: UIControl {
         }
         guard let base = URL(string: baseURL) else { return URL(string: trimmed) }
         return URL(string: trimmed, relativeTo: base)?.absoluteURL
+    }
+
+    /// Deterministic palette hue for taxonomies the server shipped without a color.
+    private static func derivedTaxonomyColor(for name: String) -> UIColor {
+        guard AppSettings.shared.themeTaxonomyColorsEnabled else { return .systemGray }
+        return AppSettings.shared.themeStyle.topicTagColor(for: name)
+    }
+
+    /// Chip tint lifted toward the label color so 12.5pt text keeps ~4.5:1 on the wash.
+    private static func readableLabelColor(_ color: UIColor) -> UIColor {
+        UIColor { trait in
+            var red: CGFloat = 0
+            var green: CGFloat = 0
+            var blue: CGFloat = 0
+            var alpha: CGFloat = 0
+            guard color.resolvedColor(with: trait).getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+                return color
+            }
+            let isDark = trait.userInterfaceStyle == .dark
+            let amount: CGFloat = isDark ? 0.22 : 0.16
+            let target: CGFloat = isDark ? 1 : 0
+            return UIColor(
+                red: red + (target - red) * amount,
+                green: green + (target - green) * amount,
+                blue: blue + (target - blue) * amount,
+                alpha: alpha
+            )
+        }
     }
 
     private static func interfaceFont(ofSize pointSize: CGFloat, weight: UIFont.Weight) -> UIFont {

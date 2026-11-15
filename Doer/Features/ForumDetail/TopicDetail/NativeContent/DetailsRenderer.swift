@@ -33,8 +33,8 @@ private class DetailsCardView: UIView {
         self.delegate = delegate
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        // FluxDo-style card shell: muted fill + hairline border; expands in place.
-        backgroundColor = TopicDetailContentStyle.warmMutedBackground.withAlphaComponent(0.35)
+        // Neutral disclosure inset: same gray as quotes and code; expands in place.
+        backgroundColor = TopicDetailContentStyle.neutralInsetBackground
         layer.cornerRadius = 12
         layer.cornerCurve = .continuous
         layer.borderWidth = 1.0 / UIScreen.main.scale

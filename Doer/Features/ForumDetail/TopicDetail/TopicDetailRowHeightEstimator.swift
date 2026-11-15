@@ -4,10 +4,10 @@ import UIKit
 /// Cheap off-main-thread-safe height guess for Diffable `estimatedHeightForRowAt`.
 /// Prefers stability over accuracy — real heights still come from cell layout + cache.
 enum TopicDetailRowHeightEstimator {
-    /// Card chrome: avatar header + action bar + padding (reply card).
-    private static let replyChrome: CGFloat = 108
-    /// First post has no outer card inset but often a taller body.
-    private static let firstPostChrome: CGFloat = 96
+    /// Flat stream chrome: header inset + avatar + action rail + divider gap.
+    private static let replyChrome: CGFloat = 124
+    /// First post sits closer to the topic header and often carries a taller body.
+    private static let firstPostChrome: CGFloat = 108
 
     static func estimate(
         blocks: [AnnotatedBlock],

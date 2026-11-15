@@ -31,6 +31,7 @@ enum ListRenderer: BlockRenderer {
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineSpacing = config.defaultLineSpacing
         paragraphStyle.paragraphSpacing = config.defaultParagraphSpacing
+        paragraphStyle.minimumLineHeight = config.minimumTextLineHeight
         let firstNumber = max(start, 1)
 
         if ordered {

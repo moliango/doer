@@ -97,6 +97,19 @@ struct NativeRenderConfig {
         )
     }
 
+    /// Line-box floor for body text.
+    ///
+    /// Compact CJK fonts (MiSans, HarmonyOS Sans, most imported fonts) report a
+    /// line height of roughly 1.0em, so consecutive lines of a paragraph touch and
+    /// the block reads as if the text were squeezed in. The system font sits near
+    /// 1.37em; hold every paragraph to the design's ~1.45em reading rhythm and let
+    /// `lineSpacing` add the rest on top.
+    var minimumTextLineHeight: CGFloat {
+        ceil(max(baseFont.lineHeight, baseFont.pointSize * Self.minimumLineHeightRatio))
+    }
+
+    private static let minimumLineHeightRatio: CGFloat = 1.45
+
     func styledAttributedString(
         from inlines: [InlineNode],
         lineSpacing: CGFloat? = nil,
@@ -113,6 +126,7 @@ struct NativeRenderConfig {
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineSpacing = lineSpacing
         paragraphStyle.paragraphSpacing = paragraphSpacing
+        paragraphStyle.minimumLineHeight = minimumTextLineHeight
         result.addAttribute(
             .paragraphStyle,
             value: paragraphStyle,
@@ -281,15 +295,30 @@ enum TopicDetailContentStyle {
         AppSettings.shared.themeStyle.mutedContentBackgroundColor
     }
 
-    static var warmMutedBackground: UIColor {
+    /// Boost / metadata pills: flat light-gray chip on the grouped page (not an elevated card).
+    static var chipSurface: UIColor {
         let style = AppSettings.shared.themeStyle
         if style != .systemDefault {
             return style.mutedContentBackgroundColor
         }
         return UIColor { trait in
             trait.userInterfaceStyle == .dark
-                ? UIColor.tertiarySystemGroupedBackground
-                : UIColor(red: 1.0, green: 0.98, blue: 0.94, alpha: 1)
+                ? UIColor(red: 0.11, green: 0.11, blue: 0.12, alpha: 1)
+                : UIColor(red: 0.91, green: 0.92, blue: 0.94, alpha: 1)
+        }
+    }
+
+    /// Quotes and code share one neutral inset surface — no accent hue, no side bar.
+    static var neutralInsetBackground: UIColor {
+        let style = AppSettings.shared.themeStyle
+        if style != .systemDefault {
+            return style.mutedContentBackgroundColor
+        }
+        // Design tokens: #E7E9EF on the light grouped page, #2C2C2E on black.
+        return UIColor { trait in
+            trait.userInterfaceStyle == .dark
+                ? UIColor(red: 0.173, green: 0.173, blue: 0.180, alpha: 1)
+                : UIColor(red: 0.906, green: 0.914, blue: 0.937, alpha: 1)
         }
     }
 
