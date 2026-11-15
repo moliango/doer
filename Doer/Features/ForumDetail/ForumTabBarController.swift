@@ -353,21 +353,21 @@ final class ForumTabBarController: UITabBarController {
 
     private var shouldHideTabBarForCurrentContent: Bool {
         guard let navigationController = selectedViewController as? UINavigationController,
-              let visibleViewController = navigationController.visibleViewController
+              let topViewController = navigationController.topViewController
         else {
             return false
         }
-        if let browser = visibleViewController as? InAppBrowserViewController,
+        if let browser = topViewController as? InAppBrowserViewController,
            browser.hidesHostTabBarAtRoot {
             return true
         }
-        guard visibleViewController !== navigationController.viewControllers.first else { return false }
-        return visibleViewController.hidesBottomBarWhenPushed
+        guard topViewController !== navigationController.viewControllers.first else { return false }
+        return topViewController.hidesBottomBarWhenPushed
     }
 
     private var shouldExpandContentForHiddenRootTabBar: Bool {
         guard let navigationController = selectedViewController as? UINavigationController,
-              let browser = navigationController.visibleViewController as? InAppBrowserViewController
+              let browser = navigationController.topViewController as? InAppBrowserViewController
         else { return false }
         return browser.hidesHostTabBarAtRoot
     }

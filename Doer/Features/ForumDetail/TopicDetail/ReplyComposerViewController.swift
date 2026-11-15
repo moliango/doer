@@ -58,6 +58,9 @@ final class ReplyComposerViewController: UIViewController {
 
     private let closeButton = ComposerToolbarFactory.makeCloseIconButton()
 
+    /// Edit-mode only: entry to the post's revision history.
+    private let historyButton = ComposerToolbarFactory.makeHistoryIconButton()
+
     private let headerTitleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -98,7 +101,7 @@ final class ReplyComposerViewController: UIViewController {
     }()
 
     private lazy var headerActionsStack: UIStackView = {
-        let stack = UIStackView(arrangedSubviews: [closeButton, sendButton])
+        let stack = UIStackView(arrangedSubviews: [closeButton, historyButton, sendButton])
         stack.axis = .horizontal
         stack.alignment = .center
         stack.spacing = 2
@@ -401,6 +404,7 @@ final class ReplyComposerViewController: UIViewController {
 
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         sendButton.addTarget(self, action: #selector(sendTapped), for: .touchUpInside)
+        historyButton.addTarget(self, action: #selector(historyTapped), for: .touchUpInside)
         emojiToggleButton.addTarget(self, action: #selector(toggleEmojiPicker), for: .touchUpInside)
         encryptToolbarButton.addTarget(self, action: #selector(encryptToolbarTapped), for: .touchUpInside)
         previewToggleButton.addTarget(self, action: #selector(toggleMarkdownPreview), for: .touchUpInside)
@@ -1119,6 +1123,7 @@ final class ReplyComposerViewController: UIViewController {
     private func configureHeaderCopy() {
         switch submissionMode {
         case .reply:
+            historyButton.isHidden = true
             if let username = replyToPost?.username, !username.isEmpty {
                 headerTitleLabel.text = String(localized: "reply.title", defaultValue: "回复")
                 headerSubtitleLabel.text = "@\(username)"
@@ -1129,11 +1134,20 @@ final class ReplyComposerViewController: UIViewController {
                 headerSubtitleLabel.isHidden = true
             }
         case .edit:
+            historyButton.isHidden = false
             headerTitleLabel.text = String(localized: "post.edit.title", defaultValue: "编辑评论")
             headerSubtitleLabel.text = nil
             headerSubtitleLabel.isHidden = true
             sendButton.accessibilityLabel = String(localized: "common.save")
         }
+    }
+
+    @objc private func historyTapped() {
+        guard case let .edit(postId) = submissionMode else { return }
+        // Present from the composer: the host screen sits behind this sheet, so a
+        // presentation from there would not land on top of it.
+        let controller = PostRevisionViewController(api: api, postId: postId)
+        present(UINavigationController(rootViewController: controller), animated: true)
     }
 
     private func configureCloseMenu() {

@@ -342,6 +342,20 @@ enum ComposerToolbarFactory {
         )
     }
 
+    static func makeHistoryIconButton(
+        accessibilityLabel: String = String(localized: "revision.show_history", defaultValue: "查看编辑历史")
+    ) -> UIButton {
+        ComposerChromeIconButton(
+            systemName: "clock.arrow.circlepath",
+            pointSize: 17,
+            weight: .medium,
+            filled: false,
+            tint: .secondaryLabel,
+            size: 44,
+            accessibilityLabel: accessibilityLabel
+        )
+    }
+
     static func makeCircleButton(systemName: String, accessibilityLabel: String) -> UIButton {
         let button = makePlainButton(systemName: systemName, accessibilityLabel: accessibilityLabel, pointSize: 19, weight: .regular)
         button.backgroundColor = ComposerTypography.mutedFill

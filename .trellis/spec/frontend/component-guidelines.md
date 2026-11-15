@@ -99,6 +99,7 @@ Questions to answer:
 - Pushed pages such as `TopicDetailViewController` own their bottom-bar visibility through UIKit's native `hidesBottomBarWhenPushed`; do not apply Home scroll-hide expansion or negative `additionalSafeAreaInsets` compensation while such pages are visible.
 - Home scroll-hide may expand the selected root navigation content into the tab-bar area, but it must not mutate child view controllers' `additionalSafeAreaInsets.bottom` to remove the tab bar. Negative safe-area compensation can leave the system bottom safe-area host visible after a Topic Detail pop.
 - When a navigation transition finishes, `ForumTabBarController` should re-apply the current tab-bar layout from the visible controller state so a popped Home view does not keep the transition container's shorter frame.
+- Decide tab-bar visibility from the navigation stack top (`navigationController.topViewController`), never `visibleViewController`: `visibleViewController` returns a modally-presented controller when the top VC has presented one. Presenting a `.pageSheet` (e.g. the reply composer, whose `hidesBottomBarWhenPushed` is `false`) from Topic Detail would otherwise make `shouldHideTabBarForCurrentContent` flip to `false` and drag the tab bar back on screen — and it stays there after the sheet is dismissed, since sheet dismissal sends no `viewDidAppear`/`didShow` to re-hide it.
 
 ### Topic Detail Image Loading
 

@@ -83,16 +83,17 @@ final class TopicMoreMenuViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = menuCanvas
+        view.backgroundColor = .clear
+        let canvas = installGlassCanvas()
 
         let header = makeHeader()
-        view.addSubview(header)
+        canvas.addSubview(header)
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.alwaysBounceVertical = true
         scrollView.showsVerticalScrollIndicator = false
         scrollView.contentInset = UIEdgeInsets(top: 4, left: 0, bottom: 12, right: 0)
-        view.addSubview(scrollView)
+        canvas.addSubview(scrollView)
 
         stack.axis = .vertical
         stack.spacing = 0
@@ -256,6 +257,43 @@ final class TopicMoreMenuViewController: UIViewController {
         rebuild()
     }
 
+    /// Clear sheet glass, with the rows themselves as separate glass lenses.
+    private func installGlassCanvas() -> UIView {
+        guard #available(iOS 26.0, *) else { return view }
+        let containerEffect = UIGlassContainerEffect()
+        containerEffect.spacing = 16
+        let container = UIVisualEffectView(effect: containerEffect)
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.backgroundColor = .clear
+        view.addSubview(container)
+        NSLayoutConstraint.activate([
+            container.topAnchor.constraint(equalTo: view.topAnchor),
+            container.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            container.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        return container.contentView
+    }
+
+    private func makeGlassDisc(diameter: CGFloat, tint: UIColor?, interactive: Bool) -> UIVisualEffectView {
+        let effect: UIVisualEffect
+        if #available(iOS 26.0, *) {
+            let glass = UIGlassEffect(style: .regular)
+            glass.isInteractive = interactive
+            glass.tintColor = tint
+            effect = glass
+        } else {
+            effect = UIBlurEffect(style: .systemThinMaterial)
+        }
+        let disc = UIVisualEffectView(effect: effect)
+        disc.translatesAutoresizingMaskIntoConstraints = false
+        disc.isUserInteractionEnabled = false
+        disc.clipsToBounds = true
+        disc.layer.cornerRadius = diameter / 2
+        disc.layer.cornerCurve = .continuous
+        return disc
+    }
+
     // MARK: - Header
 
     private func makeHeader() -> UIView {
@@ -278,12 +316,7 @@ final class TopicMoreMenuViewController: UIViewController {
             self?.dismiss(animated: true)
         }, for: .touchUpInside)
 
-        let closePlate = UIView()
-        closePlate.translatesAutoresizingMaskIntoConstraints = false
-        closePlate.isUserInteractionEnabled = false
-        closePlate.backgroundColor = UIColor.tertiarySystemFill
-        closePlate.layer.cornerRadius = 14
-        closePlate.layer.cornerCurve = .continuous
+        let closePlate = makeGlassDisc(diameter: 30, tint: nil, interactive: true)
 
         header.addSubview(title)
         header.addSubview(close)
@@ -404,19 +437,18 @@ final class TopicMoreMenuViewController: UIViewController {
         button.accessibilityLabel = accessibilityLabel
         button.addAction(UIAction { _ in handler() }, for: .touchUpInside)
 
-        let well = UIView()
-        well.translatesAutoresizingMaskIntoConstraints = false
-        well.isUserInteractionEnabled = false
-        well.backgroundColor = active ? accent.withAlphaComponent(0.16) : UIColor.tertiarySystemFill
-        well.layer.cornerRadius = 16
-        well.layer.cornerCurve = .continuous
+        let well = makeGlassDisc(
+            diameter: 48,
+            tint: active ? accent.withAlphaComponent(0.45) : nil,
+            interactive: true
+        )
 
         let icon = UIImageView(image: UIImage(systemName: symbol))
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.tintColor = active ? accent : .label
         icon.contentMode = .scaleAspectFit
         icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
-        well.addSubview(icon)
+        well.contentView.addSubview(icon)
 
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -437,8 +469,8 @@ final class TopicMoreMenuViewController: UIViewController {
             well.centerXAnchor.constraint(equalTo: button.centerXAnchor),
             well.widthAnchor.constraint(equalToConstant: 48),
             well.heightAnchor.constraint(equalToConstant: 48),
-            icon.centerXAnchor.constraint(equalTo: well.centerXAnchor),
-            icon.centerYAnchor.constraint(equalTo: well.centerYAnchor),
+            icon.centerXAnchor.constraint(equalTo: well.contentView.centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: well.contentView.centerYAnchor),
             label.topAnchor.constraint(equalTo: well.bottomAnchor, constant: 6),
             label.leadingAnchor.constraint(equalTo: button.leadingAnchor),
             label.trailingAnchor.constraint(equalTo: button.trailingAnchor),
@@ -466,19 +498,27 @@ final class TopicMoreMenuViewController: UIViewController {
     }
 
     private func wrapInCard(_ content: UIView) -> UIView {
-        let card = UIView()
+        let effect: UIVisualEffect
+        if #available(iOS 26.0, *) {
+            let glass = UIGlassEffect(style: .regular)
+            glass.isInteractive = true
+            effect = glass
+        } else {
+            effect = UIBlurEffect(style: .systemThinMaterial)
+        }
+        let card = UIVisualEffectView(effect: effect)
         card.translatesAutoresizingMaskIntoConstraints = false
-        card.backgroundColor = menuSurface
-        card.layer.cornerRadius = 16
+        card.backgroundColor = .clear
+        card.layer.cornerRadius = 22
         card.layer.cornerCurve = .continuous
         card.clipsToBounds = true
         content.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(content)
+        card.contentView.addSubview(content)
         NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: card.topAnchor),
-            content.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            content.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            content.topAnchor.constraint(equalTo: card.contentView.topAnchor),
+            content.leadingAnchor.constraint(equalTo: card.contentView.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: card.contentView.trailingAnchor),
+            content.bottomAnchor.constraint(equalTo: card.contentView.bottomAnchor),
         ])
         return card
     }
@@ -502,7 +542,7 @@ final class TopicMoreMenuViewController: UIViewController {
         wrap.translatesAutoresizingMaskIntoConstraints = false
         let line = UIView()
         line.translatesAutoresizingMaskIntoConstraints = false
-        line.backgroundColor = UIColor.separator.withAlphaComponent(0.45)
+        line.backgroundColor = UIColor.white.withAlphaComponent(0.22)
         wrap.addSubview(line)
         NSLayoutConstraint.activate([
             wrap.heightAnchor.constraint(equalToConstant: 1.0 / UIScreen.main.scale),
@@ -599,24 +639,18 @@ final class TopicMoreMenuViewController: UIViewController {
     }
 
     private func makeIconWell(symbol: String, tint: UIColor) -> UIView {
-        let well = UIView()
-        well.translatesAutoresizingMaskIntoConstraints = false
-        well.isUserInteractionEnabled = false
-        well.backgroundColor = tint.withAlphaComponent(0.12)
-        well.layer.cornerRadius = 8
-        well.layer.cornerCurve = .continuous
-
+        let well = makeGlassDisc(diameter: 32, tint: tint.withAlphaComponent(0.28), interactive: false)
         let icon = UIImageView(image: UIImage(systemName: symbol))
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.tintColor = tint
         icon.contentMode = .scaleAspectFit
-        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
-        well.addSubview(icon)
+        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+        well.contentView.addSubview(icon)
         NSLayoutConstraint.activate([
-            well.widthAnchor.constraint(equalToConstant: 28),
-            well.heightAnchor.constraint(equalToConstant: 28),
-            icon.centerXAnchor.constraint(equalTo: well.centerXAnchor),
-            icon.centerYAnchor.constraint(equalTo: well.centerYAnchor),
+            well.widthAnchor.constraint(equalToConstant: 32),
+            well.heightAnchor.constraint(equalToConstant: 32),
+            icon.centerXAnchor.constraint(equalTo: well.contentView.centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: well.contentView.centerYAnchor),
         ])
         return well
     }
@@ -923,15 +957,25 @@ enum TopicMoreMenuPresenter {
                     sheet.selectedDetentIdentifier = .medium
                 }
                 sheet.prefersGrabberVisible = true
-                sheet.preferredCornerRadius = 22
+                sheet.preferredCornerRadius = 28
                 sheet.prefersScrollingExpandsWhenScrolledToEdge = true
+                if #available(iOS 26.1, *) {
+                    // `.clear` left the sheet fully transparent and the cards floated on
+                    // raw content behind; `.regular` keeps the glass look but adds the
+                    // frosted backdrop the panel needs to read as a surface.
+                    let glass = UIGlassEffect(style: .regular)
+                    sheet.backgroundEffect = glass
+                    for detent in sheet.detents {
+                        detent.backgroundEffect = glass
+                    }
+                }
             }
         } else if let pop = menu.popoverPresentationController {
             menu.modalPresentationStyle = .popover
             pop.barButtonItem = barButtonItem
             pop.permittedArrowDirections = [.up]
             pop.delegate = PassthroughPopoverDelegate.shared
-            pop.backgroundColor = AppSettings.shared.themeStyle.topicListBackgroundColor
+            pop.backgroundColor = .clear
         }
         host.present(menu, animated: true)
     }
