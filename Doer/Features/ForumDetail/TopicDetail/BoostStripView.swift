@@ -40,6 +40,12 @@ final class BoostStripView: UIView {
     private let postNumber: Int
     /// Slightly stronger fill for WeChat green bubbles so chips stay readable.
     private let prefersHighContrast: Bool
+    /// Flat chip gray from the reading-surface palette (matches avatar borders).
+    private var bubbleBackground: UIColor {
+        prefersHighContrast
+            ? UIColor.secondarySystemGroupedBackground.withAlphaComponent(0.95)
+            : TopicDetailContentStyle.chipSurface
+    }
     private var emojiUpdateObserver: NSObjectProtocol?
     /// Bubble containers by group index — title stack is subview tagged for refresh.
     private var bubbleContainers: [Int: UIView] = [:]
@@ -129,9 +135,7 @@ final class BoostStripView: UIView {
     private func makeBubble(for group: Group, index: Int) -> UIView {
         let container = UIControl()
         container.tag = index
-        container.backgroundColor = prefersHighContrast
-            ? UIColor.secondarySystemGroupedBackground.withAlphaComponent(0.95)
-            : AppSettings.shared.themeStyle.topicChipBackgroundColor
+        container.backgroundColor = bubbleBackground
         container.layer.cornerRadius = BoostChipLayout.bubbleHeight / 2
         container.layer.cornerCurve = .continuous
         container.translatesAutoresizingMaskIntoConstraints = false
@@ -235,8 +239,8 @@ final class BoostStripView: UIView {
             avatarView.contentMode = .scaleAspectFill
             avatarView.clipsToBounds = true
             avatarView.layer.cornerRadius = BoostChipLayout.avatarSize / 2
-            avatarView.layer.borderWidth = 1.5
-            avatarView.layer.borderColor = UIColor.systemBackground.cgColor
+            avatarView.layer.borderWidth = 2
+            avatarView.layer.borderColor = bubbleBackground.cgColor
             avatarView.backgroundColor = .secondarySystemFill
             avatarView.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(avatarView)

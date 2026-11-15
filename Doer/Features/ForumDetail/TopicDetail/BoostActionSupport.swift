@@ -3,18 +3,19 @@ import UIKit
 /// FluxDo `boost_list` chip sizing: measure the real title/count so the bubble
 /// expands to the text instead of clipping the label or count badge.
 enum BoostChipLayout {
-    static let bubbleHeight: CGFloat = 32
-    static let stripHeight: CGFloat = 40
+    static let bubbleHeight: CGFloat = 38
+    static let stripHeight: CGFloat = 46
     static let avatarSize: CGFloat = 22
-    static let avatarOverlap: CGFloat = 14
+    /// Horizontal step between stacked avatars (22pt avatar → 13pt step = 9pt overlap).
+    static let avatarOverlap: CGFloat = 13
     static let emojiSize: CGFloat = 18
-    static let singleTextMaxWidth: CGFloat = 240
-    static let groupedTextMaxWidth: CGFloat = 200
+    static let singleTextMaxWidth: CGFloat = 236
+    static let groupedTextMaxWidth: CGFloat = 196
     static let chevronWidth: CGFloat = 0
-    static let leadingPadding: CGFloat = 5
-    static let trailingPadding: CGFloat = 10
-    static let avatarTextSpacing: CGFloat = 6
-    static let textCountSpacing: CGFloat = 6
+    static let leadingPadding: CGFloat = 6
+    static let trailingPadding: CGFloat = 14
+    static let avatarTextSpacing: CGFloat = 9
+    static let textCountSpacing: CGFloat = 8
     static let countChevronSpacing: CGFloat = 0
     static let textChevronSpacing: CGFloat = 0
     static let countHorizontalPadding: CGFloat = 2
