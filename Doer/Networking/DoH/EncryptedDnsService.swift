@@ -47,9 +47,20 @@ nonisolated enum EncryptedDnsService {
 
     private static let applyLock = NSLock()
     private static var lastApplied: ResolverSpec?
+    /// 上一次验证通过的 spec。新服务器探不通时回退到它。
+    private static var lastVerified: ResolverSpec?
     private static var lastLiveSystemIPs: [String] = []
     private static var encryptedResolutionEnabled = false
+    private static let checkQueue = DispatchQueue(
+        label: "doer.encrypted-dns.bootstrap-check",
+        attributes: .concurrent
+    )
 
+    /// 装上一份 resolver。
+    ///
+    /// 换 provider 时**先探活再交出去**：`requireEncryptedNameResolution(true)` 会把整个进程的
+    /// 解析都交给这台 DoH，交给一台连不上的（Google / Quad9 / Cloudflare 在国内就是这种）
+    /// 等于让整个 App 断网。探不通就回退到上一次验证通过的，再不行退回系统 DNS。
     static func apply(_ spec: ResolverSpec) {
         applyLock.lock()
         let alreadyEncrypted = encryptedResolutionEnabled
@@ -80,15 +91,39 @@ nonisolated enum EncryptedDnsService {
             return
         }
         let normalized = ResolverSpec(url: spec.url, bootstrapIPs: ips)
+
         applyLock.lock()
-        let alreadyApplied = lastApplied == normalized
-        lastApplied = normalized
+        let unchanged = lastApplied == normalized
+        applyLock.unlock()
+        if unchanged {
+            commit(normalized)
+            return
+        }
+
+        checkQueue.async {
+            guard hasReachableBootstrap(ips) else {
+                DohDebugLog.record(
+                    "Encrypted DNS 拒绝启用 \(normalized.url.host ?? "?"): bootstrap \(ips.joined(separator: ",")) 都连不上"
+                )
+                fallBackOrDisable()
+                return
+            }
+            commit(normalized)
+        }
+    }
+
+    /// 真正把 resolver 交给 Network.framework。调用方已确认这台服务器可用。
+    private static func commit(_ spec: ResolverSpec) {
+        applyLock.lock()
+        let alreadyApplied = lastApplied == spec
+        lastApplied = spec
+        lastVerified = spec
         encryptedResolutionEnabled = true
         applyLock.unlock()
         DohBootstrapTransport.skipSystemAddressLookup = true
-        let endpoints = bootstrapEndpoints(ips)
+        let endpoints = bootstrapEndpoints(spec.bootstrapIPs)
         let resolver = NWParameters.PrivacyContext.ResolverConfiguration.https(
-            normalized.url,
+            spec.url,
             serverAddresses: endpoints
         )
         NWParameters.PrivacyContext.default.requireEncryptedNameResolution(
@@ -99,8 +134,67 @@ nonisolated enum EncryptedDnsService {
             NWParameters.PrivacyContext.default.flushCache()
         }
         DohDebugLog.record(
-            "Encrypted DNS on \(normalized.url.absoluteString) bootstrap=\(ips.joined(separator: ","))"
+            "Encrypted DNS on \(spec.url.absoluteString) bootstrap=\(spec.bootstrapIPs.joined(separator: ","))"
         )
+    }
+
+    /// 新服务器不可用时回退到上一次验证通过的；没有就退回系统 DNS。
+    /// 无论哪条路，都不会留一个连不上的 resolver。
+    private static func fallBackOrDisable() {
+        applyLock.lock()
+        let fallback = lastVerified
+        let current = lastApplied
+        applyLock.unlock()
+        guard let fallback, fallback != current else {
+            DohDebugLog.record("Encrypted DNS 无可用回退，退回系统 DNS")
+            disable()
+            return
+        }
+        DohDebugLog.record("Encrypted DNS 回退到上一次可用的 \(fallback.url.host ?? "?")")
+        commit(fallback)
+    }
+
+    /// bootstrap IP 里至少有一个能在预算内连上 443。
+    private static func hasReachableBootstrap(_ ips: [String], timeout: TimeInterval = 1.2) -> Bool {
+        let candidates = ips.prefix(4).compactMap { ip -> NWEndpoint.Host? in
+            if let v4 = IPv4Address(ip) { return .ipv4(v4) }
+            if let v6 = IPv6Address(ip) { return .ipv6(v6) }
+            return nil
+        }
+        guard !candidates.isEmpty else { return false }
+
+        let lock = NSLock()
+        var reachable = false
+        let group = DispatchGroup()
+        for host in candidates {
+            group.enter()
+            var settled = false
+            let connection = NWConnection(host: host, port: 443, using: .tcp)
+            let settle: (Bool) -> Void = { ok in
+                lock.lock()
+                let first = !settled
+                settled = true
+                if ok { reachable = true }
+                lock.unlock()
+                guard first else { return }
+                connection.cancel()
+                group.leave()
+            }
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready: settle(true)
+                case .failed, .cancelled: settle(false)
+                default: break
+                }
+            }
+            connection.start(queue: checkQueue)
+            checkQueue.asyncAfter(deadline: .now() + timeout) { settle(false) }
+        }
+        _ = group.wait(timeout: .now() + timeout + 0.3)
+        lock.lock()
+        let result = reachable
+        lock.unlock()
+        return result
     }
 
     /// Force-apply after foreground / path restore. `apply` skips flush when

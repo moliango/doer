@@ -49,6 +49,17 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         ) -> Bool {
             enabled && !useGateway && port != nil
         }
+
+        /// 「连接方式」→ 是否走本地 CONNECT + ECH。
+        ///
+        /// 运行时回退过就不再自动切回来，否则每次 reapply 都会把刚回退掉的那条路又打开。
+        static func shouldEnableOriginECH(
+            enabled: Bool,
+            mode: AppSettings.DohConnectionMode,
+            runtimeEscaped: Bool
+        ) -> Bool {
+            enabled && mode == .localECH && !runtimeEscaped
+        }
     }
 
     var currentSignature: String {
@@ -60,6 +71,22 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     }
 
     var statusDescription: String {
+        let base = baseStatusDescription
+        guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return base }
+        return base + preferredNodeSuffix
+    }
+
+    private var preferredNodeSuffix: String {
+        guard AppSettings.preferredNodeEnabled(from: .standard),
+              AppSettings.preferredNodeMode(from: .standard) != .off
+        else { return "" }
+        // Encrypted DNS 那条路没有东西消费钉选，别谎报已生效。
+        guard LocalConnectProxy.originECHReady else { return " · 优选待生效" }
+        guard let node = PreferredNodeStore.shared.node else { return " · 优选 未选" }
+        return " · 优选 \(node.ip) \(node.latencyMs)ms"
+    }
+
+    private var baseStatusDescription: String {
         guard UserDefaults.standard.bool(forKey: "dohEnabled") else {
             return "未启用"
         }
@@ -94,6 +121,7 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     }
 
     func configureFromSettings() {
+        applyConnectionMode()
         lock.lock()
         let signature = currentSignature
         let shouldEnable = UserDefaults.standard.bool(forKey: "dohEnabled")
@@ -112,6 +140,10 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         configurationVersion += 1
         isStartingProxy = true
         lock.unlock()
+
+        if shouldEnable {
+            syncPreferredNode()
+        }
 
         startQueue.async { [weak self] in
             self?.applyConfiguration(shouldEnable: shouldEnable, generation: generation)
@@ -158,6 +190,66 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         DohDebugLog.record("DoH recovering after network path change")
         clearCache()
         ensureProxyAlive()
+        PreferredNodeSelector.shared.reselect(trigger: .networkChange)
+    }
+
+    // MARK: - Cloudflare 本地优选
+
+    /// 「连接方式」决定 URLSession 走 Encrypted DNS 还是本地 CONNECT + ECH。
+    ///
+    /// 运行时回退过（WebView 过盾后）就不再自动切回来，否则每次 reapply 都会把
+    /// 刚回退掉的那条路又打开。
+    private func applyConnectionMode() {
+        let mode = AppSettings.dohConnectionMode(from: .standard)
+        let enabled = UserDefaults.standard.bool(forKey: "dohEnabled")
+        let ready = DohProxyLiveness.shouldEnableOriginECH(
+            enabled: enabled,
+            mode: mode,
+            runtimeEscaped: LocalConnectProxy.runtimeECHEscaped
+        )
+        guard LocalConnectProxy.originECHReady != ready else { return }
+        LocalConnectProxy.originECHReady = ready
+        DohDebugLog.record(
+            "连接方式 -> \(ready ? "本地 CONNECT + ECH" : "Encrypted DNS")"
+                + (enabled && mode == .localECH && !ready ? "（运行时已回退）" : "")
+        )
+    }
+
+    /// 用户重新选连接方式：清掉运行时回退标记并重新应用。
+    /// 设置本身由调用方写入 `AppSettings`。
+    func clearRuntimeECHEscapeAndReapply() {
+        LocalConnectProxy.runtimeECHEscaped = false
+        forceReapplyFromSettings()
+    }
+
+    /// 优选只在 DoH 开着且模式不是「关闭」时有意义；关掉时清掉赢家，回到普通 DoH 解析。
+    func syncPreferredNode() {
+        guard UserDefaults.standard.bool(forKey: "dohEnabled"),
+              AppSettings.preferredNodeEnabled(from: .standard),
+              AppSettings.preferredNodeMode(from: .standard) != .off
+        else {
+            if PreferredNodeStore.shared.node != nil {
+                DohDebugLog.record("优选关闭，清除钉住", subsystem: "优选")
+                PreferredNodeStore.shared.clear()
+            }
+            return
+        }
+        PreferredNodeSelector.shared.start()
+        // 冷启动没有赢家时先跑一轮，别让 linux.do 落在被投毒的解析结果上。
+        guard PreferredNodeStore.shared.node == nil else { return }
+        PreferredNodeSelector.shared.reselect(trigger: .manual)
+    }
+
+    /// 设置页「重新优选」。`completion` 在主线程回调。
+    func reselectPreferredNode(completion: ((PreferredNode?) -> Void)? = nil) {
+        guard UserDefaults.standard.bool(forKey: "dohEnabled"),
+              AppSettings.preferredNodeEnabled(from: .standard),
+              AppSettings.preferredNodeMode(from: .standard) != .off
+        else {
+            completion?(nil)
+            return
+        }
+        PreferredNodeSelector.shared.reselect(trigger: .manual, completion: completion)
     }
 
     private func applyConfiguration(shouldEnable: Bool, generation: Int) {
@@ -527,6 +619,34 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
                 DohDebugLog.record("WKWebView default store using CONNECT \(mode) 127.0.0.1:\(port)")
             } else {
                 WKWebsiteDataStore.default().proxyConfigurations = []
+            }
+        }
+        if Thread.isMainThread {
+            apply()
+        } else {
+            DispatchQueue.main.async(execute: apply)
+        }
+    }
+
+    /// Each `WKWebsiteDataStore` carries its own `proxyConfigurations`; an
+    /// ephemeral store does not inherit `.default()`. The challenge WebViews use
+    /// private stores, so without this they would fall back to system DNS while
+    /// DoH is on and fail to load the challenge page at all.
+    func applyWebViewProxy(to dataStore: WKWebsiteDataStore) {
+        guard #available(iOS 17.0, *) else { return }
+        let enabled = UserDefaults.standard.bool(forKey: "dohEnabled")
+        lock.lock()
+        let port = (enabled && proxy?.isRunning == true) ? proxy?.proxyPort : nil
+        lock.unlock()
+        let apply = {
+            if let port, let proxy = Self.connectProxyConfiguration(port: port) {
+                dataStore.proxyConfigurations = [proxy]
+                DohDebugLog.record(
+                    "WKWebView private store using CONNECT 127.0.0.1:\(port)",
+                    subsystem: "Auth"
+                )
+            } else {
+                dataStore.proxyConfigurations = []
             }
         }
         if Thread.isMainThread {

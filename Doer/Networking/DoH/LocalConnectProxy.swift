@@ -292,6 +292,25 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         }
 
         let useMITM = Self.shouldMITM(host)
+
+        // 优选赢家 + 随赢家落盘的 ECH 钥匙：直接连，连 linux.do 的 DNS 都不查。
+        if let pinned = PreferredNodeStore.shared.pinnedAddress(forHost: host),
+           let ech = PreferredNodeStore.shared.node?.echConfig, !ech.isEmpty {
+            DohDebugLog.record("优选直连 \(host) -> \(pinned)（不查 DNS）", subsystem: "优选")
+            connectUpstream(
+                addresses: [pinned],
+                port: upstreamPort,
+                addressIndex: 0,
+                client: client,
+                bufferedClientData: bufferedClientData,
+                hostname: host,
+                readyReply: readyReply,
+                useMITM: useMITM,
+                echConfig: ech
+            )
+            return
+        }
+
         resolver.resolve(host: host) { [weak self, weak client] result in
             guard let self, let client else { return }
             self.queue.async {
@@ -300,10 +319,17 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                     DohDebugLog.record("Resolve failed for \(host): \(error.localizedDescription)")
                     self.reject(client, reason: "resolve failed", socks: readyReply == Socks5Handshake.connectOK)
                 case .success(let answer):
-                    let addresses = self.rotatedAddresses(
-                        for: host,
-                        addresses: Self.preferredUpstreamAddresses(answer.addresses)
-                    )
+                    let addresses: [String]
+                    if let pinned = PreferredNodeStore.shared.pinnedAddress(forHost: host) {
+                        // 优选赢家：linux.do 及子域一律先连它，不看各自的粘性 IP。
+                        addresses = [pinned]
+                        DohDebugLog.record("优选钉住 \(host) -> \(pinned)", subsystem: "优选")
+                    } else {
+                        addresses = self.rotatedAddresses(
+                            for: host,
+                            addresses: Self.preferredUpstreamAddresses(answer.addresses)
+                        )
+                    }
                     if let ech = answer.echConfig, !ech.isEmpty {
                         DohDebugLog.record("ECH config for \(host) (\(ech.count) bytes)")
                     }
@@ -374,6 +400,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         let timeout = DispatchWorkItem { [weak upstream] in
             guard let upstream else { return }
             DohDebugLog.record("Upstream timeout \(target):\(port.rawValue)")
+            PreferredNodeStore.shared.reportOutcome(host: hostname, ip: target, success: false)
             upstream.cancel()
         }
         queue.asyncAfter(deadline: .now() + 8, execute: timeout)
@@ -386,6 +413,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                 gate.settle {
                     timeout.cancel()
                     DohDebugLog.record("Upstream connected \(target):\(port.rawValue)")
+                    PreferredNodeStore.shared.reportOutcome(host: hostname, ip: target, success: true)
                     if let replayHello, !replayHello.isEmpty {
                         DohDebugLog.record("Replaying ClientHello to \(target)")
                         self.startByteTunnel(
@@ -417,6 +445,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                 gate.settle {
                     guard let client else { return }
                     DohDebugLog.record("Upstream failed \(target):\(port.rawValue), trying next")
+                    PreferredNodeStore.shared.reportOutcome(host: hostname, ip: target, success: false)
                     self.connectUpstream(
                         addresses: addresses,
                         port: port,
@@ -1037,6 +1066,14 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                         "Gateway origin TLS ready \(request.host) \(originAddress) echAccepted=\(origin?.echAccepted == true)"
                     )
                 } else {
+                    // 服务端拒绝 ECH：当场收养它给的新钥匙，下一轮不用等 DNS 刷新。
+                    if let retry = origin?.echRetryConfigs {
+                        EchKeyStore.shared.adopt(retry, source: .retryConfigs)
+                        DohDebugLog.record(
+                            "Gateway origin ECH 被拒，收养服务端新钥匙 \(retry.count) 字节",
+                            subsystem: "优选"
+                        )
+                    }
                     DohDebugLog.record(
                         "Gateway origin TLS failed \(request.host) \(originAddress): \(origin?.lastError ?? "unknown")"
                     )
@@ -1185,6 +1222,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         let timeout = DispatchWorkItem { [weak upstream] in
             guard let upstream else { return }
             DohDebugLog.record("Gateway origin TCP timeout \(target)")
+            PreferredNodeStore.shared.reportOutcome(host: request.host, ip: target, success: false)
             upstream.cancel()
         }
         queue.asyncAfter(deadline: .now() + 8, execute: timeout)
@@ -1197,6 +1235,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                 gate.settle {
                     timeout.cancel()
                     DohDebugLog.record("Gateway origin TCP ready \(target)")
+                    PreferredNodeStore.shared.reportOutcome(host: request.host, ip: target, success: true)
                     guard let client else {
                         self.completeGatewayOrigin()
                         self.close(upstream)
@@ -1227,6 +1266,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                 timeout.cancel()
                 self.connections.removeValue(forKey: ObjectIdentifier(upstream))
                 DohDebugLog.record("Gateway origin TCP error \(target): \(error)")
+                PreferredNodeStore.shared.reportOutcome(host: request.host, ip: target, success: false)
                 if gate.hasSettled {
                     return
                 }
@@ -1251,6 +1291,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                 }
                 gate.settle {
                     DohDebugLog.record("Gateway origin TCP failed \(target), trying next")
+                    PreferredNodeStore.shared.reportOutcome(host: request.host, ip: target, success: false)
                     guard let client else {
                         self.completeGatewayOrigin()
                         return
@@ -1286,6 +1327,25 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
 
     private func openGateway(_ request: DohGatewayHTTPRequest, client: NWConnection) {
         let request = resolvedGatewayRequest(request)
+
+        // 优选赢家 + 随赢家落盘的 ECH 钥匙：直接连，连 linux.do 的 DNS 都不查。
+        let hasUpstream = config.upstream?.isValid == true
+        if !hasUpstream,
+           let pinned = PreferredNodeStore.shared.pinnedAddress(forHost: request.host),
+           let ech = PreferredNodeStore.shared.node?.echConfig, !ech.isEmpty {
+            DohDebugLog.record("优选直连 \(request.host) -> \(pinned)（不查 DNS）", subsystem: "优选")
+            enqueueGatewayOrigin {
+                self.connectGatewayOriginTCP(
+                    addresses: [pinned],
+                    index: 0,
+                    request: request,
+                    client: client,
+                    echConfig: ech
+                )
+            }
+            return
+        }
+
         resolver.resolve(host: request.host) { [weak self, weak client] result in
             guard let self, let client else { return }
             self.queue.async {
@@ -1294,7 +1354,14 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                     DohDebugLog.record("Gateway resolve failed \(request.host): \(error)")
                     self.reject(client, reason: "resolve failed")
                 case .success(let answer):
-                    let addresses = Self.preferredUpstreamAddresses(answer.addresses)
+                    let addresses: [String]
+                    if let pinned = PreferredNodeStore.shared.pinnedAddress(forHost: request.host) {
+                        // 优选赢家：linux.do 及子域一律先连它，保证 CF 看到的出口 IP 不变。
+                        addresses = [pinned]
+                        DohDebugLog.record("优选钉住 \(request.host) -> \(pinned)", subsystem: "优选")
+                    } else {
+                        addresses = Self.preferredUpstreamAddresses(answer.addresses)
+                    }
                     guard !addresses.isEmpty else {
                         self.reject(client, reason: "empty resolved address")
                         return
@@ -1422,7 +1489,13 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
     /// Origin ECH / Gateway MITM. Off restores the v1.8.4 Encrypted DNS path:
     /// URLSession uses system TLS to DoH-resolved IPs, so existing `cf_clearance`
     /// works and linux.do does not need a Turnstile hop.
+    ///
+    /// 由「连接方式」设置在 `configureFromSettings` 里驱动；运行时回退后不再自动切回。
     static var originECHReady = false
+
+    /// 运行时回退过（例如 WebView 过盾后）。为真时即使设置要求本地 ECH 也不切回来，
+    /// 直到用户在设置里重新选一次连接方式。
+    static var runtimeECHEscaped = false
 
     /// Hidden WKWebView JSON. Off: pass-through CONNECT RSTs linux.do TLS.
     static var preferSafariWebViewHTTP = false
@@ -1457,6 +1530,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
     static func switchToSystemTLSAfterWebViewClearance() {
         guard originECHReady else { return }
         originECHReady = false
+        runtimeECHEscaped = true
         preferSafariWebViewHTTP = false
         DohDebugLog.record("DoH restore Encrypted DNS after WebView CF pass")
         LightweightDohProxyService.shared.forceReapplyFromSettings()

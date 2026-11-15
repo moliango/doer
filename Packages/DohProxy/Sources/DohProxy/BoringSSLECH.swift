@@ -54,6 +54,26 @@ public enum BoringSSLECH {
         )
     }
 
+    /// The server's `retry_configs` when it rejected ECH.
+    ///
+    /// Returns a serialized `ECHConfigList` that can be fed straight back into
+    /// `SSL_set1_ech_config_list`. Empty means the server rolled ECH back and the
+    /// caller should retry without ECH.
+    ///
+    /// BoringSSL requires this be called **only** after an `SSL_R_ECH_REJECTED`
+    /// error — otherwise it asserts in debug builds. A non-empty name override is
+    /// exactly that precondition: ECH was rejected and the rejection handshake
+    /// authenticated.
+    public static func echRetryConfigs(_ handler: NIOSSLHandler) -> Data? {
+        guard let ssl = sslPointer(from: handler) else { return nil }
+        guard let override = echNameOverride(handler), !override.isEmpty else { return nil }
+        var pointer: UnsafePointer<UInt8>?
+        var length = 0
+        sslGet0ECHRetryConfigs(ssl, &pointer, &length)
+        guard let pointer, length > 0 else { return nil }
+        return Data(bytes: UnsafeRawPointer(pointer), count: length)
+    }
+
     private static func wrapList(_ config: Data) -> Data {
         var list = Data(count: 2)
         list[0] = UInt8((config.count >> 8) & 0xFF)
@@ -128,4 +148,11 @@ private func sslGet0ECHNameOverride(
     _ ssl: OpaquePointer?,
     _ outName: UnsafeMutablePointer<UnsafePointer<CChar>?>?,
     _ outNameLen: UnsafeMutablePointer<Int>?
+)
+
+@_silgen_name("CNIOBoringSSL_SSL_get0_ech_retry_configs")
+private func sslGet0ECHRetryConfigs(
+    _ ssl: OpaquePointer?,
+    _ out: UnsafeMutablePointer<UnsafePointer<UInt8>?>?,
+    _ outLen: UnsafeMutablePointer<Int>?
 )

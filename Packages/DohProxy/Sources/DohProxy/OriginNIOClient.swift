@@ -63,6 +63,15 @@ public final class OriginNIOClient: @unchecked Sendable {
         return BoringSSLECH.echAccepted(handler)
     }
 
+    /// The server's `retry_configs` when it rejected ECH; non-empty means the caller
+    /// can swap keys and retry immediately instead of waiting for a DNS refresh.
+    public var echRetryConfigs: Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let handler else { return nil }
+        return BoringSSLECH.echRetryConfigs(handler)
+    }
+
     public func start(
         socketRead: @escaping (@escaping (Data?) -> Void) -> Void,
         socketWrite: @escaping (Data, @escaping () -> Void) -> Void,

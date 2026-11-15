@@ -75,6 +75,148 @@ extension AppSettings {
         var bootstrapIPs: [String]
     }
 
+    // MARK: - Cloudflare 本地优选
+
+    /// URLSession 走哪条路连 linux.do。
+    ///
+    /// `originECHReady` 只能走本地 CONNECT + MITM + ECH 那条路（谁做 TCP 连接谁才能决定 IP），
+    /// 而 Encrypted DNS 只换了解析器、连不上注入 ECH，也没有地方消费优选钉选。
+    enum DohConnectionMode: Int, CaseIterable {
+        /// 现状：Network.framework Encrypted DNS。明文 SNI，优选不生效。
+        case encryptedDNS = 0
+        /// 本地 CONNECT + MITM + ECH：能藏 SNI，优选钉选才会被消费。
+        case localECH = 1
+
+        var title: String {
+            switch self {
+            case .encryptedDNS:
+                return String(
+                    localized: "settings.network.connection_mode.encrypted_dns",
+                    defaultValue: "Encrypted DNS"
+                )
+            case .localECH:
+                return String(
+                    localized: "settings.network.connection_mode.local_ech",
+                    defaultValue: "本地代理 + ECH"
+                )
+            }
+        }
+
+        var summary: String {
+            switch self {
+            case .encryptedDNS:
+                return String(
+                    localized: "settings.network.connection_mode.encrypted_dns.summary",
+                    defaultValue: "系统 TLS 直连 DoH 解析出的 IP。出口 IP 会变，节点优选不生效"
+                )
+            case .localECH:
+                return String(
+                    localized: "settings.network.connection_mode.local_ech.summary",
+                    defaultValue: "本地代理终结 TLS 并注入 ECH，藏住 SNI；linux.do 及子域钉同一个出口 IP"
+                )
+            }
+        }
+    }
+
+    var dohConnectionMode: DohConnectionMode {
+        get { Self.dohConnectionMode(from: defaults) }
+        set {
+            defaults.set(newValue.rawValue, forKey: "dohConnectionMode")
+            notifyChanged()
+        }
+    }
+
+    /// 默认保持现状（Encrypted DNS），切到本地 ECH 由用户显式选择。
+    nonisolated static func dohConnectionMode(from defaults: UserDefaults) -> DohConnectionMode {
+        guard defaults.object(forKey: "dohConnectionMode") != nil else { return .encryptedDNS }
+        return DohConnectionMode(rawValue: defaults.integer(forKey: "dohConnectionMode")) ?? .encryptedDNS
+    }
+
+    /// 优选模式：本地优选 + atlas 池一起竞速（默认），或只用 atlas 池。
+    enum PreferredNodeMode: Int, CaseIterable {
+        case off = 0
+        case localAndAtlas = 1
+        case atlasOnly = 2
+
+        var title: String {
+            switch self {
+            case .off:
+                return String(localized: "settings.network.preferred_node.mode.off", defaultValue: "关闭")
+            case .localAndAtlas:
+                return String(
+                    localized: "settings.network.preferred_node.mode.local_atlas",
+                    defaultValue: "本地优选 + atlas"
+                )
+            case .atlasOnly:
+                return String(
+                    localized: "settings.network.preferred_node.mode.atlas_only",
+                    defaultValue: "仅 atlas 池"
+                )
+            }
+        }
+
+        var summary: String {
+            switch self {
+            case .off:
+                return String(
+                    localized: "settings.network.preferred_node.mode.off.summary",
+                    defaultValue: "不做优选，只按 DoH 解析结果连"
+                )
+            case .localAndAtlas:
+                return String(
+                    localized: "settings.network.preferred_node.mode.local_atlas.summary",
+                    defaultValue: "自己在大厂域名与随机抽样里找节点，并合并社区节点表"
+                )
+            case .atlasOnly:
+                return String(
+                    localized: "settings.network.preferred_node.mode.atlas_only.summary",
+                    defaultValue: "只从社区节点表取候选"
+                )
+            }
+        }
+    }
+
+    var preferredNodeEnabled: Bool {
+        get { Self.preferredNodeEnabled(from: defaults) }
+        set {
+            defaults.set(newValue, forKey: "preferredNodeEnabled")
+            notifyChanged()
+        }
+    }
+
+    var preferredNodeMode: PreferredNodeMode {
+        get { Self.preferredNodeMode(from: defaults) }
+        set {
+            defaults.set(newValue.rawValue, forKey: "preferredNodeMode")
+            notifyChanged()
+        }
+    }
+
+    var preferredNodeAtlasURL: String {
+        get { Self.preferredNodeAtlasURL(from: defaults) }
+        set {
+            defaults.set(newValue, forKey: "preferredNodeAtlasURL")
+            notifyChanged()
+        }
+    }
+
+    /// 优选默认开启。
+    nonisolated static func preferredNodeEnabled(from defaults: UserDefaults) -> Bool {
+        guard defaults.object(forKey: "preferredNodeEnabled") != nil else { return true }
+        return defaults.bool(forKey: "preferredNodeEnabled")
+    }
+
+    nonisolated static func preferredNodeMode(from defaults: UserDefaults) -> PreferredNodeMode {
+        guard defaults.object(forKey: "preferredNodeMode") != nil else { return .localAndAtlas }
+        return PreferredNodeMode(rawValue: defaults.integer(forKey: "preferredNodeMode")) ?? .localAndAtlas
+    }
+
+    nonisolated static func preferredNodeAtlasURL(from defaults: UserDefaults) -> String {
+        let trimmed = (defaults.string(forKey: "preferredNodeAtlasURL") ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? AtlasRoutesClient.defaultURL : trimmed
+    }
+
     var dohEnabled: Bool {
         get { defaults.bool(forKey: "dohEnabled") }
         set {
@@ -408,19 +550,26 @@ extension AppSettings {
                 cipher: defaults.string(forKey: "dohUpstreamCipher") ?? ""
             )
         }
+        let connectionMode = dohConnectionMode(from: defaults)
         let gateway: Bool
-        if defaults.object(forKey: "dohGatewayEnabled") == nil {
+        if connectionMode == .localECH {
+            // Gateway hop 走 HTTP/1.1，Cloudflare 会对 linux.do 回 403 cf-mitigated: challenge。
+            // iOS 17+ 的 WKWebView 也能挂 CONNECT 代理，所以那条路不需要 gateway。
+            gateway = !LocalConnectProxy.supportsWebViewCONNECTProxy
+        } else if defaults.object(forKey: "dohGatewayEnabled") == nil {
             gateway = true
         } else {
             gateway = defaults.bool(forKey: "dohGatewayEnabled")
         }
+        // 本地 ECH 必须开 h2，否则 CF 一样会拿 HTTP/1.1 回 challenge。
+        let h2Mitm = connectionMode == .localECH || defaults.bool(forKey: "dohH2Mitm")
         return DohProxyConfig(
             enabled: defaults.bool(forKey: "dohEnabled"),
             serverURL: serverURL,
             bootstrapIPs: bootstrap,
             echServerURL: defaults.string(forKey: "dohEchServerURL"),
             gatewayEnabled: gateway,
-            h2Mitm: defaults.bool(forKey: "dohH2Mitm"),
+            h2Mitm: h2Mitm,
             preferIPv6: defaults.bool(forKey: "dohPreferIPv6"),
             serverIP: defaults.string(forKey: "dohServerIP"),
             upstream: upstream

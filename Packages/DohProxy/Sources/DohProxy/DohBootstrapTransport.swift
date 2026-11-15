@@ -25,21 +25,31 @@ public enum DohBootstrapTransport {
         }
     }
 
-    static func query(
+    /// Query one DoH endpoint over its bootstrap IPs.
+    ///
+    /// Public so app-layer code (Cloudflare preferred-node candidate gathering)
+    /// can race several public resolvers without duplicating the TLS/HTTP plumbing.
+    /// - Parameter quiet: suppress the per-IP `bootstrap connect/timeout` chatter.
+    ///   Candidate gathering fans out over a dozen endpoints, and every unreachable
+    ///   one walks its whole bootstrap list — that flood evicts the useful lines
+    ///   from the 500-line in-app log.
+    public static func query(
         endpoint: DohEndpoint,
         dnsQuery: Data,
         queue: DispatchQueue,
+        quiet: Bool = false,
         completion: @escaping (Result<Data, Error>) -> Void
     ) {
         guard endpoint.isReady else {
             completion(.failure(DohProxyError.bootstrapUnavailable(endpoint.url)))
             return
         }
+        let logger: ((String) -> Void)? = quiet ? nil : log
         var addresses = endpoint.bootstrapIPs
         if !DohProxyConfig.looksLikeIPAddress(endpoint.host), !skipSystemAddressLookup {
             let resolved = systemAddresses(for: endpoint.host)
             if !resolved.isEmpty {
-                log?("DoH server \(endpoint.host) system DNS -> \(resolved.joined(separator: ", "))")
+                logger?("DoH server \(endpoint.host) system DNS -> \(resolved.joined(separator: ", "))")
                 var seen = Set<String>()
                 let merged = (resolved + addresses).filter { seen.insert($0).inserted }
                 let v4 = merged.filter { !$0.contains(":") }
@@ -55,6 +65,7 @@ public enum DohBootstrapTransport {
             serverPort: endpoint.port,
             request: postRequest(host: endpoint.host, path: path, dnsQuery: dnsQuery),
             queue: queue,
+            logger: logger,
             lastError: nil,
             completion: completion
         )
@@ -67,6 +78,7 @@ public enum DohBootstrapTransport {
         serverPort: UInt16,
         request: Data,
         queue: DispatchQueue,
+        logger: ((String) -> Void)?,
         lastError: Error?,
         completion: @escaping (Result<Data, Error>) -> Void
     ) {
@@ -87,7 +99,7 @@ public enum DohBootstrapTransport {
         tcp.noDelay = true
         let parameters = NWParameters(tls: tls, tcp: tcp)
         let connection = NWConnection(host: endpointHost(ip), port: port, using: parameters)
-        log?("bootstrap connect \(ip) SNI=\(serverHost)")
+        logger?("bootstrap connect \(ip) SNI=\(serverHost)")
         var buffer = Data()
         var finished = false
         let timeout = DispatchWorkItem {
@@ -96,7 +108,7 @@ public enum DohBootstrapTransport {
             // a second next-IP query and the caller `group.leave()`s twice.
             guard !finished else { return }
             finished = true
-            log?("bootstrap timeout \(ip)")
+            logger?("bootstrap timeout \(ip)")
             connection.cancel()
             query(
                 addresses: addresses,
@@ -105,6 +117,7 @@ public enum DohBootstrapTransport {
                 serverPort: serverPort,
                 request: request,
                 queue: queue,
+                logger: logger,
                 lastError: DohProxyError.queryFailed("timeout \(ip)"),
                 completion: completion
             )
@@ -123,7 +136,7 @@ public enum DohBootstrapTransport {
             finished = true
             timeout.cancel()
             connection.cancel()
-            log?("bootstrap failed \(ip): \(error.localizedDescription)")
+            logger?("bootstrap failed \(ip): \(error.localizedDescription)")
             query(
                 addresses: addresses,
                 index: index + 1,
@@ -131,6 +144,7 @@ public enum DohBootstrapTransport {
                 serverPort: serverPort,
                 request: request,
                 queue: queue,
+                logger: logger,
                 lastError: error,
                 completion: completion
             )
@@ -141,7 +155,7 @@ public enum DohBootstrapTransport {
                 guard let body = try DohHTTPWire.extractBody(from: buffer, requireComplete: requireComplete) else {
                     return false
                 }
-                log?("bootstrap ok \(ip) bytes=\(body.count)")
+                logger?("bootstrap ok \(ip) bytes=\(body.count)")
                 finish(.success(body))
                 return true
             } catch {
@@ -174,9 +188,9 @@ public enum DohBootstrapTransport {
         connection.stateUpdateHandler = { state in
             switch state {
             case .waiting(let error):
-                log?("bootstrap waiting \(ip): \(error)")
+                logger?("bootstrap waiting \(ip): \(error)")
             case .ready:
-                log?("bootstrap TLS ready \(ip)")
+                logger?("bootstrap TLS ready \(ip)")
                 connection.send(
                     content: request,
                     contentContext: NWConnection.ContentContext(identifier: "doer.doh.bootstrap", isFinal: false),
@@ -219,6 +233,15 @@ public enum DohBootstrapTransport {
         var data = Data(header.utf8)
         data.append(dnsQuery)
         return data
+    }
+
+    /// Extract the HTTP/1.1 body from a raw response buffer.
+    ///
+    /// Public counterpart of the internal `DohHTTPWire.extractBody` so app-layer
+    /// code can parse small plain HTTP/1.1 replies (e.g. `GET /cdn-cgi/trace`).
+    /// Returns nil when `requireComplete` is false and the body is not yet framed.
+    public static func httpBody(from data: Data, requireComplete: Bool) throws -> Data? {
+        try DohHTTPWire.extractBody(from: data, requireComplete: requireComplete)
     }
 
     public static func systemAddresses(for host: String) -> [String] {
