@@ -253,9 +253,16 @@ final class CloudflareVerificationViewController: UIViewController {
     private var isFinishing = false
     private var failureCleanupTask: Task<Void, Never>?
 
+    /// Ephemeral on purpose. The verification surface must not carry `_t`: a
+    /// challenge navigation that rotates the ticket is a second auth client the
+    /// API flight gate cannot see, and replaying the old ticket afterwards signs
+    /// every device out. A private store also keeps the eviction of `_t` from
+    /// touching the in-app browser's shared `.default()` store.
+    private let verificationDataStore = WKWebsiteDataStore.nonPersistent()
+
     private lazy var webView: WKWebView = {
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = .default()
+        config.websiteDataStore = verificationDataStore
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
         let view = WKWebView(frame: .zero, configuration: config)
@@ -496,13 +503,15 @@ final class CloudflareVerificationViewController: UIViewController {
         }
         guard !isClosing else { return }
         await LightweightDohProxyService.shared.prepareBrowserProxy()
+        LightweightDohProxyService.shared.applyWebViewProxy(to: verificationDataStore)
         guard generation == preparationGeneration, !Task.isCancelled, !isClosing else { return }
         log(
             "foreground load challenge base=\(baseURL.absoluteString) url=\(challengeURL.absoluteString) autoDismiss=\(autoDismissOnSuccess) dohBrowser=\(LightweightDohProxyService.shared.ensureRunning() != nil)"
         )
         await WebCookieStore.shared.syncToWebView(
             webView.configuration.websiteDataStore,
-            for: baseURL
+            for: baseURL,
+            excluding: ["_t"]
         )
         guard generation == preparationGeneration, !Task.isCancelled, !isClosing else { return }
         if CloudflareVerificationPolicy.shouldDeleteJarClearanceBeforeChallenge() {

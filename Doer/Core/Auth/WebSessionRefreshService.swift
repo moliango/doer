@@ -220,11 +220,21 @@ final class WebSessionRefreshService: NSObject {
         let startedAt = Date()
         DohDebugLog.record("web session refresh started reason=\(reason)", subsystem: "Auth")
 
-        let dataStore = WKWebsiteDataStore.default()
+        // Ephemeral and `_t`-free on purpose. This hidden load is a second auth
+        // client: when it carried `_t`, Discourse rotated the ticket here while
+        // URLSession was still sending the old one, and the jar then replayed the
+        // retired ticket until every device was signed out. API `Set-Cookie` is
+        // the renewal path; this load only refreshes `cf_clearance`.
+        let dataStore = WKWebsiteDataStore.nonPersistent()
+        // A private store does not inherit `.default()`'s proxy configuration, so
+        // without this the hidden load would resolve over system DNS under DoH.
+        await LightweightDohProxyService.shared.prepareBrowserProxy()
+        LightweightDohProxyService.shared.applyWebViewProxy(to: dataStore)
         let primed = await WebCookieStore.shared.primeBrowserSession(
             to: dataStore,
             forumURL: baseURL,
-            pageURL: baseURL
+            pageURL: baseURL,
+            excluding: ["_t"]
         )
         if !primed {
             DohDebugLog.record(
@@ -271,6 +281,13 @@ final class WebSessionRefreshService: NSObject {
             ) {
                 AuthManager.shared.invalidateWebSession(for: baseURL.absoluteString)
             }
+            // The load is anonymous now, so a login-gated forum always lands here.
+            // Clearance is still worth keeping: it is what the challenge page needs.
+            await WebCookieStore.shared.syncFromWebView(
+                dataStore,
+                names: ["cf_clearance"],
+                for: baseURL
+            )
             webView.stopLoading()
             webView.navigationDelegate = nil
             return false
@@ -294,10 +311,18 @@ final class WebSessionRefreshService: NSObject {
                         subsystem: "Auth"
                     )
                 } else {
-                    await WebCookieStore.shared.syncFromWebView(dataStore, for: baseURL)
+                    await WebCookieStore.shared.syncFromWebView(
+                        dataStore,
+                        for: baseURL,
+                        excluding: ["_t"]
+                    )
                 }
             } else {
-                await WebCookieStore.shared.syncFromWebView(dataStore, for: baseURL)
+                await WebCookieStore.shared.syncFromWebView(
+                    dataStore,
+                    for: baseURL,
+                    excluding: ["_t"]
+                )
             }
         } else {
             DohDebugLog.record(

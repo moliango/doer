@@ -137,7 +137,13 @@ final class DiscourseAuthInterceptor: RequestInterceptor {
                 completion(.success(urlRequest))
                 return
             }
-            self.adaptPrepared(urlRequest, for: session, completion: completion)
+            self.adaptPrepared(
+                urlRequest,
+                gatedToken: token,
+                regateCount: 0,
+                for: session,
+                completion: completion
+            )
         }
         if let host {
             AuthCookieFlightGate.shared.begin(host: host, token: token, proceed: proceed)
@@ -146,11 +152,43 @@ final class DiscourseAuthInterceptor: RequestInterceptor {
         }
     }
 
+    private static let maxAuthGateRegates = 2
+
     private func adaptPrepared(
         _ urlRequest: URLRequest,
+        gatedToken: String?,
+        regateCount: Int,
         for session: Session,
         completion: @escaping (Result<URLRequest, Error>) -> Void
     ) {
+        if let url = urlRequest.url,
+           let host = url.host?.lowercased(),
+           regateCount < Self.maxAuthGateRegates {
+            let currentToken = WebCookieStore.shared.cookieValue(named: "_t", for: url)
+            if currentToken != gatedToken {
+                // The jar rotated while this request waited for admission. The gate
+                // slot still describes the old ticket, but the header applied below
+                // comes from the live jar — so a newer ticket could overtake an older
+                // one still on the wire. Discourse treats that as theft and signs out
+                // every device. Re-enter the gate for the ticket we are about to send.
+                AuthCookieFlightGate.shared.end(host: host)
+                AuthCookieFlightGate.shared.begin(host: host, token: currentToken) { [weak self] in
+                    guard let self else {
+                        completion(.success(urlRequest))
+                        return
+                    }
+                    self.adaptPrepared(
+                        urlRequest,
+                        gatedToken: currentToken,
+                        regateCount: regateCount + 1,
+                        for: session,
+                        completion: completion
+                    )
+                }
+                return
+            }
+        }
+
         var request = urlRequest
         if let url = request.url {
             let authMode = discourseRequestAuthMode(baseURL: baseURL, url: url)

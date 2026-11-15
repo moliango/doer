@@ -39,10 +39,17 @@ enum DiscourseAPIExecutionContext {
 }
 
 func discourseRequestAuthMode(baseURL _: String, url: URL) -> DiscourseRequestAuthMode {
-    if WebCookieStore.shared.hasDiscourseWebSessionCookie(for: url) {
+    // The local CONNECT/ECH gateway rewrites requests onto 127.0.0.1, and
+    // URLSession reports the response URL as that loopback hop. Auth cookies
+    // live on the forum origin, so probing the raw URL says `.none` and every
+    // gateway `Set-Cookie` — including the rotated `_t` — is dropped. The jar
+    // then keeps replaying the stale ticket and Discourse signs out every
+    // device. `cookieParseURL` rebases loopback back onto the forum host.
+    let probeURL = WebCookieStore.cookieParseURL(for: url)
+    if WebCookieStore.shared.hasDiscourseWebSessionCookie(for: probeURL) {
         return .webCookie
     }
-    if WebCookieStore.shared.hasCookie(named: "cf_clearance", for: url) {
+    if WebCookieStore.shared.hasCookie(named: "cf_clearance", for: probeURL) {
         return .cloudflareOnly
     }
     return .none

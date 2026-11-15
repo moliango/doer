@@ -7,6 +7,13 @@ final class AuthManager: DoerObservableObject, @unchecked Sendable {
 
     // Per-baseURL username cache (populated from DB or after login)
     private var usernameCache: [String: String] = [:]
+    /// Cloudflare hides the real auth state: while the shield is up every
+    /// foreground request short-circuits to `cloudflare_challenge`, so a revoked
+    /// `_t` never reaches the not_logged_in handling and the UI looks signed in.
+    private var sessionProbeTasks: [String: Task<Void, Never>] = [:]
+    private var sessionProbeAPIs: [String: DiscourseAPI] = [:]
+    private var lastSessionProbeAt: [String: Date] = [:]
+    private static let sessionProbeCooldown: TimeInterval = 30
 
     private override init() {
         super.init()
@@ -64,6 +71,48 @@ final class AuthManager: DoerObservableObject, @unchecked Sendable {
             }
             notifyChanged()
             return false
+        }
+    }
+
+    /// Ask `/session/current` outside the foreground Cloudflare gate so a dead
+    /// `_t` is reported as `not_logged_in` instead of hiding behind the shield.
+    /// Background context: no foreground gate, no interactive WK refresh, and a
+    /// Cloudflare-challenged probe stays inconclusive rather than faking a logout.
+    func probeSessionLivenessAfterChallenge(for baseURL: String) {
+        let baseURL = normalizedBaseURL(baseURL)
+        guard isAuthenticated(for: baseURL) else { return }
+        guard sessionProbeTasks[baseURL] == nil else { return }
+        if let lastAttempt = lastSessionProbeAt[baseURL],
+           Date().timeIntervalSince(lastAttempt) < Self.sessionProbeCooldown {
+            return
+        }
+        lastSessionProbeAt[baseURL] = Date()
+        let probe = sessionProbeAPIs[baseURL] ?? DiscourseAPI(
+            baseURL: baseURL,
+            executionContext: .backgroundRefresh
+        )
+        sessionProbeAPIs[baseURL] = probe
+        sessionProbeTasks[baseURL] = Task { @MainActor [weak self] in
+            defer { self?.sessionProbeTasks[baseURL] = nil }
+            do {
+                try await probe.probeSessionLiveness()
+            } catch {
+                guard AuthSessionInvalidationPolicy.shouldInvalidateWebSession(
+                    error: error,
+                    baseURL: baseURL
+                ) else {
+                    DohDebugLog.record(
+                        "session probe inconclusive base=\(baseURL) error=\(error.localizedDescription)",
+                        subsystem: "Auth"
+                    )
+                    return
+                }
+                DohDebugLog.record(
+                    "session probe found a dead session base=\(baseURL)",
+                    subsystem: "Auth"
+                )
+                self?.invalidateWebSession(for: baseURL)
+            }
         }
     }
 

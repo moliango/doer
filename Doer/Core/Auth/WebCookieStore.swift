@@ -106,6 +106,10 @@ final class WebCookieStore {
     private var revokedAuthValues: [String: [String]] = [:]
     private let lock = NSLock()
     private let filePath: URL
+    /// Separate file: the cookie file is a legacy JSON array and the retired set
+    /// must survive a relaunch. WK's persistent store keeps sending an old `_t`
+    /// after a restart, and without this the import rolls the jar back.
+    private let retiredAuthPath: URL
     nonisolated private static let maxAgeKey = HTTPCookiePropertyKey("Max-Age")
     nonisolated private static let httpOnlyKey = HTTPCookiePropertyKey("HttpOnly")
     nonisolated private static let sameSiteKey = HTTPCookiePropertyKey("SameSite")
@@ -126,8 +130,10 @@ final class WebCookieStore {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         // Legacy filenames — renaming would drop the saved session.
         filePath = dir.appendingPathComponent("dexo_web_cookies.json")
+        retiredAuthPath = dir.appendingPathComponent("dexo_web_cookies_retired.json")
         userAgentPath = dir.appendingPathComponent("dexo_web_ua.txt")
         load()
+        loadRetiredAuthValues()
         userAgent = loadUserAgent()
     }
 
@@ -140,6 +146,7 @@ final class WebCookieStore {
         var removedSentinelNames: [String] = []
         var removedExpiredNames: [String] = []
         var skippedAuthDeletions: [String] = []
+        var skippedRetiredAuth: [String] = []
         var policyChanges: [String] = []
 
         lock.lock()
@@ -177,6 +184,14 @@ final class WebCookieStore {
                 }
             } else {
                 if Self.isAuthCookieName(cookie.name),
+                   isRevokedAuthCookieLocked(cookie) {
+                    // A WebView that never saw the rotation still holds the old ticket;
+                    // importing it after the server has seen the new one is exactly what
+                    // triggers the "session hijack" sign-out across every device.
+                    skippedRetiredAuth.append("\(cookie.name)@\(Self.normalizedDomain(cookie.domain))")
+                    continue
+                }
+                if Self.isAuthCookieName(cookie.name),
                    let previous = jar[key],
                    previous.value != cookie.value {
                     revokeAuthValueLocked(previous)
@@ -206,6 +221,12 @@ final class WebCookieStore {
         if !skippedAuthDeletions.isEmpty {
             DohDebugLog.record(
                 "kept valid auth cookies; skipped deletion: \(skippedAuthDeletions.joined(separator: ","))",
+                subsystem: "Auth"
+            )
+        }
+        if !skippedRetiredAuth.isEmpty {
+            DohDebugLog.record(
+                "rejected retired auth cookies: \(skippedRetiredAuth.sorted().joined(separator: ","))",
                 subsystem: "Auth"
             )
         }
@@ -359,14 +380,27 @@ final class WebCookieStore {
     }
 
     @MainActor
-    func syncFromWebView(_ dataStore: WKWebsiteDataStore, names: Set<String>? = nil, for url: URL? = nil) async {
+    func syncFromWebView(
+        _ dataStore: WKWebsiteDataStore,
+        names: Set<String>? = nil,
+        for url: URL? = nil,
+        excluding: Set<String> = []
+    ) async {
         guard let webViewCookies = await WKCookieStoreIO.getAllCookies(dataStore.httpCookieStore) else {
             DohDebugLog.record("syncFromWebView skipped: cookie store timed out", subsystem: "Auth")
             return
         }
         let now = Date()
         var skippedAuthDeletions: [String] = []
+        var skippedExcludedNames: Set<String> = []
         let cookies = webViewCookies.filter { cookie in
+            if excluding.contains(cookie.name) {
+                // A hidden WK navigation is a second `_t` client: it can rotate the
+                // ticket outside the API flight gate, so the jar would replay the
+                // old one while the server has already seen the new one.
+                skippedExcludedNames.insert(cookie.name)
+                return false
+            }
             if let names, !names.contains(cookie.name) {
                 return false
             }
@@ -388,6 +422,12 @@ final class WebCookieStore {
         if !skippedAuthDeletions.isEmpty {
             DohDebugLog.record(
                 "skipped WebView auth cookie deletion; jar still valid: \(skippedAuthDeletions.joined(separator: ","))",
+                subsystem: "Auth"
+            )
+        }
+        if !skippedExcludedNames.isEmpty {
+            DohDebugLog.record(
+                "ignored WebView cookies for excluded names: \(skippedExcludedNames.sorted().joined(separator: ","))",
                 subsystem: "Auth"
             )
         }
@@ -451,13 +491,21 @@ final class WebCookieStore {
         return HTTPCookie(properties: props)
     }
 
+    /// Push the site jar into a WebView. `excluding` names are not installed **and**
+    /// are evicted from the store, so a `_t` left behind by an earlier navigation in
+    /// the same data store cannot ride along on the next load.
     @MainActor
-    func syncToWebView(_ dataStore: WKWebsiteDataStore, for url: URL) async {
+    func syncToWebView(
+        _ dataStore: WKWebsiteDataStore,
+        for url: URL,
+        excluding: Set<String> = []
+    ) async {
         guard let host = url.host?.lowercased() else { return }
         await injectCookies(
             siteCookiesForInjection(forHost: host),
             into: dataStore,
-            replacingAuthOnHost: host
+            replacingAuthOnHost: host,
+            excluding: excluding
         )
     }
 
@@ -465,10 +513,19 @@ final class WebCookieStore {
     /// Used so mini-programs / in-app browser reuse the app's Discourse login without a second sign-in.
     @MainActor
     @discardableResult
-    func syncSiteSession(to dataStore: WKWebsiteDataStore, siteURL: URL) async -> Bool {
+    func syncSiteSession(
+        to dataStore: WKWebsiteDataStore,
+        siteURL: URL,
+        excluding: Set<String> = []
+    ) async -> Bool {
         guard let host = siteURL.host?.lowercased() else { return false }
-        let cookies = siteCookiesForInjection(forHost: host)
-        let ok = await injectCookies(cookies, into: dataStore, replacingAuthOnHost: host)
+        let cookies = siteCookiesForInjection(forHost: host).filter { !excluding.contains($0.name) }
+        let ok = await injectCookies(
+            cookies,
+            into: dataStore,
+            replacingAuthOnHost: host,
+            excluding: excluding
+        )
         if ok, !cookies.isEmpty {
             DohDebugLog.record(
                 "primed site session host=\(host) root=\(Self.siteRootDomain(host)) count=\(cookies.count) names=\(Self.cookieSummary(cookies))",
@@ -489,13 +546,22 @@ final class WebCookieStore {
     func primeBrowserSession(
         to dataStore: WKWebsiteDataStore,
         forumURL: URL,
-        pageURL: URL?
+        pageURL: URL?,
+        excluding: Set<String> = []
     ) async -> Bool {
-        let primedForum = await syncSiteSession(to: dataStore, siteURL: forumURL)
+        let primedForum = await syncSiteSession(
+            to: dataStore,
+            siteURL: forumURL,
+            excluding: excluding
+        )
         var primedPage = true
         if let pageURL, let pageHost = pageURL.host?.lowercased(),
            pageHost != forumURL.host?.lowercased() {
-            primedPage = await syncSiteSession(to: dataStore, siteURL: pageURL)
+            primedPage = await syncSiteSession(
+                to: dataStore,
+                siteURL: pageURL,
+                excluding: excluding
+            )
         }
         return primedForum && primedPage
     }
@@ -575,13 +641,18 @@ final class WebCookieStore {
     private func injectCookies(
         _ cookies: [HTTPCookie],
         into dataStore: WKWebsiteDataStore,
-        replacingAuthOnHost host: String
+        replacingAuthOnHost host: String,
+        excluding: Set<String> = []
     ) async -> Bool {
         let cookieStore = dataStore.httpCookieStore
-        let prepared = cookies.map(Self.webKitReadyCookie(from:))
+        let prepared = cookies
+            .filter { !excluding.contains($0.name) }
+            .map(Self.webKitReadyCookie(from:))
+        // Excluded auth cookies must also be evicted: a store reused by an earlier
+        // navigation may still hold the ticket we are deliberately not sending.
         let authCookieNames = Set(
             prepared.filter { Self.isAuthCookieName($0.name) }.map(\.name)
-        )
+        ).union(excluding.filter { Self.isAuthCookieName($0) })
 
         if !authCookieNames.isEmpty {
             guard let existingCookies = await WKCookieStoreIO.getAllCookies(cookieStore) else {
@@ -762,7 +833,13 @@ final class WebCookieStore {
 
     private func isRevokedAuthCookieLocked(_ cookie: HTTPCookie) -> Bool {
         guard Self.isAuthCookieName(cookie.name) else { return false }
-        let bucket = "\(Self.normalizedDomain(cookie.domain))|\(cookie.name)"
+        let domain = Self.normalizedDomain(cookie.domain)
+        guard !domain.isEmpty else { return false }
+        // Host-only `linux.do` and domain-scoped `.linux.do` normalize to the same
+        // bucket, so both spellings of one ticket agree. Subdomains are *not* merged:
+        // `www.linux.do` carries its own cookie, and retiring a value on the apex
+        // says nothing about the sibling host's session.
+        let bucket = "\(domain)|\(cookie.name)"
         return revokedAuthValues[bucket]?.contains(cookie.value) == true
     }
 
@@ -868,6 +945,7 @@ final class WebCookieStore {
     private func save() {
         lock.lock()
         let records = jar.values.compactMap { StoredCookie(cookie: $0) }
+        let retired = revokedAuthValues
         lock.unlock()
 
         do {
@@ -876,6 +954,23 @@ final class WebCookieStore {
         } catch {
             DohDebugLog.record("cookie save failed: \(error.localizedDescription)", subsystem: "Auth")
         }
+        do {
+            let data = try JSONEncoder().encode(retired)
+            try data.write(to: retiredAuthPath, options: .atomic)
+        } catch {
+            DohDebugLog.record("retired cookie save failed: \(error.localizedDescription)", subsystem: "Auth")
+        }
+    }
+
+    private func loadRetiredAuthValues() {
+        guard let data = try? Data(contentsOf: retiredAuthPath),
+              let stored = try? JSONDecoder().decode([String: [String]].self, from: data)
+        else { return }
+        revokedAuthValues = stored.filter { !$0.value.isEmpty }
+        DohDebugLog.record(
+            "loaded retired auth cookie buckets: \(revokedAuthValues.keys.sorted().joined(separator: ","))",
+            subsystem: "Auth"
+        )
     }
 
     private func load() {
@@ -1065,6 +1160,13 @@ private extension WebCookieStore {
 
             guard !alreadyCanonical else { continue }
             for cookie in group where cookie.value != winner.value {
+                // Only a value superseded by a *later* receive is provably retired.
+                // Within one batch every cookie carries the same serial and the winner
+                // is picked locally (expiry/length/domain), so this loser may well be
+                // the server's freshly rotated ticket. Marking it retired would make
+                // the next `Set-Cookie` carrying it bounce and stall the rotation.
+                let serial = authReceivedSerial[key(for: cookie)] ?? 0
+                guard serial < winnerSerial else { continue }
                 revokeAuthValueLocked(cookie)
             }
             for cookie in group {

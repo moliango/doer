@@ -156,7 +156,9 @@ private final class CloudflareBackgroundVerificationAttempt: NSObject, WKNavigat
     private let baseURL: URL
     private let responseURL: URL?
     private let reason: String
-    private let dataStore = WKWebsiteDataStore.default()
+    /// Ephemeral: the hidden challenge load must not be a second `_t` client and
+    /// must not evict the in-app browser's copy of the ticket.
+    private let dataStore = WKWebsiteDataStore.nonPersistent()
     private let maxDurationNanoseconds: UInt64 = 12_000_000_000
     private let checkDelays: [UInt64] = [
         250_000_000,
@@ -186,7 +188,8 @@ private final class CloudflareBackgroundVerificationAttempt: NSObject, WKNavigat
         log("started reason=\(reason) base=\(baseURL.absoluteString) response=\(responseURL?.absoluteString ?? "none")")
         initialClearanceValue = WebCookieStore.shared.cookieValue(named: "cf_clearance", for: baseURL)
         await LightweightDohProxyService.shared.prepareBrowserProxy()
-        await WebCookieStore.shared.syncToWebView(dataStore, for: baseURL)
+        LightweightDohProxyService.shared.applyWebViewProxy(to: dataStore)
+        await WebCookieStore.shared.syncToWebView(dataStore, for: baseURL, excluding: ["_t"])
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false

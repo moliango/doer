@@ -4,6 +4,22 @@ import UniformTypeIdentifiers
 
 // MARK: - user
 extension DiscourseAPI {
+    /// Liveness-only variant: a success must not be treated as "native session
+    /// healthy" because the caller is only separating a revoked `_t` from an
+    /// inconclusive Cloudflare block.
+    func probeSessionLiveness() async throws {
+        let response: DiscourseCurrentUserResponse = try await request(
+            route: .currentUser,
+            allowAuthRecovery: false
+        )
+        guard response.currentUser != nil else {
+            throw DiscourseAPIError(
+                messages: [String(localized: "login.required.message")],
+                errorType: "not_logged_in"
+            )
+        }
+    }
+
     func fetchCurrentUser() async throws -> DiscourseCurrentUser {
         let response: DiscourseCurrentUserResponse = try await request(route: .currentUser)
         guard let currentUser = response.currentUser else {
