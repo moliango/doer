@@ -32,12 +32,16 @@ final class LocalizationCoverageTests: XCTestCase {
     func testProfileActionStringsHaveAllChineseLocalizations() async throws {
         let keys = [
             "action.confirm",
+            "user.profile.badges_more %lld",
+            "user.profile.card_title",
+            "user.profile.chat",
             "user.profile.ignore",
             "user.profile.ignore.custom",
             "user.profile.ignore.day",
             "user.profile.ignore.month",
             "user.profile.ignore.week",
             "user.profile.interactions",
+            "user.profile.local_time",
             "user.profile.mute",
             "user.profile.replied_to",
             "user.profile.restore_notifications",
@@ -45,10 +49,40 @@ final class LocalizationCoverageTests: XCTestCase {
             "user.profile.top_categories",
             "user.profile.top_links",
             "user.profile.top_replies",
+            "user.profile.topics_in_summary %lld",
             "user.profile.unfollow",
         ]
 
         try assertLocalizationsExist(for: keys, locales: ["zh-Hans", "zh-Hant", "zh-HK"])
+    }
+
+    func testClipboardLinkStringsHaveAllSupportedLocalizations() throws {
+        let keys = [
+            "clipboard.link.banner.paste",
+            "clipboard.link.banner.title",
+            "clipboard.link.not_found",
+        ]
+
+        try assertLocalizationsExist(for: keys, locales: ["en", "zh-Hans", "zh-Hant", "zh-HK"])
+    }
+
+    func testRevisionStringsHaveAllSupportedLocalizations() throws {
+        let keys = [
+            "revision.counter",
+            "revision.counter.single",
+            "revision.first",
+            "revision.hidden_marker",
+            "revision.last",
+            "revision.mode.inline",
+            "revision.mode.raw",
+            "revision.mode.side_by_side",
+            "revision.next",
+            "revision.no_diff",
+            "revision.previous",
+            "revision.show_history",
+        ]
+
+        try assertLocalizationsExist(for: keys, locales: ["en", "zh-Hans", "zh-Hant", "zh-HK"])
     }
 
     private func assertLocalizationsExist(for keys: [String], locales: [String]) throws {
