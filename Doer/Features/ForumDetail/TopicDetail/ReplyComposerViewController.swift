@@ -1344,21 +1344,64 @@ final class ReplyComposerViewController: UIViewController {
                 sendButton.isEnabled = true
                 textView.isEditable = true
                 experimentalComposerView?.isEditable = true
-                let alert = UIAlertController(
-                    title: String(localized: "reply.send.failed"),
-                    message: error.localizedDescription,
-                    preferredStyle: .alert
-                )
-                alert.addAction(UIAlertAction(
-                    title: String(localized: "common.retry", defaultValue: "重试"),
-                    style: .default
-                ) { [weak self] _ in
-                    self?.sendTapped()
-                })
-                alert.addAction(UIAlertAction(title: String(localized: "common.ok"), style: .cancel))
-                present(alert, animated: true)
+                presentSendFailure(error)
             }
         }
+    }
+
+    /// Slow mode / rate limits come back with the server's real reason (often plus a wait
+    /// time); surface both instead of a bare "发送失败" and skip a doomed retry.
+    private func presentSendFailure(_ error: Error) {
+        let apiError = error as? DiscourseAPIError
+        let waitSeconds = max(apiError?.waitSeconds ?? 0, 0)
+        let isRateLimited = apiError?.isRateLimited == true
+
+        let title: String
+        if apiError?.isSlowMode == true {
+            title = String(localized: "reply.slow_mode.title", defaultValue: "话题处于慢速模式")
+        } else if isRateLimited {
+            title = String(localized: "reply.rate_limited.title", defaultValue: "操作太频繁")
+        } else {
+            title = String(localized: "reply.send.failed")
+        }
+
+        let serverMessage = apiError?.messages
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+        var lines: [String] = []
+        if let serverMessage {
+            lines.append(serverMessage)
+        } else if isRateLimited {
+            lines.append(String(localized: "reply.rate_limited.message", defaultValue: "请稍等一会儿再发送。"))
+        } else {
+            lines.append(error.localizedDescription)
+        }
+        if waitSeconds > 0 {
+            lines.append(String(
+                format: String(
+                    localized: "reply.rate_limited.wait_seconds",
+                    defaultValue: "还需等待 %d 秒才能再次回复。"
+                ),
+                waitSeconds
+            ))
+        }
+
+        let alert = UIAlertController(
+            title: title,
+            message: lines.joined(separator: "\n\n"),
+            preferredStyle: .alert
+        )
+        // Retrying inside the server's wait window can only fail again.
+        if waitSeconds == 0 {
+            alert.addAction(UIAlertAction(
+                title: String(localized: "common.retry", defaultValue: "重试"),
+                style: .default
+            ) { [weak self] _ in
+                self?.sendTapped()
+            })
+        }
+        alert.addAction(UIAlertAction(title: String(localized: "common.ok"), style: .cancel))
+        present(alert, animated: true)
     }
 
     private func presentQueuedAlert() {

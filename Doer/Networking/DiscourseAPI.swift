@@ -279,10 +279,7 @@ final class DiscourseAPI {
 
         if let statusCode = response.response?.statusCode, !(200 ..< 300).contains(statusCode) {
             if statusCode == 429 {
-                throw DiscourseAPIError(
-                    messages: [String(localized: "error.rate_limited")],
-                    errorType: "rate_limited"
-                )
+                throw Self.rateLimitError(from: response.data)
             }
             if case .currentUser = route,
                let sessionError = Self.currentUserFailure(statusCode: statusCode, data: response.data) {
@@ -293,7 +290,11 @@ final class DiscourseAPI {
             }
             if let data = response.data {
                 if let errBody = try? JSONDecoder().decode(DiscourseErrorResponse.self, from: data), !errBody.errors.isEmpty {
-                    throw DiscourseAPIError(messages: errBody.errors, errorType: errBody.errorType)
+                    throw DiscourseAPIError(
+                        messages: errBody.errors,
+                        errorType: errBody.errorType,
+                        waitSeconds: errBody.extras?.waitSeconds
+                    )
                 }
                 if let failBody = try? JSONDecoder().decode(DiscourseFailedResponse.self, from: data), let message = failBody.message {
                     throw DiscourseAPIError(messages: [message], errorType: failBody.failed)
@@ -405,10 +406,7 @@ final class DiscourseAPI {
         }
         if !(200 ..< 300).contains(httpResponse.statusCode) {
             if httpResponse.statusCode == 429 {
-                throw DiscourseAPIError(
-                    messages: [String(localized: "error.rate_limited")],
-                    errorType: "rate_limited"
-                )
+                throw Self.rateLimitError(from: data)
             }
             if case .currentUser = route,
                let sessionError = Self.currentUserFailure(statusCode: httpResponse.statusCode, data: data) {
@@ -419,7 +417,11 @@ final class DiscourseAPI {
             }
             if let errBody = try? JSONDecoder().decode(DiscourseErrorResponse.self, from: data),
                !errBody.errors.isEmpty {
-                throw DiscourseAPIError(messages: errBody.errors, errorType: errBody.errorType)
+                throw DiscourseAPIError(
+                    messages: errBody.errors,
+                    errorType: errBody.errorType,
+                    waitSeconds: errBody.extras?.waitSeconds
+                )
             }
             throw Self.serverUnavailableError(statusCode: httpResponse.statusCode)
         }

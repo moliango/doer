@@ -230,7 +230,11 @@ extension DiscourseAPI {
             if let data = response.data,
                let errBody = try? JSONDecoder().decode(DiscourseErrorResponse.self, from: data),
                !errBody.errors.isEmpty {
-                throw DiscourseAPIError(messages: errBody.errors, errorType: errBody.errorType)
+                throw DiscourseAPIError(
+                    messages: errBody.errors,
+                    errorType: errBody.errorType,
+                    waitSeconds: errBody.extras?.waitSeconds
+                )
             }
             throw DiscourseAPIError(messages: [String(localized: "post.action.failed")], errorType: nil)
         }

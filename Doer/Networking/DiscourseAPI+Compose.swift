@@ -126,7 +126,7 @@ extension DiscourseAPI {
 
         if let statusCode = response.response?.statusCode, !(200 ..< 300).contains(statusCode) {
             if statusCode == 429 {
-                throw DiscourseAPIError(messages: [String(localized: "error.rate_limited")], errorType: "rate_limited")
+                throw Self.rateLimitError(from: response.data)
             }
             if statusCode == 413 {
                 throw DiscourseAPIError(messages: [String(localized: "reply.upload.too_large")], errorType: "upload_too_large")
@@ -134,7 +134,11 @@ extension DiscourseAPI {
             if let data = response.data,
                let errBody = try? JSONDecoder().decode(DiscourseErrorResponse.self, from: data),
                !errBody.errors.isEmpty {
-                throw DiscourseAPIError(messages: errBody.errors, errorType: errBody.errorType)
+                throw DiscourseAPIError(
+                    messages: errBody.errors,
+                    errorType: errBody.errorType,
+                    waitSeconds: errBody.extras?.waitSeconds
+                )
             }
             throw DiscourseAPIError(messages: [String(localized: "reply.upload.failed")], errorType: "upload_failed")
         }

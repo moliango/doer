@@ -76,12 +76,16 @@ extension DiscourseAPI {
         }
         if let statusCode = response.response?.statusCode, !(200 ..< 300).contains(statusCode) {
             if statusCode == 429 {
-                throw DiscourseAPIError(messages: [String(localized: "error.rate_limited")], errorType: "rate_limited")
+                throw Self.rateLimitError(from: response.data)
             }
             if let data = response.data,
                let errBody = try? JSONDecoder().decode(DiscourseErrorResponse.self, from: data),
                !errBody.errors.isEmpty {
-                throw DiscourseAPIError(messages: errBody.errors, errorType: errBody.errorType)
+                throw DiscourseAPIError(
+                    messages: errBody.errors,
+                    errorType: errBody.errorType,
+                    waitSeconds: errBody.extras?.waitSeconds
+                )
             }
             throw DiscourseAPIError(messages: [String(localized: "post.boost.failed")], errorType: nil)
         }
@@ -148,12 +152,16 @@ extension DiscourseAPI {
         }
         if let statusCode = response.response?.statusCode, !(200 ..< 300).contains(statusCode) {
             if statusCode == 429 {
-                throw DiscourseAPIError(messages: [String(localized: "error.rate_limited")], errorType: "rate_limited")
+                throw Self.rateLimitError(from: response.data)
             }
             if let data = response.data,
                let errBody = try? JSONDecoder().decode(DiscourseErrorResponse.self, from: data),
                !errBody.errors.isEmpty {
-                throw DiscourseAPIError(messages: errBody.errors, errorType: errBody.errorType)
+                throw DiscourseAPIError(
+                    messages: errBody.errors,
+                    errorType: errBody.errorType,
+                    waitSeconds: errBody.extras?.waitSeconds
+                )
             }
             throw DiscourseAPIError(
                 messages: [String(localized: "post.boost.flag_failed", defaultValue: "举报 Boost 失败")],
@@ -220,12 +228,16 @@ extension DiscourseAPI {
         }
         if let statusCode = response.response?.statusCode, !(200 ..< 300).contains(statusCode) {
             if statusCode == 429 {
-                throw DiscourseAPIError(messages: [String(localized: "error.rate_limited")], errorType: "rate_limited")
+                throw Self.rateLimitError(from: response.data)
             }
             if let data = response.data,
                let errBody = try? JSONDecoder().decode(DiscourseErrorResponse.self, from: data),
                !errBody.errors.isEmpty {
-                throw DiscourseAPIError(messages: errBody.errors, errorType: errBody.errorType)
+                throw DiscourseAPIError(
+                    messages: errBody.errors,
+                    errorType: errBody.errorType,
+                    waitSeconds: errBody.extras?.waitSeconds
+                )
             }
             throw DiscourseAPIError(messages: [String(localized: "post.poll.vote_failed")], errorType: nil)
         }
@@ -386,10 +398,7 @@ extension DiscourseAPI {
         }
         if let statusCode = response.response?.statusCode, !(200 ..< 300).contains(statusCode) {
             if statusCode == 429 {
-                throw DiscourseAPIError(
-                    messages: [String(localized: "error.rate_limited")],
-                    errorType: "rate_limited"
-                )
+                throw Self.rateLimitError(from: response.data)
             }
             if statusCode == 403 {
                 throw Self.errorFromForbiddenStatus(data: response.data)

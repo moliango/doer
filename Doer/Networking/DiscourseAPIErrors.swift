@@ -69,12 +69,23 @@ struct DiscourseDecodingError: LocalizedError {
 }
 
 struct DiscourseErrorResponse: Decodable {
+    /// Rate-limited responses carry how long the client must wait before retrying.
+    struct Extras: Decodable {
+        let waitSeconds: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case waitSeconds = "wait_seconds"
+        }
+    }
+
     let errors: [String]
     let errorType: String?
+    let extras: Extras?
 
     enum CodingKeys: String, CodingKey {
         case errors
         case errorType = "error_type"
+        case extras
     }
 }
 
@@ -92,6 +103,8 @@ struct RawDiscourseResponse {
 struct DiscourseAPIError: LocalizedError {
     let messages: [String]
     let errorType: String?
+    /// Set when the server asked us to wait (rate limit / topic slow mode).
+    var waitSeconds: Int? = nil
 
     var isNotLoggedIn: Bool {
         errorType == "not_logged_in"
@@ -105,12 +118,40 @@ struct DiscourseAPIError: LocalizedError {
         errorType == "rate_limited"
     }
 
+    /// Discourse enforces topic slow mode with "此话题为慢速模式…" (or "slow mode").
+    /// Status/error_type vary by version, so key off the message itself.
+    var isSlowMode: Bool {
+        messages.contains { message in
+            message.contains("慢速") || message.localizedCaseInsensitiveContains("slow mode")
+        }
+    }
+
     var isCloudflareChallenge: Bool {
         errorType == "cloudflare_challenge"
     }
 
     var errorDescription: String? {
         messages.joined(separator: "\n")
+    }
+}
+
+extension DiscourseAPI {
+    /// 429 bodies carry the real reason (topic slow mode / global rate limit) plus
+    /// `extras.wait_seconds`. Keep them instead of flattening to a generic message.
+    static func rateLimitError(from data: Data?) -> DiscourseAPIError {
+        if let data,
+           let body = try? JSONDecoder().decode(DiscourseErrorResponse.self, from: data),
+           !body.errors.isEmpty {
+            return DiscourseAPIError(
+                messages: body.errors,
+                errorType: body.errorType ?? "rate_limited",
+                waitSeconds: body.extras?.waitSeconds
+            )
+        }
+        return DiscourseAPIError(
+            messages: [String(localized: "error.rate_limited")],
+            errorType: "rate_limited"
+        )
     }
 }
 
