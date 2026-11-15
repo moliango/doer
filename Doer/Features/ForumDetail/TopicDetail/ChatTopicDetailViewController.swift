@@ -162,7 +162,7 @@ class ChatTopicDetailViewController: ObservableViewController {
 
     private let errorLabel: UILabel = {
         let label = UILabel()
-        label.font = .systemFont(ofSize: 14)
+        label.font = TopicDetailTypography.chromeFont(.error, weight: .regular)
         label.textColor = .secondaryLabel
         label.textAlignment = .center
         label.numberOfLines = 0
@@ -173,7 +173,7 @@ class ChatTopicDetailViewController: ObservableViewController {
 
     private let remainderErrorFooter: UILabel = {
         let label = UILabel()
-        label.font = .systemFont(ofSize: 13)
+        label.font = TopicDetailTypography.chromeFont(.error, weight: .regular)
         label.textColor = .secondaryLabel
         label.textAlignment = .center
         label.numberOfLines = 0

@@ -36,6 +36,8 @@ final class BoostStripView: UIView {
 
     private let groups: [Group]
     private let baseURL: String
+    private let postUsername: String
+    private let postNumber: Int
     /// Slightly stronger fill for WeChat green bubbles so chips stay readable.
     private let prefersHighContrast: Bool
     private var emojiUpdateObserver: NSObjectProtocol?
@@ -63,12 +65,16 @@ final class BoostStripView: UIView {
     init?(
         boosts: [DiscourseTopicDetail.Boost],
         baseURL: String,
+        postUsername: String = "",
+        postNumber: Int = 0,
         prefersHighContrast: Bool = false
     ) {
         let groups = Self.makeGroups(from: boosts)
         guard !groups.isEmpty else { return nil }
         self.groups = groups
         self.baseURL = baseURL
+        self.postUsername = postUsername
+        self.postNumber = postNumber
         self.prefersHighContrast = prefersHighContrast
         super.init(frame: .zero)
         setupViews()
@@ -121,16 +127,13 @@ final class BoostStripView: UIView {
     }
 
     private func makeBubble(for group: Group, index: Int) -> UIView {
-        let accentColor = AppSettings.shared.themeStyle.accentColor
         let container = UIControl()
         container.tag = index
         container.backgroundColor = prefersHighContrast
             ? UIColor.secondarySystemGroupedBackground.withAlphaComponent(0.95)
-            : UIColor.tertiarySystemGroupedBackground
-        container.layer.cornerRadius = 14
+            : AppSettings.shared.themeStyle.topicChipBackgroundColor
+        container.layer.cornerRadius = BoostChipLayout.bubbleHeight / 2
         container.layer.cornerCurve = .continuous
-        container.layer.borderWidth = 1.0 / UIScreen.main.scale
-        container.layer.borderColor = UIColor.separator.withAlphaComponent(0.35).cgColor
         container.translatesAutoresizingMaskIntoConstraints = false
         container.addTarget(self, action: #selector(bubbleTapped(_:)), for: .touchUpInside)
 
@@ -151,29 +154,17 @@ final class BoostStripView: UIView {
 
         let countLabel = UILabel()
         countLabel.text = "\(group.boosts.count)"
-        countLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
-        countLabel.textColor = .white
+        countLabel.font = BoostChipLayout.countFont()
+        countLabel.textColor = .secondaryLabel
         countLabel.textAlignment = .center
-        countLabel.backgroundColor = accentColor
-        countLabel.layer.cornerRadius = 8
-        countLabel.clipsToBounds = true
         countLabel.translatesAutoresizingMaskIntoConstraints = false
         countLabel.setContentHuggingPriority(.required, for: .horizontal)
         countLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         countLabel.isHidden = group.boosts.count <= 1
 
-        let chevron = UIImageView(
-            image: UIImage(systemName: "chevron.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: 9, weight: .bold))
-        )
-        chevron.tintColor = .tertiaryLabel
-        chevron.translatesAutoresizingMaskIntoConstraints = false
-        chevron.setContentHuggingPriority(.required, for: .horizontal)
-        chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
-
         container.addSubview(avatarStack)
         container.addSubview(titleContent)
         container.addSubview(countLabel)
-        container.addSubview(chevron)
 
         let stackWidth = BoostChipLayout.avatarStackWidth(userCount: max(users.count, 1))
         let showCount = group.boosts.count > 1
@@ -186,7 +177,8 @@ final class BoostStripView: UIView {
         let bubbleWidth = BoostChipLayout.bubbleWidth(
             displayText: group.displayText,
             uniqueUserCount: max(users.count, 1),
-            boostCount: group.boosts.count
+            boostCount: group.boosts.count,
+            showsChevron: false
         )
 
         var constraints: [NSLayoutConstraint] = [
@@ -201,11 +193,7 @@ final class BoostStripView: UIView {
             titleContent.leadingAnchor.constraint(equalTo: avatarStack.trailingAnchor, constant: BoostChipLayout.avatarTextSpacing),
             titleContent.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             titleContent.widthAnchor.constraint(equalToConstant: titleWidth),
-            titleContent.heightAnchor.constraint(equalToConstant: 20),
-
-            chevron.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -BoostChipLayout.trailingPadding),
-            chevron.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            chevron.widthAnchor.constraint(equalToConstant: BoostChipLayout.chevronWidth),
+            titleContent.heightAnchor.constraint(equalToConstant: BoostChipLayout.emojiSize + 2),
         ]
 
         if showCount {
@@ -213,12 +201,11 @@ final class BoostStripView: UIView {
                 countLabel.leadingAnchor.constraint(equalTo: titleContent.trailingAnchor, constant: BoostChipLayout.textCountSpacing),
                 countLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
                 countLabel.widthAnchor.constraint(equalToConstant: BoostChipLayout.countBadgeWidth(count: group.boosts.count)),
-                countLabel.heightAnchor.constraint(equalToConstant: 16),
-                chevron.leadingAnchor.constraint(equalTo: countLabel.trailingAnchor, constant: BoostChipLayout.countChevronSpacing),
+                countLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -BoostChipLayout.trailingPadding),
             ]
         } else {
             constraints += [
-                chevron.leadingAnchor.constraint(equalTo: titleContent.trailingAnchor, constant: BoostChipLayout.textChevronSpacing),
+                titleContent.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -BoostChipLayout.trailingPadding),
             ]
         }
         NSLayoutConstraint.activate(constraints)
@@ -247,7 +234,7 @@ final class BoostStripView: UIView {
             let avatarView = UIImageView()
             avatarView.contentMode = .scaleAspectFill
             avatarView.clipsToBounds = true
-            avatarView.layer.cornerRadius = 10
+            avatarView.layer.cornerRadius = BoostChipLayout.avatarSize / 2
             avatarView.layer.borderWidth = 1.5
             avatarView.layer.borderColor = UIColor.systemBackground.cgColor
             avatarView.backgroundColor = .secondarySystemFill
@@ -263,10 +250,13 @@ final class BoostStripView: UIView {
             )
 
             NSLayoutConstraint.activate([
-                avatarView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: CGFloat(index) * 12),
+                avatarView.leadingAnchor.constraint(
+                    equalTo: container.leadingAnchor,
+                    constant: CGFloat(index) * BoostChipLayout.avatarOverlap
+                ),
                 avatarView.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-                avatarView.widthAnchor.constraint(equalToConstant: 20),
-                avatarView.heightAnchor.constraint(equalToConstant: 20),
+                avatarView.widthAnchor.constraint(equalToConstant: BoostChipLayout.avatarSize),
+                avatarView.heightAnchor.constraint(equalToConstant: BoostChipLayout.avatarSize),
             ])
         }
         return container
@@ -359,7 +349,11 @@ final class BoostStripView: UIView {
             let popover = BoostAuthorPopoverViewController(
                 boosts: visible,
                 currentUsername: currentUsername,
-                baseURL: self.baseURL
+                baseURL: self.baseURL,
+                postUsername: self.postUsername,
+                postNumber: self.postNumber,
+                previewCookedHTML: group.cookedHTML,
+                previewPlain: group.displayText
             )
             popover.onAction = { [weak self, weak host] action in
                 guard let self else { return }
@@ -372,13 +366,19 @@ final class BoostStripView: UIView {
                     self.presentFlagSheet(for: boost, from: host, api: api)
                 }
             }
-            popover.modalPresentationStyle = .popover
-            if let pop = popover.popoverPresentationController {
-                pop.sourceView = sourceView
-                pop.sourceRect = sourceView.bounds
-                pop.permittedArrowDirections = [.up, .down]
-                pop.delegate = popover
-                pop.backgroundColor = .secondarySystemGroupedBackground
+            popover.modalPresentationStyle = .pageSheet
+            if let sheet = popover.sheetPresentationController {
+                if #available(iOS 16.0, *) {
+                    let detent = UISheetPresentationController.Detent.custom(identifier: .init("boost")) { _ in
+                        popover.preferredContentSize.height
+                    }
+                    sheet.detents = [detent]
+                    sheet.selectedDetentIdentifier = detent.identifier
+                } else {
+                    sheet.detents = [.medium()]
+                }
+                sheet.prefersGrabberVisible = false
+                sheet.preferredCornerRadius = 22
             }
             (host ?? self.nearestViewController())?.present(popover, animated: true)
         }
@@ -534,12 +534,19 @@ final class BoostStripView: UIView {
         }
     }
 
-    /// Horizontal text + UIImageView. Emoji URLs come from /emojis.json via EmojiStore.
-    private func makeTitleContent(for group: Group, font: UIFont) -> UIView {
-        // Do not call EmojiStore.load here — it posts didUpdate and would loop reloads.
-        let segments = Self.parseTitleSegments(
-            cookedHTML: group.cookedHTML,
-            plainFallback: group.displayText,
+    static func makeTitleContentView(
+        cookedHTML: String,
+        plainFallback: String,
+        baseURL: String,
+        font: UIFont,
+        emojiSize: CGFloat,
+        textColor: UIColor,
+        numberOfLines: Int,
+        tag: Int = 0
+    ) -> UIView {
+        let segments = parseTitleSegments(
+            cookedHTML: cookedHTML,
+            plainFallback: plainFallback,
             baseURL: baseURL
         )
 
@@ -548,18 +555,22 @@ final class BoostStripView: UIView {
         stack.alignment = .center
         stack.spacing = 2
         stack.isUserInteractionEnabled = false
-        stack.tag = Self.titleStackTag
+        stack.tag = tag
 
         if segments.isEmpty {
             let label = UILabel()
             label.text = String(localized: "post.boost", defaultValue: "Boost")
             label.font = font
-            label.textColor = .label
+            label.textColor = textColor
             stack.addArrangedSubview(label)
             return stack
         }
 
-        let emojiSize = max(font.pointSize + 2, 14)
+        let row = UIStackView()
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 2
+        row.isUserInteractionEnabled = false
         for segment in segments {
             switch segment {
             case .text(let value):
@@ -567,12 +578,12 @@ final class BoostStripView: UIView {
                 let label = UILabel()
                 label.text = value
                 label.font = font
-                label.textColor = .label
-                label.numberOfLines = 1
+                label.textColor = textColor
+                label.numberOfLines = numberOfLines
                 label.lineBreakMode = .byTruncatingTail
                 label.setContentHuggingPriority(.required, for: .horizontal)
-                label.setContentCompressionResistancePriority(.required, for: .horizontal)
-                stack.addArrangedSubview(label)
+                label.setContentCompressionResistancePriority(numberOfLines > 1 ? .defaultLow : .required, for: .horizontal)
+                row.addArrangedSubview(label)
             case .emoji(let url, let code):
                 let imageView = UIImageView()
                 imageView.contentMode = .scaleAspectFit
@@ -583,9 +594,7 @@ final class BoostStripView: UIView {
                     imageView.widthAnchor.constraint(equalToConstant: emojiSize),
                     imageView.heightAnchor.constraint(equalToConstant: emojiSize),
                 ])
-                stack.addArrangedSubview(imageView)
-                // Match emoji picker: public emoji assets don't need CF gate cookies.
-                // Uploads (/uploads/) still get forum base for cookie/referer.
+                row.addArrangedSubview(imageView)
                 let needsForumAuth = url.path.localizedCaseInsensitiveContains("/uploads/")
                 ForumImageLoader.setImage(
                     on: imageView,
@@ -594,7 +603,21 @@ final class BoostStripView: UIView {
                 )
             }
         }
+        stack.addArrangedSubview(row)
         return stack
+    }
+
+    private func makeTitleContent(for group: Group, font: UIFont) -> UIView {
+        Self.makeTitleContentView(
+            cookedHTML: group.cookedHTML,
+            plainFallback: group.displayText,
+            baseURL: baseURL,
+            font: font,
+            emojiSize: BoostChipLayout.emojiSize,
+            textColor: .label,
+            numberOfLines: 1,
+            tag: Self.titleStackTag
+        )
     }
 
     /// Parse boost cooked HTML into text / emoji URL segments.

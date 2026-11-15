@@ -208,12 +208,15 @@ extension AppSettings {
             }
         }
 
+        /// Reading-body base size. `.standard` is anchored to the LINUX DO official
+        /// app's standard reading size (16pt); the other tiers keep their original
+        /// spacing, re-anchored by the same 16 / 13.94 ratio.
         nonisolated var basePointSize: CGFloat {
             switch self {
-            case .small: return 13.67
-            case .standard: return 13.94
-            case .large: return 15.92
-            case .extraLarge: return 17.17
+            case .small: return 15.69
+            case .standard: return 16
+            case .large: return 18.27
+            case .extraLarge: return 19.71
             }
         }
 

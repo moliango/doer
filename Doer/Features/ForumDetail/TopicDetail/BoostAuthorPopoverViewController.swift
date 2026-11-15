@@ -1,7 +1,6 @@
 import UIKit
 
-/// Native author / flag / delete popover shown when a Boost chip is tapped.
-/// Behavior from FluxDo `boost_author_popover`; UI is UIKit card chrome.
+/// Boost detail card. Title, preview, floor, profile, and flag match the official sheet.
 final class BoostAuthorPopoverViewController: UIViewController {
     enum Action {
         case profile(String)
@@ -14,19 +13,31 @@ final class BoostAuthorPopoverViewController: UIViewController {
     private let boosts: [DiscourseTopicDetail.Boost]
     private let currentUsername: String?
     private let baseURL: String
+    private let postUsername: String
+    private let postNumber: Int
+    private let previewCookedHTML: String
+    private let previewPlain: String
     private let accent = AppSettings.shared.themeStyle.accentColor
 
     init(
         boosts: [DiscourseTopicDetail.Boost],
         currentUsername: String?,
-        baseURL: String
+        baseURL: String,
+        postUsername: String = "",
+        postNumber: Int = 0,
+        previewCookedHTML: String = "",
+        previewPlain: String = ""
     ) {
         self.boosts = boosts
         self.currentUsername = currentUsername
         self.baseURL = baseURL
+        self.postUsername = postUsername
+        self.postNumber = postNumber
+        self.previewCookedHTML = previewCookedHTML
+        self.previewPlain = previewPlain
         super.init(nibName: nil, bundle: nil)
-        modalPresentationStyle = .popover
-        preferredContentSize = CGSize(width: 260, height: 120)
+        modalPresentationStyle = .pageSheet
+        preferredContentSize = CGSize(width: 360, height: 280)
     }
 
     @available(*, unavailable)
@@ -36,274 +47,277 @@ final class BoostAuthorPopoverViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .secondarySystemGroupedBackground
-        if boosts.count == 1 {
-            layoutSingle(boosts[0])
-        } else {
-            layoutGroup()
-        }
-    }
-
-    private func layoutSingle(_ boost: DiscourseTopicDetail.Boost) {
-        let card = makeAuthorCard(boost: boost, showsActions: true)
+        view.backgroundColor = .clear
+        installGlass()
+        let card = makeCard()
         card.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(card)
-        NSLayoutConstraint.activate([
-            card.topAnchor.constraint(equalTo: view.topAnchor),
-            card.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            card.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            card.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
-        preferredContentSize = CGSize(width: 260, height: card.systemLayoutSizeFitting(
-            CGSize(width: 260, height: UIView.layoutFittingCompressedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        ).height)
-    }
-
-    private func layoutGroup() {
         let scroll = UIScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.alwaysBounceVertical = true
+        scroll.alwaysBounceVertical = boosts.count > 1
+        scroll.backgroundColor = .clear
         view.addSubview(scroll)
-
-        let stack = UIStackView()
-        stack.axis = .vertical
-        stack.spacing = 0
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        scroll.addSubview(stack)
-
+        scroll.addSubview(card)
         NSLayoutConstraint.activate([
             scroll.topAnchor.constraint(equalTo: view.topAnchor),
             scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-
-            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
-            stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
+            card.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 8),
+            card.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            card.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -12),
+            card.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
         ])
-
-        for (index, boost) in boosts.enumerated() {
-            stack.addArrangedSubview(makeAuthorCard(boost: boost, showsActions: true))
-            if index < boosts.count - 1 {
-                let line = UIView()
-                line.backgroundColor = UIColor.separator.withAlphaComponent(0.45)
-                line.translatesAutoresizingMaskIntoConstraints = false
-                line.heightAnchor.constraint(equalToConstant: 1.0 / UIScreen.main.scale).isActive = true
-                stack.addArrangedSubview(line)
-            }
-        }
-
-        let fitted = stack.systemLayoutSizeFitting(
-            CGSize(width: 280, height: UIView.layoutFittingCompressedSize.height),
+        let height = card.systemLayoutSizeFitting(
+            CGSize(width: view.bounds.width > 1 ? view.bounds.width : 360, height: 0),
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
-        ).height
-        preferredContentSize = CGSize(width: 280, height: min(fitted, 360))
+        ).height + 28
+        preferredContentSize = CGSize(width: 360, height: min(max(height, 240), 520))
     }
 
-    private func makeAuthorCard(boost: DiscourseTopicDetail.Boost, showsActions: Bool) -> UIView {
-        let card = UIView()
-        card.translatesAutoresizingMaskIntoConstraints = false
-
-        let avatar = UIImageView()
-        avatar.translatesAutoresizingMaskIntoConstraints = false
-        avatar.contentMode = .scaleAspectFill
-        avatar.clipsToBounds = true
-        avatar.layer.cornerRadius = 18
-        avatar.backgroundColor = .tertiarySystemFill
-        AvatarImageLoader.setImage(
-            on: avatar,
-            url: AvatarImageLoader.url(from: boost.user.avatarTemplate, baseURL: baseURL, size: AvatarImageLoader.primaryAvatarPixelSize),
-            placeholder: UIImage(systemName: "person.crop.circle.fill")
-        )
-
-        let displayName = (boost.user.name?.isEmpty == false ? boost.user.name! : boost.user.username)
-        let nameLabel = UILabel()
-        nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.font = .systemFont(ofSize: 15, weight: .semibold)
-        nameLabel.textColor = .label
-        nameLabel.text = displayName
-        nameLabel.numberOfLines = 1
-
-        let handleLabel = UILabel()
-        handleLabel.translatesAutoresizingMaskIntoConstraints = false
-        handleLabel.font = .systemFont(ofSize: 13, weight: .regular)
-        handleLabel.textColor = .secondaryLabel
-        handleLabel.text = "@\(boost.user.username)"
-        handleLabel.numberOfLines = 1
-
-        let identity = UIControl()
-        identity.translatesAutoresizingMaskIntoConstraints = false
-        identity.addSubview(avatar)
-        identity.addSubview(nameLabel)
-        identity.addSubview(handleLabel)
-        NSLayoutConstraint.activate([
-            avatar.leadingAnchor.constraint(equalTo: identity.leadingAnchor),
-            avatar.topAnchor.constraint(equalTo: identity.topAnchor),
-            avatar.bottomAnchor.constraint(lessThanOrEqualTo: identity.bottomAnchor),
-            avatar.widthAnchor.constraint(equalToConstant: 36),
-            avatar.heightAnchor.constraint(equalToConstant: 36),
-
-            nameLabel.leadingAnchor.constraint(equalTo: avatar.trailingAnchor, constant: 10),
-            nameLabel.trailingAnchor.constraint(equalTo: identity.trailingAnchor),
-            nameLabel.topAnchor.constraint(equalTo: identity.topAnchor),
-
-            handleLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            handleLabel.trailingAnchor.constraint(equalTo: nameLabel.trailingAnchor),
-            handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
-            handleLabel.bottomAnchor.constraint(equalTo: identity.bottomAnchor),
-        ])
-        let username = boost.user.username
-        if BoostActionPolicy.canViewAuthor(boost: boost) {
-            identity.addAction(UIAction { [weak self] _ in
-                self?.emit(.profile(username))
-            }, for: .touchUpInside)
+    private func installGlass() {
+        let effectView: UIVisualEffectView
+        if #available(iOS 26.0, *) {
+            effectView = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
+        } else {
+            effectView = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
         }
-
-        let stack = UIStackView(arrangedSubviews: [identity])
-        stack.axis = .vertical
-        stack.spacing = 8
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(stack)
+        effectView.translatesAutoresizingMaskIntoConstraints = false
+        view.insertSubview(effectView, at: 0)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 12),
-            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
-            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10),
+            effectView.topAnchor.constraint(equalTo: view.topAnchor),
+            effectView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            effectView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            effectView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
+    }
 
-        guard showsActions else { return card }
+    private func makeCard() -> UIView {
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.spacing = 0
+        stack.addArrangedSubview(makeHeader(username: boosts.count == 1 ? boosts[0].user.username : ""))
+        for boost in boosts {
+            stack.addArrangedSubview(makePersonSection(boost))
+        }
+        return stack
+    }
 
-        let actions = UIStackView()
-        actions.axis = .horizontal
-        actions.spacing = 6
-        actions.distribution = .fillEqually
-        actions.translatesAutoresizingMaskIntoConstraints = false
-
+    private func makePersonSection(_ boost: DiscourseTopicDetail.Boost) -> UIView {
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.spacing = 0
+        stack.addArrangedSubview(makePreview(for: boost))
         if BoostActionPolicy.canViewAuthor(boost: boost) {
-            actions.addArrangedSubview(
-                makeActionButton(
-                    symbol: "person.crop.circle",
-                    title: String(localized: "boost.author.profile", defaultValue: "主页"),
-                    color: accent
-                ) { [weak self] in
-                    self?.emit(.profile(username))
-                }
-            )
+            stack.addArrangedSubview(makeHairline())
+            stack.addArrangedSubview(makeMenuRow(
+                symbol: "person",
+                title: String(localized: "boost.author.view_profile", defaultValue: "查看主页"),
+                tint: .label
+            ) { [weak self] in
+                self?.emit(.profile(boost.user.username))
+            })
         }
         if BoostActionPolicy.canFlag(boost: boost, currentUsername: currentUsername) {
-            actions.addArrangedSubview(makeFlagButton(for: boost))
+            stack.addArrangedSubview(makeHairline())
+            stack.addArrangedSubview(makeMenuRow(
+                symbol: "flag.fill",
+                title: String(localized: "boost.flag.action", defaultValue: "举报 Boost"),
+                tint: .systemRed
+            ) { [weak self] in
+                self?.emit(.flag(boost))
+            })
+        } else if BoostActionPolicy.boostAlreadyReported(boost: boost, currentUsername: currentUsername) {
+            stack.addArrangedSubview(makeHairline())
+            stack.addArrangedSubview(makeMenuRow(
+                symbol: "flag.fill",
+                title: String(localized: "boost.flag.already_reported", defaultValue: "已举报"),
+                tint: .tertiaryLabel,
+                enabled: false
+            ) {})
         }
         if BoostActionPolicy.canDelete(boost: boost, currentUsername: currentUsername) {
-            actions.addArrangedSubview(
-                makeActionButton(
-                    symbol: "trash",
-                    title: String(localized: "common.delete", defaultValue: "删除"),
-                    color: .systemRed
-                ) { [weak self] in
-                    self?.emit(.delete(boost))
-                }
-            )
+            stack.addArrangedSubview(makeHairline())
+            stack.addArrangedSubview(makeMenuRow(
+                symbol: "trash",
+                title: String(localized: "boost.delete.action", defaultValue: "移除这条 Boost"),
+                tint: .systemRed
+            ) { [weak self] in
+                self?.emit(.delete(boost))
+            })
         }
-
-        if !actions.arrangedSubviews.isEmpty {
-            let divider = UIView()
-            divider.backgroundColor = UIColor.separator.withAlphaComponent(0.45)
-            divider.translatesAutoresizingMaskIntoConstraints = false
-            divider.heightAnchor.constraint(equalToConstant: 1.0 / UIScreen.main.scale).isActive = true
-            stack.addArrangedSubview(divider)
-            stack.addArrangedSubview(actions)
-        }
-        return card
+        return stack
     }
 
-    /// Compact red flag control matching Discourse / FluxDo boost tap affordance.
-    private func makeFlagButton(for boost: DiscourseTopicDetail.Boost) -> UIControl {
-        let control = UIControl()
-        control.translatesAutoresizingMaskIntoConstraints = false
-        control.accessibilityLabel = String(localized: "boost.flag", defaultValue: "举报")
-        control.backgroundColor = UIColor.systemRed.withAlphaComponent(0.12)
-        control.layer.cornerRadius = 10
-        control.layer.cornerCurve = .continuous
+    private func makeHeader(username: String) -> UIView {
+        let header = UIView()
+        header.translatesAutoresizingMaskIntoConstraints = false
+        let title = UILabel()
+        title.translatesAutoresizingMaskIntoConstraints = false
+        let name = username
+        title.text = name.isEmpty
+            ? String(localized: "post.boost", defaultValue: "Boost")
+            : "Boost · \(name)"
+        title.font = .systemFont(ofSize: 17, weight: .semibold)
+        title.textColor = .label
+        title.textAlignment = .center
 
-        let icon = UIImageView(
-            image: UIImage(systemName: "flag.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
+        let close = UIButton(type: .system)
+        close.translatesAutoresizingMaskIntoConstraints = false
+        close.setImage(
+            UIImage(systemName: "xmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .bold)),
+            for: .normal
         )
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.tintColor = .systemRed
-        icon.isUserInteractionEnabled = false
-
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.text = String(localized: "boost.flag", defaultValue: "举报")
-        label.font = .systemFont(ofSize: 12, weight: .semibold)
-        label.textColor = .systemRed
-        label.isUserInteractionEnabled = false
-
-        let row = UIStackView(arrangedSubviews: [icon, label])
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.axis = .horizontal
-        row.alignment = .center
-        row.spacing = 4
-        row.isUserInteractionEnabled = false
-        control.addSubview(row)
-        NSLayoutConstraint.activate([
-            control.heightAnchor.constraint(greaterThanOrEqualToConstant: 34),
-            row.centerXAnchor.constraint(equalTo: control.centerXAnchor),
-            row.centerYAnchor.constraint(equalTo: control.centerYAnchor),
-            row.leadingAnchor.constraint(greaterThanOrEqualTo: control.leadingAnchor, constant: 6),
-            row.trailingAnchor.constraint(lessThanOrEqualTo: control.trailingAnchor, constant: -6),
-        ])
-        control.addAction(UIAction { [weak self] _ in
-            self?.emit(.flag(boost))
+        close.tintColor = .secondaryLabel
+        close.accessibilityLabel = String(localized: "common.close", defaultValue: "关闭")
+        close.addAction(UIAction { [weak self] _ in
+            self?.dismiss(animated: true)
         }, for: .touchUpInside)
-        return control
+        let plate = UIView()
+        plate.translatesAutoresizingMaskIntoConstraints = false
+        plate.isUserInteractionEnabled = false
+        plate.backgroundColor = UIColor.tertiarySystemFill
+        plate.layer.cornerRadius = 15
+        plate.layer.cornerCurve = .continuous
+        close.addSubview(plate)
+        close.sendSubviewToBack(plate)
+
+        header.addSubview(title)
+        header.addSubview(close)
+        NSLayoutConstraint.activate([
+            header.heightAnchor.constraint(equalToConstant: 52),
+            title.centerXAnchor.constraint(equalTo: header.centerXAnchor),
+            title.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            title.leadingAnchor.constraint(greaterThanOrEqualTo: close.trailingAnchor, constant: 8),
+            close.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 8),
+            close.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            close.widthAnchor.constraint(equalToConstant: 44),
+            close.heightAnchor.constraint(equalToConstant: 44),
+            plate.centerXAnchor.constraint(equalTo: close.centerXAnchor),
+            plate.centerYAnchor.constraint(equalTo: close.centerYAnchor),
+            plate.widthAnchor.constraint(equalToConstant: 30),
+            plate.heightAnchor.constraint(equalToConstant: 30),
+        ])
+        return header
     }
 
-    private func makeActionButton(
+    private func makePreview(for boost: DiscourseTopicDetail.Boost) -> UIView {
+        let wrap = UIView()
+        wrap.translatesAutoresizingMaskIntoConstraints = false
+        let bubble = UIView()
+        bubble.translatesAutoresizingMaskIntoConstraints = false
+        bubble.backgroundColor = AppSettings.shared.themeStyle.topicChipBackgroundColor
+        bubble.layer.cornerRadius = 16
+        bubble.layer.cornerCurve = .continuous
+
+        let content = BoostStripView.makeTitleContentView(
+            cookedHTML: boost.cooked.isEmpty ? previewCookedHTML : boost.cooked,
+            plainFallback: previewPlain,
+            baseURL: baseURL,
+            font: .systemFont(ofSize: 16),
+            emojiSize: 22,
+            textColor: .label,
+            numberOfLines: 3
+        )
+        content.translatesAutoresizingMaskIntoConstraints = false
+
+        let floor = UILabel()
+        floor.translatesAutoresizingMaskIntoConstraints = false
+        floor.font = .systemFont(ofSize: 14)
+        floor.textColor = .secondaryLabel
+        let sender = boost.user.username
+        if postNumber > 0, !sender.isEmpty {
+            floor.text = "@\(sender) · #\(postNumber)"
+        } else if !sender.isEmpty {
+            floor.text = "@\(sender)"
+        } else {
+            floor.text = nil
+        }
+
+        bubble.addSubview(content)
+        wrap.addSubview(bubble)
+        wrap.addSubview(floor)
+        NSLayoutConstraint.activate([
+            bubble.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 4),
+            bubble.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 16),
+            bubble.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -16),
+            content.topAnchor.constraint(equalTo: bubble.topAnchor, constant: 12),
+            content.leadingAnchor.constraint(equalTo: bubble.leadingAnchor, constant: 14),
+            content.trailingAnchor.constraint(equalTo: bubble.trailingAnchor, constant: -14),
+            content.bottomAnchor.constraint(equalTo: bubble.bottomAnchor, constant: -12),
+            floor.topAnchor.constraint(equalTo: bubble.bottomAnchor, constant: 10),
+            floor.leadingAnchor.constraint(equalTo: bubble.leadingAnchor, constant: 4),
+            floor.trailingAnchor.constraint(equalTo: bubble.trailingAnchor),
+            floor.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -12),
+        ])
+        return wrap
+    }
+
+    private func makeMenuRow(
         symbol: String,
         title: String,
-        color: UIColor,
+        tint: UIColor,
+        enabled: Bool = true,
         handler: @escaping () -> Void
-    ) -> UIControl {
-        let control = UIControl()
-        control.translatesAutoresizingMaskIntoConstraints = false
-        control.layer.cornerRadius = 10
-        control.layer.cornerCurve = .continuous
-        control.backgroundColor = UIColor.tertiarySystemFill.withAlphaComponent(0.5)
+    ) -> UIView {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.contentHorizontalAlignment = .leading
+        button.isEnabled = enabled
+        button.accessibilityLabel = title
 
-        let icon = UIImageView(
-            image: UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
-        )
+        let symbolConfig = UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        let icon = UIImageView(image: UIImage(systemName: symbol, withConfiguration: symbolConfig))
         icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.tintColor = color
         icon.isUserInteractionEnabled = false
+        icon.tintColor = tint
+        icon.contentMode = .scaleAspectFit
 
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.text = title
-        label.font = .systemFont(ofSize: 12, weight: .medium)
-        label.textColor = color
         label.isUserInteractionEnabled = false
+        label.text = title
+        label.font = .systemFont(ofSize: 16, weight: .medium)
+        label.textColor = tint
 
-        let row = UIStackView(arrangedSubviews: [icon, label])
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.axis = .horizontal
-        row.alignment = .center
-        row.spacing = 4
-        row.isUserInteractionEnabled = false
-        control.addSubview(row)
+        button.addSubview(icon)
+        button.addSubview(label)
         NSLayoutConstraint.activate([
-            control.heightAnchor.constraint(greaterThanOrEqualToConstant: 34),
-            row.centerXAnchor.constraint(equalTo: control.centerXAnchor),
-            row.centerYAnchor.constraint(equalTo: control.centerYAnchor),
+            button.heightAnchor.constraint(equalToConstant: 50),
+            icon.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 18),
+            icon.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 22),
+            icon.heightAnchor.constraint(equalToConstant: 22),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 12),
+            label.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: button.trailingAnchor, constant: -16),
         ])
-        control.addAction(UIAction { _ in handler() }, for: .touchUpInside)
-        return control
+        if enabled {
+            button.addAction(UIAction { _ in handler() }, for: .touchUpInside)
+            let highlight = tint.withAlphaComponent(0.08)
+            button.configurationUpdateHandler = { btn in
+                btn.backgroundColor = btn.isHighlighted ? highlight : .clear
+            }
+        }
+        return button
+    }
+
+    private func makeHairline() -> UIView {
+        let wrap = UIView()
+        wrap.translatesAutoresizingMaskIntoConstraints = false
+        let line = UIView()
+        line.translatesAutoresizingMaskIntoConstraints = false
+        line.backgroundColor = UIColor.separator.withAlphaComponent(0.4)
+        wrap.addSubview(line)
+        NSLayoutConstraint.activate([
+            wrap.heightAnchor.constraint(equalToConstant: 1.0 / UIScreen.main.scale),
+            line.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 18),
+            line.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
+            line.topAnchor.constraint(equalTo: wrap.topAnchor),
+            line.bottomAnchor.constraint(equalTo: wrap.bottomAnchor),
+        ])
+        return wrap
     }
 
     private func emit(_ action: Action) {

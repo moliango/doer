@@ -286,7 +286,9 @@ final class TopicDetailNativeLayoutTests: XCTestCase {
         XCTAssertTrue(BoostActionPolicy.canDelete(boost: selfBoost, currentUsername: "alice"))
         XCTAssertFalse(BoostActionPolicy.canFlag(boost: selfBoost, currentUsername: "alice"))
         XCTAssertTrue(BoostActionPolicy.canFlag(boost: otherBoost, currentUsername: "alice"))
-        XCTAssertFalse(BoostActionPolicy.canFlag(boost: otherBoost, currentUsername: nil))
+        XCTAssertTrue(BoostActionPolicy.canFlag(boost: otherBoost, currentUsername: nil))
+        let omittedPermission = otherBoost.replacingActionState(canFlag: false)
+        XCTAssertTrue(BoostActionPolicy.canFlag(boost: omittedPermission, currentUsername: "alice"))
 
         let reported = otherBoost.replacingActionState(userFlagStatus: 1)
         XCTAssertTrue(BoostActionPolicy.boostAlreadyReported(boost: reported, currentUsername: "alice"))

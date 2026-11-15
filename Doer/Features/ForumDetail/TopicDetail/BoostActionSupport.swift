@@ -3,35 +3,37 @@ import UIKit
 /// FluxDo `boost_list` chip sizing: measure the real title/count so the bubble
 /// expands to the text instead of clipping the label or count badge.
 enum BoostChipLayout {
-    static let bubbleHeight: CGFloat = 28
-    static let stripHeight: CGFloat = 34
-    static let avatarSize: CGFloat = 20
-    static let avatarOverlap: CGFloat = 12
-    static let singleTextMaxWidth: CGFloat = 220
-    static let groupedTextMaxWidth: CGFloat = 180
-    static let chevronWidth: CGFloat = 10
-    static let leadingPadding: CGFloat = 4
-    static let trailingPadding: CGFloat = 6
-    static let avatarTextSpacing: CGFloat = 5
-    static let textCountSpacing: CGFloat = 5
-    static let countChevronSpacing: CGFloat = 4
-    static let textChevronSpacing: CGFloat = 4
-    static let countHorizontalPadding: CGFloat = 12
-    static let countMinWidth: CGFloat = 18
+    static let bubbleHeight: CGFloat = 32
+    static let stripHeight: CGFloat = 40
+    static let avatarSize: CGFloat = 22
+    static let avatarOverlap: CGFloat = 14
+    static let emojiSize: CGFloat = 18
+    static let singleTextMaxWidth: CGFloat = 240
+    static let groupedTextMaxWidth: CGFloat = 200
+    static let chevronWidth: CGFloat = 0
+    static let leadingPadding: CGFloat = 5
+    static let trailingPadding: CGFloat = 10
+    static let avatarTextSpacing: CGFloat = 6
+    static let textCountSpacing: CGFloat = 6
+    static let countChevronSpacing: CGFloat = 0
+    static let textChevronSpacing: CGFloat = 0
+    static let countHorizontalPadding: CGFloat = 2
+    static let countMinWidth: CGFloat = 8
 
     private static let shortcodeRegex = try! NSRegularExpression(pattern: ":([^\\s:]+(?::t\\d)?):")
 
     static func titleFont() -> UIFont {
-        TopicDetailTypography.interfaceFont(ofSize: 12, weight: .regular)
+        TopicDetailTypography.interfaceFont(ofSize: 14, weight: .medium)
     }
 
     static func countFont() -> UIFont {
-        .monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
+        .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
     }
 
     static func avatarStackWidth(userCount: Int) -> CGFloat {
         let visible = min(max(userCount, 1), 3)
-        return visible <= 1 ? avatarSize : avatarSize + CGFloat(visible - 1) * avatarOverlap
+        let step = avatarSize - (avatarSize - avatarOverlap)
+        return visible <= 1 ? avatarSize : avatarSize + CGFloat(visible - 1) * step
     }
 
     /// FluxDo replaces `:shortcode:` with a circle so emoji-only chips don't
@@ -121,12 +123,16 @@ enum BoostActionPolicy {
         boost: DiscourseTopicDetail.Boost,
         currentUsername: String?
     ) -> Bool {
-        guard let currentUsername, !currentUsername.isEmpty else { return false }
         if boostAlreadyReported(boost: boost, currentUsername: currentUsername) {
             return false
         }
-        let isOwn = currentUsername.caseInsensitiveCompare(boost.user.username) == .orderedSame
-        return !isOwn && boost.canFlag
+        // A missing session name must not hide the flag. Only the author is excluded.
+        if let currentUsername,
+           !currentUsername.isEmpty,
+           currentUsername.caseInsensitiveCompare(boost.user.username) == .orderedSame {
+            return false
+        }
+        return true
     }
 
     static func canViewAuthor(boost: DiscourseTopicDetail.Boost) -> Bool {

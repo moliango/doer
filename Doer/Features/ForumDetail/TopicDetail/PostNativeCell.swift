@@ -178,7 +178,11 @@ final class PostNativeCell: UITableViewCell {
 
     let nameLabel: UILabel = {
         let label = UILabel()
-        label.font = .systemFont(ofSize: 14, weight: .semibold)
+        label.font = TopicDetailTypography.contentContextFont(
+            offsetFromBody: 2,
+            weight: .semibold,
+            relativeTo: .subheadline
+        )
         label.translatesAutoresizingMaskIntoConstraints = false
         label.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         return label
@@ -186,7 +190,11 @@ final class PostNativeCell: UITableViewCell {
 
     let usernameLabel: UILabel = {
         let label = UILabel()
-        label.font = .systemFont(ofSize: 12)
+        label.font = TopicDetailTypography.contentContextFont(
+            offsetFromBody: 0,
+            weight: .regular,
+            relativeTo: .caption1
+        )
         label.textColor = .secondaryLabel
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
@@ -194,7 +202,11 @@ final class PostNativeCell: UITableViewCell {
 
     let userTitleLabel: UILabel = {
         let label = UILabel()
-        label.font = .systemFont(ofSize: 12)
+        label.font = TopicDetailTypography.contentContextFont(
+            offsetFromBody: 0,
+            weight: .medium,
+            relativeTo: .caption1
+        )
         label.textColor = .systemYellow
         label.translatesAutoresizingMaskIntoConstraints = false
         label.isHidden = true
@@ -222,7 +234,11 @@ final class PostNativeCell: UITableViewCell {
 
     let timeLabel: UILabel = {
         let label = UILabel()
-        label.font = .systemFont(ofSize: 13.67)
+        label.font = TopicDetailTypography.contentContextFont(
+            offsetFromBody: -1,
+            weight: .regular,
+            relativeTo: .caption1
+        )
         label.textColor = .secondaryLabel
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
@@ -231,7 +247,11 @@ final class PostNativeCell: UITableViewCell {
     let whisperBadge: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: 10, weight: .semibold)
+        label.font = TopicDetailTypography.contentContextFont(
+            offsetFromBody: -6,
+            weight: .semibold,
+            relativeTo: .caption1
+        )
         label.textColor = .systemPurple
         label.backgroundColor = UIColor.systemPurple.withAlphaComponent(0.12)
         label.layer.cornerRadius = 8
@@ -245,14 +265,18 @@ final class PostNativeCell: UITableViewCell {
     let editsButton: UIButton = {
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.titleLabel?.font = .systemFont(ofSize: 11, weight: .semibold)
+        button.titleLabel?.font = TopicDetailTypography.chromeFont(.action, weight: .semibold)
         button.isHidden = true
         return button
     }()
 
     let floorLabel: UILabel = {
         let label = UILabel()
-        label.font = .monospacedDigitSystemFont(ofSize: 13.67, weight: .regular)
+        label.font = TopicDetailTypography.contentContextMonospacedFont(
+            offsetFromBody: -1,
+            weight: .regular,
+            relativeTo: .caption1
+        )
         label.textColor = .tertiaryLabel
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
@@ -277,7 +301,11 @@ final class PostNativeCell: UITableViewCell {
 
     let replyToLabel: UILabel = {
         let label = UILabel()
-        label.font = .systemFont(ofSize: 12)
+        label.font = TopicDetailTypography.contentContextFont(
+            offsetFromBody: -3,
+            weight: .regular,
+            relativeTo: .caption1
+        )
         label.textColor = .secondaryLabel
         label.translatesAutoresizingMaskIntoConstraints = false
         label.isHidden = true
@@ -317,7 +345,7 @@ final class PostNativeCell: UITableViewCell {
 
     let showRepliesButton: UIButton = {
         let button = UIButton(type: .system)
-        button.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
+        button.titleLabel?.font = TopicDetailTypography.interfaceFont(ofSize: 12, weight: .medium)
         button.tintColor = .secondaryLabel
         button.contentHorizontalAlignment = .leading
         button.isHidden = true
@@ -385,7 +413,7 @@ final class PostNativeCell: UITableViewCell {
 
     let reactionCountLabel: UILabel = {
         let label = UILabel()
-        label.font = .systemFont(ofSize: 12, weight: .semibold)
+        label.font = TopicDetailTypography.interfaceFont(ofSize: 12, weight: .semibold)
         label.textColor = .secondaryLabel
         return label
     }()
@@ -985,7 +1013,12 @@ final class PostNativeCell: UITableViewCell {
         config: NativeRenderConfig,
         baseURL: String
     ) {
-        if let boostStripView = BoostStripView(boosts: post.boosts, baseURL: baseURL) {
+        if let boostStripView = BoostStripView(
+            boosts: post.boosts,
+            baseURL: baseURL,
+            postUsername: post.username,
+            postNumber: post.postNumber
+        ) {
             boostStripView.onRequestDeleteBoost = { [weak self] boost in
                 guard let self, let current = self.currentPost else { return }
                 self.delegate?.postCell(didRequestDeleteBoost: boost, forPost: current)
@@ -1196,6 +1229,11 @@ final class PostNativeCell: UITableViewCell {
         sharedIssueButton.titleLabel?.font = TopicDetailTypography.interfaceFont(ofSize: 12.5, weight: .semibold)
         sharedIssueCountLabel.font = TopicDetailTypography.interfaceFont(ofSize: 11, weight: .semibold)
         reactionCountLabel.font = TopicDetailTypography.interfaceFont(ofSize: 12, weight: .semibold)
+        whisperBadge.font = TopicDetailTypography.contentContextFont(
+            offsetFromBody: -6,
+            weight: .semibold,
+            relativeTo: .caption1
+        )
 
         let avatarSize = min(
             max(Metrics.avatarSize * TopicDetailTypography.contentVisualScale(), Metrics.avatarSize),
@@ -1446,7 +1484,11 @@ final class ProgressiveTailPlaceholderView: UIView {
 
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.font = TopicDetailTypography.contentContextFont(
+            offsetFromBody: -4,
+            weight: .medium,
+            relativeTo: .caption1
+        )
         label.textColor = .tertiaryLabel
         label.textAlignment = .left
         label.text = String(

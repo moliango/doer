@@ -123,8 +123,10 @@ final class AppSettings: DoerObservableObject {
     nonisolated static let defaultFontScalePercent = 100
     nonisolated static let defaultInterfaceFontScalePercent = 100
     nonisolated static let legacyInterfaceFontDefaultPercent = 85
-    /// Default visual size for a 15pt source interface label; matches reading body at 100%.
-    nonisolated static let interfaceFontDefaultVisualPointSize: CGFloat = ContentFontSize.standard.basePointSize
+    /// Default visual size for a 15pt source interface label. Deliberately kept
+    /// independent from `ContentFontSize.standard.basePointSize`: the official app
+    /// keeps menus/buttons on the system size and only scales the reading text.
+    nonisolated static let interfaceFontDefaultVisualPointSize: CGFloat = 13.94
     nonisolated static let interfaceFontReferencePointSize: CGFloat = 15
     nonisolated static let interfaceFontDefaultVisualMultiplier: CGFloat =
         interfaceFontDefaultVisualPointSize / interfaceFontReferencePointSize

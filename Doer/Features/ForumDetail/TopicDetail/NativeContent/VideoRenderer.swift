@@ -299,7 +299,11 @@ final class VoiceMessageView: UIView {
         label.text = isVoice
             ? String(localized: "post.voice.message", defaultValue: "语音")
             : String(localized: "post.audio.message", defaultValue: "音频")
-        label.font = .systemFont(ofSize: 15, weight: .medium)
+        label.font = TopicDetailTypography.contentContextFont(
+            offsetFromBody: -1,
+            weight: .medium,
+            relativeTo: .body
+        )
         addSubview(playButton)
         addSubview(label)
         NSLayoutConstraint.activate([

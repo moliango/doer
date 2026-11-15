@@ -110,7 +110,7 @@ class WeChatChatPostCell: UITableViewCell {
 
     private let dateChipLabel: UILabel = {
         let label = UILabel()
-        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.font = TopicDetailTypography.chromeFont(.dateChip, weight: .medium)
         label.textColor = .secondaryLabel
         label.textAlignment = .center
         label.backgroundColor = UIColor.secondarySystemFill.withAlphaComponent(0.85)
@@ -141,7 +141,7 @@ class WeChatChatPostCell: UITableViewCell {
 
     private let nameLabel: UILabel = {
         let label = UILabel()
-        label.font = .systemFont(ofSize: 12, weight: .regular)
+        label.font = TopicDetailTypography.chromeFont(.authorMeta, weight: .regular)
         label.textColor = .secondaryLabel
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
@@ -177,7 +177,7 @@ class WeChatChatPostCell: UITableViewCell {
     /// Reply date + time under the avatar (WeChat / Telegram incoming).
     private let avatarTimeLabel: UILabel = {
         let label = UILabel()
-        label.font = .systemFont(ofSize: 10, weight: .regular)
+        label.font = TopicDetailTypography.chromeFont(.time, weight: .regular)
         label.textColor = .tertiaryLabel
         label.textAlignment = .center
         label.numberOfLines = 2
@@ -193,7 +193,7 @@ class WeChatChatPostCell: UITableViewCell {
     /// Time under the bubble (trailing) — no longer inside the bubble (avoids empty tail row).
     private let timeLabel: UILabel = {
         let label = UILabel()
-        label.font = .systemFont(ofSize: 11, weight: .regular)
+        label.font = TopicDetailTypography.chromeFont(.time, weight: .regular)
         label.textColor = .tertiaryLabel
         label.textAlignment = .right
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -256,7 +256,7 @@ class WeChatChatPostCell: UITableViewCell {
 
     private let reactionCountLabel: UILabel = {
         let label = UILabel()
-        label.font = .systemFont(ofSize: 12, weight: .semibold)
+        label.font = TopicDetailTypography.chromeFont(.action, weight: .semibold)
         label.textColor = .secondaryLabel
         label.setContentHuggingPriority(.required, for: .horizontal)
         return label
@@ -959,6 +959,8 @@ class WeChatChatPostCell: UITableViewCell {
         guard let boostStrip = BoostStripView(
             boosts: post.boosts,
             baseURL: baseURL,
+            postUsername: post.username,
+            postNumber: post.postNumber,
             // Outside the bubble: always use normal chip contrast (not green-bubble high-contrast).
             prefersHighContrast: false
         ) else {
@@ -1048,7 +1050,7 @@ class WeChatChatPostCell: UITableViewCell {
             : UIColor.black.withAlphaComponent(0.08)
 
         let maxWidth = max(bubbleWidth - 16, 80)
-        let font = weChatReplyQuoteLabel.font ?? UIFont.systemFont(ofSize: 12)
+        let font = weChatReplyQuoteLabel.font ?? TopicDetailTypography.chromeFont(.replyChip, weight: .regular)
         let bounding = (line as NSString).boundingRect(
             with: CGSize(width: maxWidth, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],

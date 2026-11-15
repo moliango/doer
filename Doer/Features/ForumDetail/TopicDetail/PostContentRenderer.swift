@@ -30,7 +30,7 @@ private struct WebRenderStyle: Sendable {
     let bodyFontFamilyCSS: String
 
     nonisolated static let `default` = WebRenderStyle(
-        bodyFontSize: 13.94,
+        bodyFontSize: 16,
         quoteFontSize: 12.94,
         codeFontSize: 11.94,
         accentHex: "#0079d3",
@@ -160,6 +160,20 @@ final class PostContentRenderer: NSObject {
             blockquoteBackgroundHex: themeStyle.webBlockquoteBackgroundHex,
             bodyFontFamilyCSS: settings.webContentFontFamilyCSS
         )
+    }
+
+    /// Theme-aware, dark-mode aware HTML document for a cooked/diff fragment.
+    /// Reuses the post renderer's wrapper (viewport, `<base href>`, theme colors) and
+    /// appends `extraCSS` to its `<style>` block — used by the revision diff viewer.
+    static func buildDocument(cooked: String, baseURL: String, extraCSS: String? = nil) -> String {
+        let html = buildHTML(
+            cooked: cooked,
+            baseURL: baseURL,
+            isDark: isDarkMode,
+            webStyle: currentWebRenderStyle
+        )
+        guard let extraCSS, !extraCSS.isEmpty else { return html }
+        return html.replacingOccurrences(of: "</head>", with: "<style>\(extraCSS)</style></head>")
     }
 
     nonisolated private static func buildHTML(
