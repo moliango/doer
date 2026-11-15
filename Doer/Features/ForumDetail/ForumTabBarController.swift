@@ -8,6 +8,10 @@ final class ForumTabBarController: UITabBarController {
     private(set) var navigationControllers: [UINavigationController] = []
     var onNavigationControllersChanged: (() -> Void)?
 
+    /// Visual-only liquid-glass shell behind the bar's items. It never takes a
+    /// touch; taps, badges and navigation still go through the real tab bar.
+    private let tabBarGlass = FloatingTabBarGlassView()
+
     private var isTabBarHiddenByScroll = false
     private var isAnimatingScrollTabBar = false
     private var scrollTabBarAnimationID = 0
@@ -81,8 +85,16 @@ final class ForumTabBarController: UITabBarController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        layoutTabBarGlass()
         guard !isAnimatingScrollTabBar else { return }
         applyCurrentTabBarLayout()
+    }
+
+    override var selectedIndex: Int {
+        didSet {
+            guard isViewLoaded, selectedIndex != oldValue else { return }
+            layoutTabBarGlass(animatedSelection: true)
+        }
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -183,19 +195,13 @@ final class ForumTabBarController: UITabBarController {
         let themeStyle = settings.themeStyle
         view.backgroundColor = themeStyle.topicListBackgroundColor
 
+        // The bar paints nothing itself: the floating glass capsule is either the
+        // system's own platter (iOS 26+) or the shell installed below.
         let appearance = UITabBarAppearance()
-        appearance.configureWithOpaqueBackground()
-
-        if themeStyle.prefersOpaqueChrome {
-            appearance.backgroundColor = themeStyle.chromeBackgroundColor
-            appearance.shadowColor = UIColor.separator.withAlphaComponent(0.45)
-        } else if themeStyle == .systemDefault || themeStyle == .oled {
-            appearance.backgroundColor = .systemBackground
-            appearance.shadowColor = UIColor.separator.withAlphaComponent(0.35)
-        } else {
-            appearance.backgroundColor = themeStyle.contentBackgroundColor
-            appearance.shadowColor = UIColor.separator.withAlphaComponent(0.35)
-        }
+        appearance.configureWithTransparentBackground()
+        appearance.backgroundColor = .clear
+        appearance.backgroundEffect = nil
+        appearance.shadowColor = .clear
 
         let normalTitleAttributes: [NSAttributedString.Key: Any] = [
             .font: settings.tabBarItemFont(selected: false),
@@ -216,30 +222,33 @@ final class ForumTabBarController: UITabBarController {
             itemAppearance.selected.iconColor = themeStyle.accentColor
         }
 
-        let newColor = appearance.backgroundColor
-        let applyBarColors = {
-            self.tabBar.standardAppearance = appearance
-            self.tabBar.scrollEdgeAppearance = appearance
-            self.tabBar.backgroundColor = newColor
-            self.tabBar.barTintColor = newColor
-        }
-        // Animating to true-black can blank the window until process restart.
-        if themeStyle == .oled {
-            applyBarColors()
-        } else {
-            let animator = DoerMotion.propertyAnimator(
-                duration: DoerMotion.standard,
-                timingParameters: DoerMotion.softSpring
-            )
-            animator.addAnimations(applyBarColors)
-            animator.startAnimation()
-        }
-
+        tabBar.standardAppearance = appearance
+        tabBar.scrollEdgeAppearance = appearance
+        tabBar.backgroundColor = .clear
+        tabBar.barTintColor = nil
         tabBar.tintColor = themeStyle.accentColor
         tabBar.unselectedItemTintColor = UIColor.secondaryLabel.withAlphaComponent(0.78)
-        tabBar.isOpaque = true
-        tabBar.isTranslucent = false
+        tabBar.isOpaque = false
+        tabBar.isTranslucent = true
         tabBar.alpha = 1
+
+        tabBarGlass.install(in: tabBar)
+        tabBarGlass.applyTheme(themeStyle)
+        layoutTabBarGlass()
+    }
+
+    /// Positions the glass capsule inside the bar's content area. The bar frame
+    /// math above is untouched, so content insets, scroll-hide and overlays keep
+    /// their existing behavior.
+    private func layoutTabBarGlass(animatedSelection: Bool = false) {
+        guard tabBarGlass.superview != nil, tabBar.bounds.width > 0 else { return }
+        tabBarGlass.update(
+            barBounds: tabBar.bounds,
+            bottomInset: tabBar.safeAreaInsets.bottom,
+            itemCount: navigationControllers.count,
+            selectedIndex: selectedIndex,
+            animated: animatedSelection
+        )
     }
 
     var visibleTabBarHeight: CGFloat {
@@ -1078,6 +1087,7 @@ extension ForumTabBarController: UITabBarControllerDelegate {
         isAnimatingScrollTabBar = false
         scrollTabBarAnimationID += 1
         applyCurrentTabBarLayout()
+        layoutTabBarGlass(animatedSelection: true)
         view.bringSubviewToFront(tabBar)
     }
 }
