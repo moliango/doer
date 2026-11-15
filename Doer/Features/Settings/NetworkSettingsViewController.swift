@@ -24,6 +24,8 @@ final class NetworkSettingsViewController: ObservableViewController {
 
     private let dohToggleRow = ReadingToggleRowView()
     private let statusRow = DataManagementActionRowView()
+    private let preferredNodeStatusRow = DataManagementActionRowView()
+    private let reselectNodeRow = DataManagementActionRowView()
     private let testRow = DataManagementActionRowView()
     private let moreRow = DataManagementActionRowView()
     private let cloudflareRow = DataManagementActionRowView()
@@ -60,8 +62,12 @@ final class NetworkSettingsViewController: ObservableViewController {
         }
         cloudflareRow.addTarget(self, action: #selector(openCloudflare), for: .touchUpInside)
         testRow.addTarget(self, action: #selector(testDoH), for: .touchUpInside)
+        reselectNodeRow.addTarget(self, action: #selector(reselectPreferredNode), for: .touchUpInside)
         moreRow.addTarget(self, action: #selector(openDoHDetail), for: .touchUpInside)
         healthRow.addTarget(self, action: #selector(openHealth), for: .touchUpInside)
+        PreferredNodeSelector.shared.onStatusChange = { [weak self] _ in
+            self?.refreshDataViews()
+        }
         avatarLoadingCard.onValueChanged = { [weak self] profile in
             guard let self else { return }
             settings.avatarLoadingProfile = profile
@@ -91,7 +97,7 @@ final class NetworkSettingsViewController: ObservableViewController {
             $0.removeFromSuperview()
         }
 
-        let dohRows: [UIView] = [dohToggleRow, statusRow, testRow, moreRow]
+        let dohRows: [UIView] = [dohToggleRow, statusRow, preferredNodeStatusRow, reselectNodeRow, testRow, moreRow]
         let dohStack = UIStackView(arrangedSubviews: dohRows)
         dohStack.axis = .vertical
         dohStack.spacing = 12
@@ -156,6 +162,30 @@ final class NetworkSettingsViewController: ObservableViewController {
         )
         statusRow.isUserInteractionEnabled = false
         statusRow.alpha = 0.92
+
+        preferredNodeStatusRow.configure(
+            title: String(localized: "settings.network.preferred_node", defaultValue: "节点优选"),
+            subtitle: PreferredNodeStatusText.subtitle(),
+            symbolName: "point.3.connected.trianglepath.dotted",
+            tintColor: accent,
+            backgroundColor: card
+        )
+        preferredNodeStatusRow.isUserInteractionEnabled = false
+        preferredNodeStatusRow.alpha = 0.92
+
+        let reselecting = PreferredNodeStatusText.isRunning
+        reselectNodeRow.configure(
+            title: String(localized: "settings.network.preferred_node.reselect", defaultValue: "重新优选"),
+            subtitle: String(
+                localized: "settings.network.preferred_node.subtitle",
+                defaultValue: "自己挑最快的 Cloudflare 边缘节点"
+            ),
+            symbolName: "arrow.triangle.2.circlepath",
+            tintColor: accent,
+            backgroundColor: card
+        )
+        reselectNodeRow.isUserInteractionEnabled = !reselecting
+        reselectNodeRow.alpha = reselecting ? 0.7 : 1
 
         let testSubtitle: String
         if isProbing {
@@ -246,6 +276,14 @@ final class NetworkSettingsViewController: ObservableViewController {
             self.isProbing = false
             self.lastProbe = result
             self.refreshDataViews()
+        }
+    }
+
+    @objc private func reselectPreferredNode() {
+        guard !PreferredNodeStatusText.isRunning else { return }
+        refreshDataViews()
+        LightweightDohProxyService.shared.reselectPreferredNode { [weak self] _ in
+            self?.refreshDataViews()
         }
     }
 

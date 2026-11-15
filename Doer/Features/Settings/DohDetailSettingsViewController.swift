@@ -34,6 +34,11 @@ final class DohDetailSettingsViewController: ObservableViewController {
     private let serverIPRow = DataManagementActionRowView()
     private let bootstrapRow = DataManagementActionRowView()
     private let upstreamRow = DataManagementActionRowView()
+    private let connectionModeRow = DataManagementActionRowView()
+    private let preferredNodeRow = ReadingToggleRowView()
+    private let preferredModeRow = DataManagementActionRowView()
+    private let atlasURLRow = DataManagementActionRowView()
+    private let reselectNodeRow = DataManagementActionRowView()
     private let debugLogRow = DataManagementActionRowView()
 
     private var builtInRows: [AppSettings.DoHProvider: DohServerRowView] = [:]
@@ -92,6 +97,17 @@ final class DohDetailSettingsViewController: ObservableViewController {
             LightweightDohProxyService.shared.configureFromSettings()
             self?.refreshDataViews()
         }
+        preferredModeRow.addTarget(self, action: #selector(choosePreferredMode), for: .touchUpInside)
+        connectionModeRow.addTarget(self, action: #selector(chooseConnectionMode), for: .touchUpInside)
+        reselectNodeRow.addTarget(self, action: #selector(reselectNode), for: .touchUpInside)
+        preferredNodeRow.onValueChanged = { [weak self] isOn in
+            self?.settings.preferredNodeEnabled = isOn
+            LightweightDohProxyService.shared.syncPreferredNode()
+            self?.refreshDataViews()
+        }
+        PreferredNodeSelector.shared.onStatusChange = { [weak self] _ in
+            self?.refreshDataViews()
+        }
 
         rebuildContent()
         refreshDataViews()
@@ -131,6 +147,17 @@ final class DohDetailSettingsViewController: ObservableViewController {
             title: String(localized: "settings.network.doh_detail.servers", defaultValue: "服务器"),
             symbolName: "server.rack",
             body: serverStack
+        ))
+
+        let preferredStack = UIStackView(arrangedSubviews: [
+            connectionModeRow, preferredNodeRow, preferredModeRow, atlasURLRow, reselectNodeRow,
+        ])
+        preferredStack.axis = .vertical
+        preferredStack.spacing = 12
+        contentStack.addArrangedSubview(makeSection(
+            title: String(localized: "settings.network.section.preferred_node", defaultValue: "节点优选"),
+            symbolName: "point.3.connected.trianglepath.dotted",
+            body: preferredStack
         ))
 
         let advancedStack = UIStackView(arrangedSubviews: [
@@ -317,6 +344,116 @@ final class DohDetailSettingsViewController: ObservableViewController {
             tintColor: accent,
             backgroundColor: card
         )
+
+        preferredNodeRow.configure(
+            title: String(localized: "settings.network.preferred_node", defaultValue: "节点优选"),
+            subtitle: PreferredNodeStatusText.subtitle(),
+            symbolName: "point.3.connected.trianglepath.dotted",
+            isOn: settings.preferredNodeEnabled,
+            accentColor: accent,
+            backgroundColor: card
+        )
+        let fellBack = settings.dohConnectionMode == .localECH && LocalConnectProxy.runtimeECHEscaped
+        connectionModeRow.configure(
+            title: String(localized: "settings.network.connection_mode", defaultValue: "连接方式"),
+            subtitle: fellBack
+                ? settings.dohConnectionMode.summary + " · " + String(
+                    localized: "settings.network.connection_mode.fell_back",
+                    defaultValue: "已回退到 Encrypted DNS"
+                )
+                : settings.dohConnectionMode.summary,
+            symbolName: "arrow.triangle.branch",
+            tintColor: accent,
+            backgroundColor: card
+        )
+        preferredModeRow.configure(
+            title: String(localized: "settings.network.preferred_node.mode", defaultValue: "连接方式"),
+            subtitle: "\(settings.preferredNodeMode.title) · \(settings.preferredNodeMode.summary)",
+            symbolName: "arrow.triangle.branch",
+            tintColor: accent,
+            backgroundColor: card
+        )
+        atlasURLRow.configure(
+            title: String(localized: "settings.network.preferred_node.atlas_url", defaultValue: "atlas 节点表"),
+            subtitle: settings.preferredNodeAtlasURL,
+            symbolName: "tablecells",
+            tintColor: accent,
+            backgroundColor: card
+        )
+        atlasURLRow.isUserInteractionEnabled = false
+        atlasURLRow.alpha = 0.92
+
+        let reselecting = PreferredNodeStatusText.isRunning
+        reselectNodeRow.configure(
+            title: String(localized: "settings.network.preferred_node.reselect", defaultValue: "重新优选"),
+            subtitle: PreferredNodeStatusText.subtitle(),
+            symbolName: "arrow.triangle.2.circlepath",
+            tintColor: accent,
+            backgroundColor: card
+        )
+        reselectNodeRow.isUserInteractionEnabled = !reselecting
+        reselectNodeRow.alpha = reselecting ? 0.7 : 1
+    }
+
+    @objc private func chooseConnectionMode() {
+        let sheet = UIAlertController(
+            title: String(localized: "settings.network.connection_mode", defaultValue: "连接方式"),
+            message: nil,
+            preferredStyle: .actionSheet
+        )
+        for mode in AppSettings.DohConnectionMode.allCases {
+            let action = UIAlertAction(title: mode.title, style: .default) { [weak self] _ in
+                guard let self else { return }
+                self.settings.dohConnectionMode = mode
+                LightweightDohProxyService.shared.clearRuntimeECHEscapeAndReapply()
+                self.refreshDataViews()
+            }
+            action.setValue(mode == settings.dohConnectionMode, forKey: "checked")
+            sheet.addAction(action)
+        }
+        sheet.addAction(UIAlertAction(
+            title: String(localized: "common.cancel", defaultValue: "取消"),
+            style: .cancel
+        ))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = connectionModeRow
+            popover.sourceRect = connectionModeRow.bounds
+        }
+        present(sheet, animated: true)
+    }
+
+    @objc private func choosePreferredMode() {
+        let sheet = UIAlertController(
+            title: String(localized: "settings.network.preferred_node.mode", defaultValue: "连接方式"),
+            message: nil,
+            preferredStyle: .actionSheet
+        )
+        for mode in AppSettings.PreferredNodeMode.allCases {
+            let action = UIAlertAction(title: mode.title, style: .default) { [weak self] _ in
+                self?.settings.preferredNodeMode = mode
+                LightweightDohProxyService.shared.syncPreferredNode()
+                self?.refreshDataViews()
+            }
+            action.setValue(mode == settings.preferredNodeMode, forKey: "checked")
+            sheet.addAction(action)
+        }
+        sheet.addAction(UIAlertAction(
+            title: String(localized: "common.cancel", defaultValue: "取消"),
+            style: .cancel
+        ))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = preferredModeRow
+            popover.sourceRect = preferredModeRow.bounds
+        }
+        present(sheet, animated: true)
+    }
+
+    @objc private func reselectNode() {
+        guard !PreferredNodeStatusText.isRunning else { return }
+        refreshDataViews()
+        LightweightDohProxyService.shared.reselectPreferredNode { [weak self] _ in
+            self?.refreshDataViews()
+        }
     }
 
     private func configureServerRow(
