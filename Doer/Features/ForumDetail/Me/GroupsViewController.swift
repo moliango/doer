@@ -857,6 +857,9 @@ final class GroupDetailViewController: UIViewController, UITableViewDataSource, 
             } catch {
                 errorMessage = error.localizedDescription
                 configureJoinButton()
+                // Otherwise a rejected join (not logged in / not allowed) left the
+                // button looking like it did nothing at all.
+                DoerFeedback.presentToast(error.localizedDescription, on: self)
             }
             isJoining = false
         }

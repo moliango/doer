@@ -66,6 +66,14 @@ enum UserProfileFormatting {
         return formatter.string(from: date)
     }
 
+    /// The viewer's current wall-clock time, e.g. "1:40". Shown as a user-card stat.
+    static func localTime(now: Date = Date()) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter.string(from: now)
+    }
+
     nonisolated static func relativeDate(_ dateString: String?) -> String {
         guard let date = parsedDate(dateString) else { return "--" }
         let formatter = RelativeDateTimeFormatter()
@@ -81,113 +89,306 @@ enum UserProfileFormatting {
     }
 }
 
-/// FluxDo-aligned geometry for the compact user card (avatar stamps out of the top edge).
+/// Geometry for the avatar-tap user card: cover banner, overlapping avatar, floating header,
+/// inline stats, badge chips, and a 2×2 action grid.
 enum UserProfileCardLayout {
-    static let avatarRadius: CGFloat = 38
-    static let avatarOverflow: CGFloat = 24
+    static let avatarRadius: CGFloat = 40
     static let avatarBorderWidth: CGFloat = 3
     static let avatarDiameter: CGFloat = avatarRadius * 2
-    /// Body leading inset plus this spacer puts the name 8pt past the avatar.
-    static let identityLeading: CGFloat = avatarDiameter + 8
-    static let cardCornerRadius: CGFloat = 20
+    /// How far the avatar rises above the cover banner's bottom edge.
+    static let avatarBannerOverlap: CGFloat = 26
+    static let cardCornerRadius: CGFloat = 22
+    static let bannerHeight: CGFloat = 120
+    static let headerHeight: CGFloat = 44
+    static let headerTopGap: CGFloat = 6
+    static let headerCardGap: CGFloat = 10
     static let bodyTop: CGFloat = 12
     static let bodyHorizontal: CGFloat = 16
     static let bodyBottom: CGFloat = 16
     static let screenMargin: CGFloat = 16
-    static let dockedTopGap: CGFloat = 6
-    static let actionHeight: CGFloat = 40
-    static let nameSize: CGFloat = 20
+    static let actionHeight: CGFloat = 42
+    static let badgeChipHeight: CGFloat = 26
+    static let nameSize: CGFloat = 21
     static let usernameSize: CGFloat = 14
     static let metaSize: CGFloat = 13
 }
 
-/// Compact card loading placeholder — mirrors identity, bio, chips, and actions.
+/// Angular gradient ring drawn behind the avatar, giving it an iridescent rim over the cover banner.
+final class ProfileAvatarRingView: UIView {
+    private let ringLayer = CAGradientLayer()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        ringLayer.type = .conic
+        ringLayer.startPoint = CGPoint(x: 0.5, y: 0.5)
+        ringLayer.endPoint = CGPoint(x: 0.5, y: 0)
+        layer.addSublayer(ringLayer)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func applyTheme(accent: UIColor) {
+        let resolved = accent.resolvedColor(with: traitCollection)
+        ringLayer.colors = [
+            resolved.cgColor,
+            resolved.withAlphaComponent(0.32).cgColor,
+            resolved.cgColor,
+        ]
+        ringLayer.locations = [0, 0.5, 1]
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        ringLayer.frame = bounds
+        ringLayer.cornerRadius = bounds.width / 2
+    }
+}
+
+/// A single badge rendered as a tinted pill: medal icon + name.
+final class UserProfileBadgeChipView: UIControl {
+    private static let iconSize: CGFloat = 13
+    private static let horizontalInset: CGFloat = 8
+
+    private let iconView = UIImageView()
+    private let nameLabel = UILabel()
+    private let contentStack = UIStackView()
+    private var badge: DiscourseBadge?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupUI()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func setupUI() {
+        layer.cornerRadius = UserProfileCardLayout.badgeChipHeight / 2
+        layer.cornerCurve = .continuous
+        layer.borderWidth = 1
+        clipsToBounds = true
+
+        iconView.contentMode = .scaleAspectFit
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.setContentHuggingPriority(.required, for: .horizontal)
+
+        nameLabel.font = AppSettings.shared.appInterfaceFont(
+            ofSize: 12,
+            weight: .medium,
+            fallback: .systemFont(ofSize: 12, weight: .medium)
+        )
+        nameLabel.textColor = .label
+        nameLabel.numberOfLines = 1
+        nameLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        contentStack.axis = .horizontal
+        contentStack.alignment = .center
+        contentStack.spacing = 4
+        contentStack.isUserInteractionEnabled = false
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(iconView)
+        contentStack.addArrangedSubview(nameLabel)
+        addSubview(contentStack)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: UserProfileCardLayout.badgeChipHeight),
+            iconView.widthAnchor.constraint(equalToConstant: Self.iconSize),
+            iconView.heightAnchor.constraint(equalToConstant: Self.iconSize),
+            contentStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.horizontalInset),
+            contentStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.horizontalInset),
+            contentStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    func configure(badge: DiscourseBadge, baseURL: String) {
+        self.badge = badge
+        nameLabel.text = badge.name
+        BadgeUIStyle.badgeIconImage(
+            icon: badge.icon,
+            imageURL: badge.imageURL,
+            type: badge.type,
+            baseURL: baseURL,
+            pointSize: 11,
+            into: iconView
+        )
+        applyChrome()
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            applyChrome()
+        }
+    }
+
+    private func applyChrome() {
+        guard let badge else { return }
+        backgroundColor = BadgeUIStyle.cardBackgroundColor(for: badge.type, trait: traitCollection)
+        layer.borderColor = BadgeUIStyle.cardBorderColor(for: badge.type, trait: traitCollection).cgColor
+    }
+
+    override var intrinsicContentSize: CGSize {
+        let width = Self.horizontalInset * 2
+            + Self.iconSize
+            + contentStack.spacing
+            + nameLabel.intrinsicContentSize.width
+        return CGSize(width: ceil(width), height: UserProfileCardLayout.badgeChipHeight)
+    }
+}
+
+/// Manually wraps chip subviews onto multiple lines; reports its total height as intrinsic size.
+final class ProfileChipFlowView: UIView {
+    var spacing: CGFloat = 6
+    var lineSpacing: CGFloat = 6
+    private(set) var chips: [UIView] = []
+
+    func setChips(_ views: [UIView]) {
+        chips.forEach { $0.removeFromSuperview() }
+        chips = views
+        views.forEach { addSubview($0) }
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        let maxWidth = max(bounds.width, 1)
+        for chip in chips {
+            let size = chip.intrinsicContentSize
+            if x > 0, x + size.width > maxWidth {
+                x = 0
+                y += rowHeight + lineSpacing
+                rowHeight = 0
+            }
+            chip.frame = CGRect(origin: CGPoint(x: x, y: y), size: size)
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        invalidateIntrinsicContentSize()
+    }
+
+    override var intrinsicContentSize: CGSize {
+        layoutIfNeeded()
+        let maxY = chips.map(\.frame.maxY).max() ?? 0
+        return CGSize(width: UIView.noIntrinsicMetric, height: maxY)
+    }
+}
+
+/// Card loading placeholder — mirrors the banner, identity, stats, badges, and 2×2 actions.
 final class UserProfileCardSkeletonView: DoerSkeletonPlaceholderView {
     override init(frame: CGRect) {
         super.init(frame: frame)
 
+        let banner = makeSkeletonBlock(cornerRadius: 0)
+        let avatar = makeSkeletonBlock(cornerRadius: UserProfileCardLayout.avatarRadius)
         let name = makeSkeletonBlock(cornerRadius: 7)
         let username = makeSkeletonBlock(cornerRadius: 5)
-        let bio1 = makeSkeletonBlock(cornerRadius: 4)
-        let bio2 = makeSkeletonBlock(cornerRadius: 4)
-        let chip1 = makeSkeletonBlock(cornerRadius: 8)
-        let chip2 = makeSkeletonBlock(cornerRadius: 8)
-        let meta1 = makeSkeletonBlock(cornerRadius: 4)
-        let meta2 = makeSkeletonBlock(cornerRadius: 4)
+        let bio = makeSkeletonBlock(cornerRadius: 4)
+        let stat1 = makeSkeletonBlock(cornerRadius: 4)
+        let stat2 = makeSkeletonBlock(cornerRadius: 4)
+        let chip1 = makeSkeletonBlock(cornerRadius: UserProfileCardLayout.badgeChipHeight / 2)
+        let chip2 = makeSkeletonBlock(cornerRadius: UserProfileCardLayout.badgeChipHeight / 2)
+        let topics = makeSkeletonBlock(cornerRadius: 4)
         let action1 = makeSkeletonBlock(cornerRadius: 12)
         let action2 = makeSkeletonBlock(cornerRadius: 12)
-        let viewProfile = makeSkeletonBlock(cornerRadius: 12)
-        let more = makeSkeletonBlock(cornerRadius: 12)
+        let action3 = makeSkeletonBlock(cornerRadius: 12)
+        let action4 = makeSkeletonBlock(cornerRadius: 12)
 
         [
-            name, username, bio1, bio2, chip1, chip2, meta1, meta2,
-            action1, action2, viewProfile, more,
+            banner, avatar, name, username, bio, stat1, stat2, chip1, chip2, topics,
+            action1, action2, action3, action4,
         ].forEach { skeletonContentView.addSubview($0) }
 
         NSLayoutConstraint.activate([
-            name.topAnchor.constraint(equalTo: skeletonContentView.topAnchor, constant: 12),
-            name.leadingAnchor.constraint(
+            banner.topAnchor.constraint(equalTo: skeletonContentView.topAnchor),
+            banner.leadingAnchor.constraint(equalTo: skeletonContentView.leadingAnchor),
+            banner.trailingAnchor.constraint(equalTo: skeletonContentView.trailingAnchor),
+            banner.heightAnchor.constraint(equalToConstant: UserProfileCardLayout.bannerHeight),
+
+            avatar.leadingAnchor.constraint(
                 equalTo: skeletonContentView.leadingAnchor,
-                constant: UserProfileCardLayout.identityLeading
+                constant: UserProfileCardLayout.bodyHorizontal
             ),
+            avatar.centerYAnchor.constraint(
+                equalTo: banner.bottomAnchor,
+                constant: -UserProfileCardLayout.avatarBannerOverlap + UserProfileCardLayout.avatarRadius
+            ),
+            avatar.widthAnchor.constraint(equalToConstant: UserProfileCardLayout.avatarDiameter),
+            avatar.heightAnchor.constraint(equalTo: avatar.widthAnchor),
+
+            name.topAnchor.constraint(equalTo: avatar.bottomAnchor, constant: 12),
+            name.leadingAnchor.constraint(equalTo: avatar.leadingAnchor),
             name.widthAnchor.constraint(equalToConstant: 140),
-            name.heightAnchor.constraint(equalToConstant: 22),
+            name.heightAnchor.constraint(equalToConstant: 20),
 
             username.topAnchor.constraint(equalTo: name.bottomAnchor, constant: 8),
             username.leadingAnchor.constraint(equalTo: name.leadingAnchor),
             username.widthAnchor.constraint(equalToConstant: 168),
-            username.heightAnchor.constraint(equalToConstant: 14),
+            username.heightAnchor.constraint(equalToConstant: 13),
 
-            bio1.topAnchor.constraint(equalTo: username.bottomAnchor, constant: 22),
-            bio1.leadingAnchor.constraint(equalTo: skeletonContentView.leadingAnchor, constant: 16),
-            bio1.trailingAnchor.constraint(equalTo: skeletonContentView.trailingAnchor, constant: -16),
-            bio1.heightAnchor.constraint(equalToConstant: 12),
+            bio.topAnchor.constraint(equalTo: username.bottomAnchor, constant: 14),
+            bio.leadingAnchor.constraint(equalTo: skeletonContentView.leadingAnchor, constant: 16),
+            bio.trailingAnchor.constraint(equalTo: skeletonContentView.trailingAnchor, constant: -16),
+            bio.heightAnchor.constraint(equalToConstant: 12),
 
-            bio2.topAnchor.constraint(equalTo: bio1.bottomAnchor, constant: 8),
-            bio2.leadingAnchor.constraint(equalTo: bio1.leadingAnchor),
-            bio2.trailingAnchor.constraint(equalTo: skeletonContentView.trailingAnchor, constant: -72),
-            bio2.heightAnchor.constraint(equalToConstant: 12),
+            stat1.topAnchor.constraint(equalTo: bio.bottomAnchor, constant: 12),
+            stat1.leadingAnchor.constraint(equalTo: bio.leadingAnchor),
+            stat1.trailingAnchor.constraint(equalTo: skeletonContentView.trailingAnchor, constant: -56),
+            stat1.heightAnchor.constraint(equalToConstant: 11),
 
-            chip1.topAnchor.constraint(equalTo: bio2.bottomAnchor, constant: 12),
-            chip1.leadingAnchor.constraint(equalTo: bio1.leadingAnchor),
-            chip1.widthAnchor.constraint(equalToConstant: 72),
-            chip1.heightAnchor.constraint(equalToConstant: 24),
+            stat2.topAnchor.constraint(equalTo: stat1.bottomAnchor, constant: 8),
+            stat2.leadingAnchor.constraint(equalTo: bio.leadingAnchor),
+            stat2.widthAnchor.constraint(equalToConstant: 180),
+            stat2.heightAnchor.constraint(equalToConstant: 11),
+
+            chip1.topAnchor.constraint(equalTo: stat2.bottomAnchor, constant: 12),
+            chip1.leadingAnchor.constraint(equalTo: bio.leadingAnchor),
+            chip1.widthAnchor.constraint(equalToConstant: 74),
+            chip1.heightAnchor.constraint(equalToConstant: UserProfileCardLayout.badgeChipHeight),
 
             chip2.centerYAnchor.constraint(equalTo: chip1.centerYAnchor),
-            chip2.leadingAnchor.constraint(equalTo: chip1.trailingAnchor, constant: 8),
-            chip2.widthAnchor.constraint(equalToConstant: 118),
-            chip2.heightAnchor.constraint(equalToConstant: 24),
+            chip2.leadingAnchor.constraint(equalTo: chip1.trailingAnchor, constant: 6),
+            chip2.widthAnchor.constraint(equalToConstant: 106),
+            chip2.heightAnchor.constraint(equalToConstant: UserProfileCardLayout.badgeChipHeight),
 
-            meta1.topAnchor.constraint(equalTo: chip1.bottomAnchor, constant: 14),
-            meta1.leadingAnchor.constraint(equalTo: bio1.leadingAnchor),
-            meta1.trailingAnchor.constraint(equalTo: skeletonContentView.trailingAnchor, constant: -28),
-            meta1.heightAnchor.constraint(equalToConstant: 11),
+            topics.topAnchor.constraint(equalTo: chip1.bottomAnchor, constant: 12),
+            topics.leadingAnchor.constraint(equalTo: bio.leadingAnchor),
+            topics.widthAnchor.constraint(equalToConstant: 150),
+            topics.heightAnchor.constraint(equalToConstant: 14),
 
-            meta2.topAnchor.constraint(equalTo: meta1.bottomAnchor, constant: 8),
-            meta2.leadingAnchor.constraint(equalTo: bio1.leadingAnchor),
-            meta2.widthAnchor.constraint(equalToConstant: 180),
-            meta2.heightAnchor.constraint(equalToConstant: 11),
-
-            action1.topAnchor.constraint(equalTo: meta2.bottomAnchor, constant: 16),
-            action1.leadingAnchor.constraint(equalTo: bio1.leadingAnchor),
+            action1.topAnchor.constraint(equalTo: topics.bottomAnchor, constant: 14),
+            action1.leadingAnchor.constraint(equalTo: bio.leadingAnchor),
             action1.heightAnchor.constraint(equalToConstant: UserProfileCardLayout.actionHeight),
 
             action2.topAnchor.constraint(equalTo: action1.topAnchor),
             action2.leadingAnchor.constraint(equalTo: action1.trailingAnchor, constant: 8),
             action2.trailingAnchor.constraint(equalTo: skeletonContentView.trailingAnchor, constant: -16),
-            action2.heightAnchor.constraint(equalToConstant: UserProfileCardLayout.actionHeight),
+            action2.heightAnchor.constraint(equalTo: action1.heightAnchor),
             action2.widthAnchor.constraint(equalTo: action1.widthAnchor),
 
-            viewProfile.topAnchor.constraint(equalTo: action1.bottomAnchor, constant: 8),
-            viewProfile.leadingAnchor.constraint(equalTo: bio1.leadingAnchor),
-            viewProfile.heightAnchor.constraint(equalToConstant: UserProfileCardLayout.actionHeight),
-            viewProfile.bottomAnchor.constraint(equalTo: skeletonContentView.bottomAnchor, constant: -16),
+            action3.topAnchor.constraint(equalTo: action1.bottomAnchor, constant: 8),
+            action3.leadingAnchor.constraint(equalTo: bio.leadingAnchor),
+            action3.heightAnchor.constraint(equalTo: action1.heightAnchor),
+            action3.widthAnchor.constraint(equalTo: action1.widthAnchor),
 
-            more.topAnchor.constraint(equalTo: viewProfile.topAnchor),
-            more.leadingAnchor.constraint(equalTo: viewProfile.trailingAnchor, constant: 8),
-            more.trailingAnchor.constraint(equalTo: skeletonContentView.trailingAnchor, constant: -16),
-            more.widthAnchor.constraint(equalToConstant: UserProfileCardLayout.actionHeight),
-            more.heightAnchor.constraint(equalToConstant: UserProfileCardLayout.actionHeight),
+            action4.topAnchor.constraint(equalTo: action3.topAnchor),
+            action4.leadingAnchor.constraint(equalTo: action3.trailingAnchor, constant: 8),
+            action4.trailingAnchor.constraint(equalTo: skeletonContentView.trailingAnchor, constant: -16),
+            action4.heightAnchor.constraint(equalTo: action1.heightAnchor),
+            action4.widthAnchor.constraint(equalTo: action1.widthAnchor),
+            action4.bottomAnchor.constraint(
+                equalTo: skeletonContentView.bottomAnchor,
+                constant: -UserProfileCardLayout.bodyBottom
+            ),
         ])
         applyThemeStyle()
     }

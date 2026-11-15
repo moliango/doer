@@ -263,8 +263,12 @@ enum DiscourseRouter {
             return "/groups/\(Self.pathComponent(name)).json"
         case .groupMembers(let name, let offset, let limit):
             return "/groups/\(Self.pathComponent(name))/members.json?offset=\(offset)&limit=\(limit)"
-        case .joinGroup(let name), .leaveGroup(let name):
-            return "/groups/\(Self.pathComponent(name))/members.json"
+        case .joinGroup(let name):
+            // `/members.json` is the owner-only "add members" endpoint; joining a
+            // public group is `PUT /groups/:name/join.json`.
+            return "/groups/\(Self.pathComponent(name))/join.json"
+        case .leaveGroup(let name):
+            return "/groups/\(Self.pathComponent(name))/leave.json"
         case .drafts(let offset, let limit):
             return "/drafts.json?offset=\(offset)&limit=\(limit)"
         case .draft(let key):

@@ -47,10 +47,11 @@ final class UserProfileModelsTests: XCTestCase {
         XCTAssertEqual(withAvatar.avatarTemplate, "/user_avatar/{size}/1.png")
     }
 
-    func testCardLayoutKeepsNameBesideOverflowingAvatar() {
-        XCTAssertEqual(UserProfileCardLayout.identityLeading, UserProfileCardLayout.avatarDiameter + 8)
-        XCTAssertEqual(UserProfileCardLayout.avatarDiameter, 76)
-        XCTAssertLessThan(UserProfileCardLayout.avatarOverflow, UserProfileCardLayout.avatarRadius)
+    func testCardLayoutAvatarOverlapsCoverBanner() {
+        XCTAssertEqual(UserProfileCardLayout.avatarDiameter, 80)
+        XCTAssertGreaterThan(UserProfileCardLayout.avatarBannerOverlap, 0)
+        XCTAssertLessThan(UserProfileCardLayout.avatarBannerOverlap, UserProfileCardLayout.avatarRadius)
+        XCTAssertGreaterThan(UserProfileCardLayout.bannerHeight, UserProfileCardLayout.avatarBannerOverlap)
     }
 
     func testCleanBioKeepsPlainEmojiShortcodes() {
@@ -203,7 +204,15 @@ final class UserProfileModelsTests: XCTestCase {
             DiscourseRouter.groupMembers(name: "g-adsfree", offset: 50, limit: 50).path,
             "/groups/g-adsfree/members.json?offset=50&limit=50"
         )
+        XCTAssertEqual(
+            DiscourseRouter.joinGroup(name: "g-adsfree").path,
+            "/groups/g-adsfree/join.json"
+        )
         XCTAssertEqual(DiscourseRouter.joinGroup(name: "g-adsfree").method, .put)
+        XCTAssertEqual(
+            DiscourseRouter.leaveGroup(name: "g-adsfree").path,
+            "/groups/g-adsfree/leave.json"
+        )
         XCTAssertEqual(DiscourseRouter.leaveGroup(name: "g-adsfree").method, .delete)
         XCTAssertEqual(DiscourseRouter.followers(username: "sam").path, "/u/sam/follow/followers")
         XCTAssertEqual(DiscourseRouter.drafts(offset: 20, limit: 20).path, "/drafts.json?offset=20&limit=20")
