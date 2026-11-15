@@ -464,3 +464,28 @@ final class CloudflareImageGateTests: XCTestCase {
         XCTAssertFalse(CloudflareImageGate.isPaused(baseURL: base))
     }
 }
+
+// MARK: - One UA per clearance
+
+final class CloudflareBrowserUserAgentTests: XCTestCase {
+    func testStoredUserAgentWins() {
+        XCTAssertEqual(
+            CloudflareVerificationPolicy.browserUserAgent(stored: "Doer-Test-UA/1.0"),
+            "Doer-Test-UA/1.0"
+        )
+    }
+
+    /// `cf_clearance` is bound to the UA that solved it. A blank stored UA must
+    /// resolve to the same fallback the login WebView uses, never to "".
+    func testBlankUserAgentFallsBackToBrowserDefault() {
+        XCTAssertEqual(
+            CloudflareVerificationPolicy.browserUserAgent(stored: nil),
+            CloudflareVerificationPolicy.defaultBrowserUserAgent
+        )
+        XCTAssertEqual(
+            CloudflareVerificationPolicy.browserUserAgent(stored: "   "),
+            CloudflareVerificationPolicy.defaultBrowserUserAgent
+        )
+        XCTAssertFalse(CloudflareVerificationPolicy.defaultBrowserUserAgent.isEmpty)
+    }
+}

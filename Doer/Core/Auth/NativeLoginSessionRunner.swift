@@ -23,8 +23,16 @@ final class NativeLoginSessionRunner: NSObject, WKScriptMessageHandler, WKNaviga
     private var continuation: CheckedContinuation<Outcome, Never>?
     private var lastHCaptchaToken: String?
     private var lastSecondFactorToken: String?
-    /// One shield sheet per attempt. A second challenge after a pass is a real failure.
-    private var cloudflareAttempted = false
+    /// Bounded shield retries. A challenge after a fresh pass means the clearance
+    /// did not apply to this request, so looping further cannot help.
+    private static let maxCloudflareAttempts = 2
+    private var cloudflareAttempts = 0
+    /// A challenge on the session POST means the one-shot hCaptcha token was
+    /// already verified; replaying it after the shield returns "captcha failed".
+    private var captchaTokenSpent = false
+    /// One UA for the login page *and* the shield sheet. `cf_clearance` is bound
+    /// to the UA that solved it, and a document's UA is fixed at load time.
+    private var browserUserAgent = CloudflareVerificationPolicy.defaultBrowserUserAgent
 
     init(baseURL: URL, siteKey: String?) {
         self.baseURL = baseURL
@@ -42,9 +50,15 @@ final class NativeLoginSessionRunner: NSObject, WKScriptMessageHandler, WKNaviga
         self.password = password
         self.host = host
         finished = false
-        cloudflareAttempted = false
+        cloudflareAttempts = 0
+        captchaTokenSpent = false
         lastHCaptchaToken = nil
         lastSecondFactorToken = nil
+        // Resolved before the page loads: the UA is baked into the document, and
+        // the shield must solve under the exact same string.
+        browserUserAgent = CloudflareVerificationPolicy.browserUserAgent(
+            stored: WebCookieStore.shared.userAgent
+        )
         // WKWebView ignores Encrypted DNS; attach CONNECT so login/hCaptcha
         // resolve through DoH like the Cloudflare challenge sheet.
         await LightweightDohProxyService.shared.prepareBrowserProxy()
@@ -194,8 +208,10 @@ final class NativeLoginSessionRunner: NSObject, WKScriptMessageHandler, WKNaviga
         config.websiteDataStore = .default()
         config.userContentController.add(self, name: "doerNativeLogin")
         let webView = WKWebView(frame: .zero, configuration: config)
+        webView.customUserAgent = browserUserAgent
         webView.navigationDelegate = self
         webView.translatesAutoresizingMaskIntoConstraints = false
+        DohDebugLog.record("native login webview ua=\(browserUserAgent)", subsystem: "Auth")
         return webView
     }
 
@@ -236,11 +252,30 @@ final class NativeLoginSessionRunner: NSObject, WKScriptMessageHandler, WKNaviga
         let phase = body["phase"] as? String ?? ""
         let status = Self.intValue(body["status"])
         let raw = body["body"] as? String ?? ""
-        if (phase == "csrf" || phase == "session" || phase == "exception"),
-           !cloudflareAttempted,
-           Self.isCloudflareBlockedLogin(status: status, body: raw) {
-            cloudflareAttempted = true
+        let blockedByCloudflare = (phase == "csrf"
+            || phase == "hcaptcha"
+            || phase == "session"
+            || phase == "exception")
+            && Self.isCloudflareBlockedLogin(status: status, body: raw)
+        if blockedByCloudflare, cloudflareAttempts < Self.maxCloudflareAttempts {
+            cloudflareAttempts += 1
+            // The captcha POST and the session POST are sequential: reaching the
+            // session phase means the hCaptcha token was accepted and burnt.
+            captchaTokenSpent = phase == "session" && lastHCaptchaToken != nil
+            DohDebugLog.record(
+                "native login blocked by cloudflare phase=\(phase) status=\(status) attempt=\(cloudflareAttempts)",
+                subsystem: "Auth"
+            )
             Task { await self.passCloudflareThenRetry() }
+            return
+        }
+        // Out of shield attempts: the challenge survived a completed pass, so
+        // asking the user to "finish the check" again would loop forever.
+        if blockedByCloudflare {
+            finish(.failure(String(
+                localized: "native_login.cloudflare_still_blocked",
+                defaultValue: "过盾后登录请求仍被 Cloudflare 拦截，请改用网页登录"
+            )))
             return
         }
         switch phase {
@@ -273,30 +308,64 @@ final class NativeLoginSessionRunner: NSObject, WKScriptMessageHandler, WKNaviga
     /// in the WK store that just received `cf_clearance`.
     private func passCloudflareThenRetry() async {
         overlay?.isHidden = true
-        DohDebugLog.record("native login hit cloudflare shield; presenting verification", subsystem: "Auth")
+        DohDebugLog.record(
+            "native login hit cloudflare shield; presenting verification attempt=\(cloudflareAttempts) ua=\(browserUserAgent)",
+            subsystem: "Auth"
+        )
         let passed = await presentCloudflareShield()
         guard !finished else { return }
+        // The sheet is gone either way: never leave the captcha card blank.
+        overlay?.isHidden = false
         guard passed else {
+            DohDebugLog.record("native login shield did not produce a usable clearance", subsystem: "Auth")
             finish(.failure(String(
                 localized: "native_login.csrf_failed",
                 defaultValue: "登录校验失败，请先完成 Cloudflare 验证后重试"
             )))
             return
         }
-        if let webView {
-            await WebCookieStore.shared.syncToWebView(webView.configuration.websiteDataStore, for: baseURL)
+        guard let webView else {
+            finish(.failure(String(localized: "native_login.network", defaultValue: "网络异常")))
+            return
+        }
+        await WebCookieStore.shared.syncToWebView(webView.configuration.websiteDataStore, for: baseURL)
+        guard !finished else { return }
+        let hasClearance = WebCookieStore.shared.cookieValue(named: "cf_clearance", for: baseURL)?.isEmpty == false
+        DohDebugLog.record(
+            "native login retrying after shield hasClearance=\(hasClearance) ua=\(webView.customUserAgent ?? "default") captchaSpent=\(captchaTokenSpent)",
+            subsystem: "Auth"
+        )
+        guard !captchaTokenSpent else {
+            // Replaying a verified token always fails. The shield is already
+            // passed, so let the user solve a fresh captcha and continue.
+            captchaTokenSpent = false
+            lastHCaptchaToken = nil
+            overlay?.isHidden = false
+            _ = try? await webView.evaluateJavaScript("try { window.hcaptcha && hcaptcha.reset(); } catch (e) {}")
+            return
         }
         evaluateLogin(hcaptchaToken: lastHCaptchaToken, secondFactorToken: lastSecondFactorToken)
     }
 
     private func presentCloudflareShield() async -> Bool {
-        guard let host, host.presentedViewController == nil else { return false }
+        guard let host, host.view.window != nil else {
+            DohDebugLog.record("native login shield skipped: presenter is gone", subsystem: "Auth")
+            return false
+        }
+        // Present from the topmost VC: presenting on a VC that already shows
+        // something is a silent no-op, which used to hang the login forever.
+        var presenter: UIViewController = host
+        while let next = presenter.presentedViewController, !next.isBeingDismissed {
+            presenter = next
+        }
         let before = WebCookieStore.shared.cookieValue(named: "cf_clearance", for: baseURL)
+        let userAgent = browserUserAgent
         return await withCheckedContinuation { continuation in
             let gate = ResumeGate()
             let verifier = CloudflareVerificationViewController(
                 baseURL: baseURL,
-                autoDismissOnSuccess: true
+                autoDismissOnSuccess: true,
+                userAgentOverride: userAgent
             ) { [weak self] in
                 guard let self else {
                     gate.resume(continuation, false)
@@ -308,11 +377,23 @@ final class NativeLoginSessionRunner: NSObject, WKScriptMessageHandler, WKNaviga
                     initialValue: before,
                     requiresFreshValue: before?.isEmpty == false
                 )
+                DohDebugLog.record(
+                    "native login shield finished passed=\(passed) requiresFresh=\(before?.isEmpty == false)",
+                    subsystem: "Auth"
+                )
                 gate.resume(continuation, passed)
             }
             let nav = UINavigationController(rootViewController: verifier)
             nav.modalPresentationStyle = .pageSheet
-            host.present(nav, animated: true)
+            presenter.present(nav, animated: true)
+            // A sheet that never reports back must not pin the login spinner.
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 120_000_000_000)
+                if gate.resume(continuation, false) {
+                    DohDebugLog.record("native login shield timed out", subsystem: "Auth")
+                    nav.presentingViewController?.dismiss(animated: true)
+                }
+            }
         }
     }
 
@@ -478,9 +559,12 @@ final class NativeLoginSessionRunner: NSObject, WKScriptMessageHandler, WKNaviga
 private final class ResumeGate {
     private var fired = false
 
-    func resume(_ continuation: CheckedContinuation<Bool, Never>, _ value: Bool) {
-        guard !fired else { return }
+    /// Returns true only for the call that actually resumed the continuation.
+    @discardableResult
+    func resume(_ continuation: CheckedContinuation<Bool, Never>, _ value: Bool) -> Bool {
+        guard !fired else { return false }
         fired = true
         continuation.resume(returning: value)
+        return true
     }
 }

@@ -90,6 +90,24 @@ enum CloudflareVerificationPolicy {
         return URL(string: "/challenge", relativeTo: baseURL)?.absoluteURL ?? baseURL
     }
 
+    /// `cf_clearance` is bound to the User-Agent that solved the challenge (and to
+    /// the egress IP). Every surface that spends the same cookie jar — the shield
+    /// sheet, the native login page, the in-app browser, the image/API clients —
+    /// must present one identical string. A shield solved under a Safari UA used
+    /// to hand back a clearance that the native login WebView (stock WK UA) could
+    /// not spend, so the retry was challenged again and login failed right after
+    /// the user had finished the shield.
+    nonisolated static let defaultBrowserUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+
+    /// Resolve the single UA for one clearance scope. The stored UA wins: it is
+    /// the UA that captured / solved the current clearance.
+    nonisolated static func browserUserAgent(stored: String?) -> String {
+        guard let stored = stored?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !stored.isEmpty
+        else { return defaultBrowserUserAgent }
+        return stored
+    }
+
     /// iOS 16 WKWebView cannot use CONNECT. Do not load the challenge on
     /// `127.0.0.1` — Turnstile requires `location.hostname == linux.do`.
     static func gatewayBrowserURL(path: String, baseURL: URL) -> URL? {
@@ -236,6 +254,7 @@ final class CloudflareVerificationViewController: UIViewController {
     private let baseURL: URL
     private let challengeURL: URL
     private let autoDismissOnSuccess: Bool
+    private let userAgentOverride: String?
     private let onFinish: () -> Void
     private var progressObservation: NSKeyValueObservation?
     private var didDetectClearance = false
@@ -268,10 +287,20 @@ final class CloudflareVerificationViewController: UIViewController {
         let view = WKWebView(frame: .zero, configuration: config)
         view.navigationDelegate = self
         view.uiDelegate = self
-        view.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+        // Must match every other client that spends this jar, otherwise the
+        // clearance obtained here is rejected on the next request.
+        view.customUserAgent = resolvedUserAgent
         view.translatesAutoresizingMaskIntoConstraints = false
         return view
     }()
+
+    /// The UA this sheet solves under: whatever the caller pinned for the
+    /// attempt, else the jar's UA so the clearance stays spendable app-wide.
+    private var resolvedUserAgent: String {
+        CloudflareVerificationPolicy.browserUserAgent(
+            stored: userAgentOverride ?? WebCookieStore.shared.userAgent
+        )
+    }
 
     private let statusContainer: UIView = {
         let view = UIView()
@@ -310,6 +339,7 @@ final class CloudflareVerificationViewController: UIViewController {
         responseURL: URL? = nil,
         verificationURL: URL? = nil,
         autoDismissOnSuccess: Bool = false,
+        userAgentOverride: String? = nil,
         onFinish: @escaping () -> Void
     ) {
         self.baseURL = baseURL
@@ -319,6 +349,7 @@ final class CloudflareVerificationViewController: UIViewController {
                 responseURL: responseURL
             )
         self.autoDismissOnSuccess = autoDismissOnSuccess
+        self.userAgentOverride = userAgentOverride
         self.onFinish = onFinish
         self.initialClearanceValue = WebCookieStore.shared.cookieValue(
             named: "cf_clearance",
@@ -506,7 +537,7 @@ final class CloudflareVerificationViewController: UIViewController {
         LightweightDohProxyService.shared.applyWebViewProxy(to: verificationDataStore)
         guard generation == preparationGeneration, !Task.isCancelled, !isClosing else { return }
         log(
-            "foreground load challenge base=\(baseURL.absoluteString) url=\(challengeURL.absoluteString) autoDismiss=\(autoDismissOnSuccess) dohBrowser=\(LightweightDohProxyService.shared.ensureRunning() != nil)"
+            "foreground load challenge base=\(baseURL.absoluteString) url=\(challengeURL.absoluteString) autoDismiss=\(autoDismissOnSuccess) ua=\(resolvedUserAgent) dohBrowser=\(LightweightDohProxyService.shared.ensureRunning() != nil)"
         )
         await WebCookieStore.shared.syncToWebView(
             webView.configuration.websiteDataStore,
