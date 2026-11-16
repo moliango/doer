@@ -10,8 +10,12 @@ final class DiscourseAPI {
     static let cloudflareBaseURLUserInfoKey = "baseURL"
     static let cloudflareResponseURLUserInfoKey = "responseURL"
     static let cloudflareForegroundGateDuration: TimeInterval = 20
+    /// 429 限流的默认窗口。CF 用 Managed Challenge 动作限流时直接回 429，
+    /// 这段窗口里请求发出去也只会继续 429，只能等。
+    static let cloudflareRateLimitDuration: TimeInterval = 60
     static let cloudflareForegroundGateLock = NSLock()
     static var cloudflareForegroundGateUntilByBaseURL: [String: Date] = [:]
+    static var cloudflareRateLimitUntilByBaseURL: [String: Date] = [:]
 
     let baseURL: String
     let executionContext: DiscourseAPIExecutionContext
@@ -191,14 +195,10 @@ final class DiscourseAPI {
         allowAuthRecovery: Bool = true
     ) async throws -> RawDiscourseResponse {
         let url = baseURL + route.path
-        if executionContext.allowsInteractiveWebRecovery,
-           Self.isCloudflareForegroundGateActive(baseURL: baseURL) {
-            DohDebugLog.record(
-                "request suppressed during active challenge base=\(Self.normalizedCloudflareGateKey(baseURL)) method=\(route.method.rawValue) route=\(route.path)",
-                subsystem: "CF"
-            )
-            throw Self.cloudflareChallengeError()
-        }
+        try throwIfForegroundChallengeGateActive(route: route)
+        // 限流窗口内不再发请求：发出去也只会拿到 429，还会把计时越拖越长。
+        // 后台刷新（backgroundRefresh）不受影响，免得把用户的后台任务饿死。
+        try throwIfCloudflareRateLimitActive(route: route)
         let encoding = requestedEncoding ?? (route.method == .post ? JSONEncoding.default : URLEncoding.default)
         if LocalConnectProxy.usesWebViewHTTPTransport, let base = URL(string: baseURL) {
             do {
@@ -246,6 +246,16 @@ final class DiscourseAPI {
 
         if let logout = remoteLogoutError(route: route, statusCode: response.response?.statusCode, data: response.data) {
             throw logout
+        }
+
+        if let statusCode = response.response?.statusCode, statusCode != 429 {
+            // 限流窗口已经生效时不要再走 web 会话恢复：刷新会话的那几下请求只会
+            // 继续吃 429，还会把 cf_clearance 刷新成一份同样被限流的 cookie。
+            // 当前响应本身就是 429 时不走这里——下面的 statusCode 分支会用响应体里的
+            // `extras.wait_seconds` 抛更具体的 rateLimitError。
+            // 没有 HTTP 响应（传输失败）时也不拦，免得把真实错误伪装成限流。
+            // 2xx 清窗口由 handleCloudflareChallengeIfNeeded 负责。
+            try throwIfCloudflareRateLimitActive(route: route)
         }
 
         if executionContext.allowsInteractiveWebRecovery,
@@ -378,6 +388,10 @@ final class DiscourseAPI {
         if let logout = remoteLogoutError(route: route, statusCode: httpResponse.statusCode, data: data) {
             throw logout
         }
+        if httpResponse.statusCode != 429 {
+            // 2xx 清窗口由 handleCloudflareChallengeIfNeeded 负责。
+            try throwIfCloudflareRateLimitActive(route: route)
+        }
         if executionContext.allowsInteractiveWebRecovery,
            allowAuthRecovery,
            await shouldRetryAfterWebSessionRefresh(
@@ -436,6 +450,29 @@ final class DiscourseAPI {
         }
     }
 
+    /// 前台请求在 challenge gate 内直接失败，不把请求发出去。
+    func throwIfForegroundChallengeGateActive(route: DiscourseRouter) throws {
+        guard executionContext.allowsInteractiveWebRecovery,
+              Self.isCloudflareForegroundGateActive(baseURL: baseURL) else { return }
+        DohDebugLog.record(
+            "request suppressed during active challenge base=\(Self.normalizedCloudflareGateKey(baseURL)) method=\(route.method.rawValue) route=\(route.path)",
+            subsystem: "CF"
+        )
+        throw Self.cloudflareChallengeError()
+    }
+
+    /// 429 限流窗口内直接失败。既能挡发请求前的调用，也能在并发场景下
+    /// 丢弃「窗口是别的请求刚 arm 的」这份响应，避免把会话恢复/重试一起带起来。
+    func throwIfCloudflareRateLimitActive(route: DiscourseRouter) throws {
+        guard executionContext.allowsInteractiveWebRecovery,
+              Self.isCloudflareRateLimitActive(baseURL: baseURL) else { return }
+        DohDebugLog.record(
+            "request suppressed during rate limit base=\(Self.normalizedCloudflareGateKey(baseURL)) method=\(route.method.rawValue) route=\(route.path)",
+            subsystem: "CF"
+        )
+        throw Self.rateLimitError(from: nil)
+    }
+
     func handleCloudflareChallengeIfNeeded(
         route: DiscourseRouter,
         response: DataResponse<Data, AFError>,
@@ -456,6 +493,10 @@ final class DiscourseAPI {
         source: String? = nil
     ) -> Bool {
         guard let detection = Self.cloudflareChallengeDetection(response, data: data) else {
+            // 2xx 说明限流窗口已经放行，下次失败重新计时。
+            if let statusCode = response?.statusCode, (200 ..< 300).contains(statusCode) {
+                Self.clearCloudflareRateLimit(baseURL: baseURL)
+            }
             return false
         }
         let shouldNotify = executionContext.allowsInteractiveWebRecovery
@@ -468,7 +509,10 @@ final class DiscourseAPI {
             detection: detection,
             shouldNotify: shouldNotify
         )
-        return true
+        // 429 是限流而不是可解的盾：不要返回 true，否则上层会抛
+        // cloudflareChallengeError、arm 前台 gate、弹验证 sheet。
+        // 让调用方落到各自 `statusCode == 429` 的 rateLimitError 分支。
+        return !detection.isRateLimited
     }
 
     var cloudflareLogSource: String {
@@ -647,6 +691,43 @@ final class DiscourseAPI {
         detection: CloudflareChallengeDetection?,
         shouldNotify: Bool
     ) {
+        // 429 是限流，不是能靠人解开的盾。CF 把限流规则配成 Managed Challenge
+        // 动作时直接回 429 + `cf-mitigated: challenge` + 带 meta refresh 的
+        // 页面，但窗口没过之前用户怎么点都过不去，cf_clearance 也绕不过。
+        // 所以只记录窗口与日志，不暂停图片、不 arm 前台 gate、不发通知，
+        // 否则就是每 30 秒一轮「弹 sheet -> 解不开 -> 再弹」的死循环。
+        if let detection, detection.isRateLimited {
+            let suggested = detection.retryAfterSeconds ?? Self.cloudflareRateLimitDuration
+            let backoff = min(max(suggested, 30), 600)
+            // 只有服务器明确给了 Retry-After 才允许延长已有窗口；否则后台轮询
+            // 每拿到一次 429 都会把窗口从现在起再推 60s，把前台请求无限期饿死。
+            Self.markCloudflareRateLimit(
+                baseURL: baseURL,
+                duration: backoff,
+                allowExtension: detection.retryAfterSeconds != nil
+            )
+            var details = [
+                "source=\(source)",
+                "base=\(baseURL)",
+                "status=\(detection.statusCode ?? 429)",
+                "backoff=\(Int(backoff))s",
+            ]
+            if let routePath {
+                details.append("route=\(routePath)")
+            }
+            if let method {
+                details.append("method=\(method)")
+            }
+            if let retryAfter = detection.retryAfterSeconds {
+                details.append("retryAfter=\(Int(retryAfter))s")
+            }
+            DohDebugLog.record(
+                "rate limited, not a solvable challenge \(details.joined(separator: " "))",
+                subsystem: "CF"
+            )
+            return
+        }
+
         let hasClearance = URL(string: baseURL).map {
             WebCookieStore.shared.hasCookie(named: "cf_clearance", for: $0)
         } ?? false
@@ -781,6 +862,62 @@ final class DiscourseAPI {
         return false
     }
 
+    /// 429 限流窗口。与前台 challenge gate 共用一把锁和同一套 key 归一化，
+    /// 两个字典互不覆盖：一个代表「要人解盾」，一个代表「必须等」。
+    ///
+    /// 窗口已生效时默认不延长：否则后台刷新每次都从「现在」起再推一个窗口，
+    /// 只要后台还在轮询，前台请求就会被永久压住。服务器明确给出
+    /// `Retry-After`（`allowExtension`）时才允许往后推，且单次窗口最多 600s。
+    static func markCloudflareRateLimit(
+        baseURL: String,
+        duration: TimeInterval,
+        allowExtension: Bool = false
+    ) {
+        let key = normalizedCloudflareGateKey(baseURL)
+        let now = Date()
+        let until = now.addingTimeInterval(max(1, duration))
+        let action: String
+        cloudflareForegroundGateLock.lock()
+        if let existing = cloudflareRateLimitUntilByBaseURL[key], existing > now {
+            if allowExtension, until > existing {
+                cloudflareRateLimitUntilByBaseURL[key] = until
+                action = "rate limit window extended"
+            } else {
+                action = "rate limit window already active, not extended"
+            }
+        } else {
+            cloudflareRateLimitUntilByBaseURL[key] = until
+            action = "rate limit window armed"
+        }
+        cloudflareForegroundGateLock.unlock()
+        DohDebugLog.record(
+            "\(action) base=\(key) duration=\(Int(duration))s",
+            subsystem: "CF"
+        )
+    }
+
+    /// 2xx 表示窗口已放行。只有真的存在窗口时才打日志，避免每条成功请求一行。
+    static func clearCloudflareRateLimit(baseURL: String) {
+        let key = normalizedCloudflareGateKey(baseURL)
+        cloudflareForegroundGateLock.lock()
+        let existed = cloudflareRateLimitUntilByBaseURL.removeValue(forKey: key) != nil
+        cloudflareForegroundGateLock.unlock()
+        guard existed else { return }
+        DohDebugLog.record("rate limit window cleared base=\(key)", subsystem: "CF")
+    }
+
+    static func isCloudflareRateLimitActive(baseURL: String, now: Date = Date()) -> Bool {
+        let key = normalizedCloudflareGateKey(baseURL)
+        cloudflareForegroundGateLock.lock()
+        defer { cloudflareForegroundGateLock.unlock() }
+        guard let until = cloudflareRateLimitUntilByBaseURL[key] else { return false }
+        if now < until {
+            return true
+        }
+        cloudflareRateLimitUntilByBaseURL.removeValue(forKey: key)
+        return false
+    }
+
     static func normalizedCloudflareGateKey(_ baseURL: String) -> String {
         baseURL
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -804,6 +941,7 @@ final class DiscourseAPI {
                 server: headerValue("server", in: response),
                 cfMitigated: cfMitigated,
                 contentType: headerValue("content-type", in: response),
+                retryAfterSeconds: retryAfterSeconds(in: response),
                 reason: "header:cf-mitigated"
             )
         }
@@ -820,6 +958,7 @@ final class DiscourseAPI {
                 server: headerValue("server", in: response),
                 cfMitigated: cfMitigated,
                 contentType: headerValue("content-type", in: response),
+                retryAfterSeconds: retryAfterSeconds(in: response),
                 reason: "status-cloudflare-html"
             )
         }
@@ -845,6 +984,7 @@ final class DiscourseAPI {
             server: headerValue("server", in: response),
             cfMitigated: cfMitigated,
             contentType: headerValue("content-type", in: response),
+            retryAfterSeconds: retryAfterSeconds(in: response),
             reason: "body:\(bodyMarker)"
         )
     }
@@ -871,6 +1011,19 @@ final class DiscourseAPI {
             return "just-a-moment"
         }
         return nil
+    }
+
+    /// `Retry-After` 可以是秒数，也可以是 HTTP-date。这里只认秒数：
+    /// 日期形式要拿本地时钟去减，时钟偏差会算出离谱的窗口，不如回退默认值。
+    nonisolated private static func retryAfterSeconds(in response: HTTPURLResponse?) -> TimeInterval? {
+        guard let raw = headerValue("retry-after", in: response)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !raw.isEmpty,
+            let seconds = TimeInterval(raw),
+            seconds.isFinite,
+            seconds > 0
+        else { return nil }
+        return seconds
     }
 
     nonisolated private static func headerValue(_ name: String, in response: HTTPURLResponse?) -> String? {

@@ -47,6 +47,9 @@ extension DiscourseAPI {
             throw Self.cloudflareChallengeError()
         }
         if let statusCode = response.response?.statusCode, !(200 ..< 300).contains(statusCode) {
+            if statusCode == 429 {
+                throw Self.rateLimitError(from: response.data)
+            }
             throw DiscourseAPIError(messages: ["Failed to delete bookmark"], errorType: nil)
         }
     }
@@ -286,6 +289,10 @@ extension DiscourseAPI {
         if Self.isTopicTimingsCoolingDown(baseURL: baseURL) {
             return nil
         }
+        // Don't add more 429 traffic while a rate-limit window is open.
+        if Self.isCloudflareRateLimitActive(baseURL: baseURL) {
+            return nil
+        }
 
         var parameters: Parameters = [
             "topic_id": topicId,
@@ -394,6 +401,10 @@ extension DiscourseAPI {
                 detection: detection,
                 shouldNotify: executionContext.allowsInteractiveWebRecovery
             )
+            // 429 是限流窗口，不是可以靠人解开的盾；抛限流错误上层才不会弹验证 sheet。
+            if detection.isRateLimited {
+                throw Self.rateLimitError(from: response.data)
+            }
             throw Self.cloudflareChallengeError()
         }
         if let statusCode = response.response?.statusCode, !(200 ..< 300).contains(statusCode) {

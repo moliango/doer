@@ -44,6 +44,9 @@ extension DiscourseAPI {
             throw Self.cloudflareChallengeError()
         }
         if let statusCode = response.response?.statusCode, !(200 ..< 300).contains(statusCode) {
+            if statusCode == 429 {
+                throw Self.rateLimitError(from: response.data)
+            }
             throw DiscourseAPIError(messages: ["Failed to toggle reaction"], errorType: nil)
         }
 

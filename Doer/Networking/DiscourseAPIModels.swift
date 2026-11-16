@@ -81,7 +81,15 @@ struct CloudflareChallengeDetection: Sendable {
     let server: String?
     let cfMitigated: String?
     let contentType: String?
+    /// `Retry-After` 头里的秒数。429 限流时 CF 会带这个头；解析不到为 nil。
+    let retryAfterSeconds: TimeInterval?
     let reason: String
+
+    /// 429 是限流窗口，不是能靠人解开的 Managed Challenge。混为一谈会每 30 秒
+    /// 弹一次验证 sheet，但窗口没过之前用户怎么点都过不去。
+    var isRateLimited: Bool {
+        statusCode == 429
+    }
 
     var logSummary: String {
         var parts: [String] = []
@@ -94,6 +102,9 @@ struct CloudflareChallengeDetection: Sendable {
         parts.append("reason=\(reason)")
         if let cfMitigated, !cfMitigated.isEmpty {
             parts.append("cfMitigated=\(cfMitigated)")
+        }
+        if let retryAfterSeconds {
+            parts.append("retryAfter=\(Int(retryAfterSeconds))s")
         }
         if let server, !server.isEmpty {
             parts.append("server=\(server)")
