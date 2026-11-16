@@ -34,6 +34,9 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
                 return
             }
             EncryptedDnsService.fallbackToSystemDNS(reason: "DoH \(host) 连续查询失败")
+            // 先让 App 恢复可用，再异步重选。新服务器与故障服务器 spec 不同，
+            // 不会被 `retrySuppressedSpec` 的 5 分钟冷却挡住。
+            DoHServerAutoSelector.rescan(trigger: .watchdog)
         }
     }
 
@@ -159,6 +162,10 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         startQueue.async { [weak self] in
             self?.applyConfiguration(shouldEnable: shouldEnable, generation: generation)
         }
+
+        // 「自动」模式：配置落地后顺带检查要不要重选一台服务器。
+        // 受 6 小时节流，冷启动直接用上次的结果，不等探测。
+        DoHServerAutoSelector.rescan(trigger: .launch)
     }
 
     /// Origin ECH / Gateway flipped at runtime (iOS 16 after a WebView CF pass).

@@ -217,6 +217,106 @@ extension AppSettings {
         return trimmed.isEmpty ? AtlasRoutesClient.defaultURL : trimmed
     }
 
+    // MARK: - 自动选服
+
+    /// 「自动」选服：并发探测内置服务器，取最快且应答合法的那个。
+    ///
+    /// 键不存在时按"从未配置过"推断（见 `dohAutoSelectEnabled(from:)`），
+    /// 所以不需要给老用户做数据迁移。
+    var dohAutoSelectEnabled: Bool {
+        get { Self.dohAutoSelectEnabled(from: defaults) }
+        set {
+            defaults.set(newValue, forKey: "dohAutoSelectEnabled")
+            if newValue { defaults.set(false, forKey: "dohServerManuallySelected") }
+            notifyChanged()
+        }
+    }
+
+    /// 上次自动选出的服务器 URL。空 = 还没选出结果（冷启动先用默认服务器）。
+    var dohAutoSelectedURL: String {
+        get {
+            (defaults.string(forKey: "dohAutoSelectedURL") ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        set {
+            defaults.set(newValue, forKey: "dohAutoSelectedURL")
+            notifyChanged()
+        }
+    }
+
+    var dohAutoSelectedAt: Date? {
+        get {
+            guard let value = defaults.object(forKey: "dohAutoSelectedAt") as? Double else { return nil }
+            return Date(timeIntervalSince1970: value)
+        }
+        set {
+            if let newValue {
+                defaults.set(newValue.timeIntervalSince1970, forKey: "dohAutoSelectedAt")
+            } else {
+                defaults.removeObject(forKey: "dohAutoSelectedAt")
+            }
+            notifyChanged()
+        }
+    }
+
+    /// 用户显式点过具体服务器。用来把"没配置过"和"配置成默认值"区分开。
+    var dohServerManuallySelected: Bool {
+        get { defaults.bool(forKey: "dohServerManuallySelected") }
+        set {
+            defaults.set(newValue, forKey: "dohServerManuallySelected")
+            notifyChanged()
+        }
+    }
+
+    /// 自动模式对**从未显式选过服务器**的用户默认开启（含新装）。
+    ///
+    /// 老用户只要点过服务器，`dohProvider` 键就已经存在，保持他们原来的选择。
+    nonisolated static func dohAutoSelectEnabled(from defaults: UserDefaults) -> Bool {
+        if let stored = defaults.object(forKey: "dohAutoSelectEnabled") as? Bool { return stored }
+        let everChose = defaults.object(forKey: "dohProvider") != nil
+            || defaults.bool(forKey: "dohServerManuallySelected")
+        return !everChose
+    }
+
+    /// 当前实际生效的服务器与 bootstrap。
+    ///
+    /// 自动模式下永远返回一份可用的结果：没有历史选择就落回 DNSPod，
+    /// 冷启动不必等探测完成。
+    nonisolated static func effectiveDoHServer(from defaults: UserDefaults) -> (url: String, bootstrap: [String]) {
+        if dohAutoSelectEnabled(from: defaults) {
+            let selected = (defaults.string(forKey: "dohAutoSelectedURL") ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let url = selected.isEmpty ? DoHProvider.dnspod.url : selected
+            return (url, lockedBootstrapIPs(for: url, extras: bootstrapExtras(from: defaults, url: url)))
+        }
+        let raw = defaults.object(forKey: "dohProvider") as? Int
+        let provider = DoHProvider(rawValue: raw ?? DoHProvider.dnspod.rawValue) ?? .dnspod
+        let customURL = defaults.string(forKey: "dohCustomURL") ?? ""
+        let serverURL = provider == .custom ? customURL : provider.url
+        let bootstrap: [String]
+        if provider == .custom {
+            let hostIsIP = URL(string: DohServerCatalog.normalize(customURL))?.host
+                .map(DohProxyConfig.looksLikeIPAddress) ?? false
+            if hostIsIP {
+                bootstrap = []
+            } else {
+                let storedServers = defaults.data(forKey: "dohCustomServers")
+                    .flatMap { decodedCustomServers(from: $0) } ?? []
+                let match = storedServers.first { $0.url == DohServerCatalog.normalize(customURL) }
+                bootstrap = lockedBootstrapIPs(
+                    for: customURL,
+                    extras: match?.bootstrapIPs ?? customBootstrapIPs(from: defaults)
+                )
+            }
+        } else {
+            bootstrap = lockedBootstrapIPs(
+                for: provider.url,
+                extras: bootstrapExtras(from: defaults, url: provider.url)
+            )
+        }
+        return (serverURL, bootstrap)
+    }
+
     var dohEnabled: Bool {
         get { defaults.bool(forKey: "dohEnabled") }
         set {
@@ -447,12 +547,23 @@ extension AppSettings {
 
     func selectDoHServer(provider: DoHProvider) {
         dohProvider = provider
+        markServerManuallySelected()
     }
 
     func selectCustomDoHServer(_ server: CustomDoHServer) {
         dohProvider = .custom
         dohCustomURL = server.url
         dohCustomBootstrapIPs = Self.lockedBootstrapIPs(for: server.url, extras: server.bootstrapIPs)
+        markServerManuallySelected()
+    }
+
+    /// 用户点了具体服务器 → 关掉自动模式，并且以后不再默认开启。
+    ///
+    /// 顺序不能反：`dohAutoSelectEnabled` 的 setter 在传 true 时才会清 manual 标记，
+    /// 这里先落 false 再置 true，两者互不覆盖。
+    private func markServerManuallySelected() {
+        dohAutoSelectEnabled = false
+        dohServerManuallySelected = true
     }
 
     var dohUpstreamProtocol: String {
@@ -508,31 +619,9 @@ extension AppSettings {
     }
 
     nonisolated static func dohProxyConfig(from defaults: UserDefaults) -> DohProxyConfig {
-        let raw = defaults.object(forKey: "dohProvider") as? Int
-        let provider = DoHProvider(rawValue: raw ?? DoHProvider.dnspod.rawValue) ?? .dnspod
-        let customURL = defaults.string(forKey: "dohCustomURL") ?? ""
-        let serverURL = provider == .custom ? customURL : provider.url
-        let bootstrap: [String]
-        if provider == .custom {
-            let hostIsIP = URL(string: DohServerCatalog.normalize(customURL))?.host
-                .map(DohProxyConfig.looksLikeIPAddress) ?? false
-            if hostIsIP {
-                bootstrap = []
-            } else {
-                let storedServers = defaults.data(forKey: "dohCustomServers")
-                    .flatMap { decodedCustomServers(from: $0) } ?? []
-                let match = storedServers.first { $0.url == DohServerCatalog.normalize(customURL) }
-                bootstrap = lockedBootstrapIPs(
-                    for: customURL,
-                    extras: match?.bootstrapIPs ?? customBootstrapIPs(from: defaults)
-                )
-            }
-        } else {
-            bootstrap = lockedBootstrapIPs(
-                for: provider.url,
-                extras: bootstrapExtras(from: defaults, url: provider.url)
-            )
-        }
+        // 服务器与 bootstrap 由 `effectiveDoHServer` 决定：自动模式读上次选出的结果，
+        // 其余情况逐字走原来的 provider / custom 分支。
+        let (serverURL, bootstrap) = effectiveDoHServer(from: defaults)
         let upstreamHost = defaults.string(forKey: "dohUpstreamHost") ?? ""
         let upstreamPort = defaults.object(forKey: "dohUpstreamPort") as? Int ?? 0
         var upstream: DohUpstreamConfig?

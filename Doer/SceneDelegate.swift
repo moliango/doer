@@ -84,6 +84,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func sceneWillResignActive(_ scene: UIScene) {}
     func sceneWillEnterForeground(_ scene: UIScene) {
         LightweightDohProxyService.shared.ensureProxyAlive()
+        // 回前台顺带补一次周期重选；受 6 小时节流，未到期时是空操作。
+        DoHServerAutoSelector.rescan(trigger: .periodic)
         ConnectivityService.shared.check()
         scheduleForegroundSessionRefresh()
     }

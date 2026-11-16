@@ -23,6 +23,7 @@ final class DohDetailSettingsViewController: ObservableViewController {
         return stack
     }()
 
+    private let autoRow = DohServerRowView()
     private let testAllRow = DataManagementActionRowView()
     private let addServerRow = DataManagementActionRowView()
     private let cacheRow = DataManagementActionRowView()
@@ -74,6 +75,12 @@ final class DohDetailSettingsViewController: ObservableViewController {
             builtInRows[provider] = row
         }
 
+        autoRow.onSelect = { [weak self] in self?.selectAutoServer() }
+        autoRow.onTest = { [weak self] in
+            guard let self else { return }
+            let effective = AppSettings.effectiveDoHServer(from: .standard)
+            self.test(url: effective.url, bootstrap: effective.bootstrap)
+        }
         testAllRow.addTarget(self, action: #selector(testAllServers), for: .touchUpInside)
         addServerRow.addTarget(self, action: #selector(addCustomServer), for: .touchUpInside)
         cacheRow.addTarget(self, action: #selector(clearDNSCache), for: .touchUpInside)
@@ -131,7 +138,7 @@ final class DohDetailSettingsViewController: ObservableViewController {
             $0.removeFromSuperview()
         }
 
-        var serverViews: [UIView] = [testAllRow, addServerRow]
+        var serverViews: [UIView] = [autoRow, testAllRow, addServerRow]
         for provider in AppSettings.DoHProvider.builtInDisplayOrder {
             if let row = builtInRows[provider] {
                 serverViews.append(row)
@@ -225,13 +232,22 @@ final class DohDetailSettingsViewController: ObservableViewController {
             backgroundColor: card
         )
 
+        let effective = AppSettings.effectiveDoHServer(from: .standard)
+        autoRow.configure(
+            title: String(localized: "settings.network.doh.auto", defaultValue: "自动"),
+            subtitle: autoRowSubtitle,
+            selected: settings.dohAutoSelectEnabled,
+            testing: testingURLs.contains(effective.url),
+            accentColor: accent,
+            backgroundColor: card
+        )
         for provider in AppSettings.DoHProvider.builtInDisplayOrder {
             guard let row = builtInRows[provider] else { continue }
             configureServerRow(
                 row,
                 title: provider.title,
                 url: provider.url,
-                selected: settings.dohProvider == provider,
+                selected: !settings.dohAutoSelectEnabled && settings.dohProvider == provider,
                 accent: accent,
                 background: card
             )
@@ -241,7 +257,9 @@ final class DohDetailSettingsViewController: ObservableViewController {
                 customRow(for: server),
                 title: server.name,
                 url: server.url,
-                selected: settings.dohProvider == .custom && settings.dohCustomURL == server.url,
+                selected: !settings.dohAutoSelectEnabled
+                    && settings.dohProvider == .custom
+                    && settings.dohCustomURL == server.url,
                 accent: accent,
                 background: card
             )
@@ -506,6 +524,53 @@ final class DohDetailSettingsViewController: ObservableViewController {
         return row
     }
 
+    /// 「自动」：由 `DoHServerAutoSelector` 并发探测内置服务器来挑一台。
+    private func selectAutoServer() {
+        settings.dohAutoSelectEnabled = true
+        // 先发重选再 apply：`configureFromSettings()` 自己会在尾部触发一次 `.launch`
+        // 探测，且受 6 小时节流。用户刚点「自动」时不该等节流，所以这里先起
+        // `.manual` 扫描；apply 里的 `.launch` 会被选服器的 `isScanning` 幂等丢弃。
+        DoHServerAutoSelector.rescan(trigger: .manual)
+        LightweightDohProxyService.shared.configureFromSettings()
+        refreshDataViews()
+    }
+
+    /// 自动模式下这一行的副标题：当前用的是谁、什么时候选出来的。
+    private var autoRowSubtitle: String {
+        guard settings.dohAutoSelectEnabled else {
+            // 自动模式关着时不要显示「当前使用 X」——那会让人以为 X 正被自动维护。
+            return String(
+                localized: "settings.network.doh.auto.desc",
+                defaultValue: "并发探测内置服务器，自动挑选能用的最快一台"
+            )
+        }
+        let selected = settings.dohAutoSelectedURL
+        let name = selected.isEmpty
+            ? nil
+            : AppSettings.DoHProvider.builtInDisplayOrder
+                .first { DohServerCatalog.normalize($0.url) == DohServerCatalog.normalize(selected) }?
+                .title
+        guard let name else {
+            return String(
+                localized: "settings.network.doh.auto.probing",
+                defaultValue: "正在探测内置服务器…"
+            )
+        }
+        guard let at = settings.dohAutoSelectedAt else {
+            return String(
+                localized: "settings.network.doh.auto.current",
+                defaultValue: "当前使用 \(name)"
+            )
+        }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        let when = formatter.localizedString(for: at, relativeTo: Date())
+        return String(
+            localized: "settings.network.doh.auto.current_at",
+            defaultValue: "当前使用 \(name)，\(when)选定"
+        )
+    }
+
     private func select(_ provider: AppSettings.DoHProvider) {
         settings.selectDoHServer(provider: provider)
         LightweightDohProxyService.shared.configureFromSettings()
@@ -671,7 +736,12 @@ final class DohDetailSettingsViewController: ObservableViewController {
     }
 
     private var currentDoHServerURL: String {
-        settings.dohProvider == .custom ? settings.dohCustomURL : settings.dohProvider.url
+        // 自动模式下 bootstrap / 自定义 bootstrap 的编辑对象必须是**实际生效**的服务器，
+        // 而不是手动选过的那一台，否则展示与写入都会落到错的 URL 上。
+        if settings.dohAutoSelectEnabled {
+            return AppSettings.effectiveDoHServer(from: settings.defaults).url
+        }
+        return settings.dohProvider == .custom ? settings.dohCustomURL : settings.dohProvider.url
     }
 
     @objc private func editBootstrapIPs() {

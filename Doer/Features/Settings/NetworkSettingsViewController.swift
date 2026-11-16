@@ -155,7 +155,7 @@ final class NetworkSettingsViewController: ObservableViewController {
             title: String(localized: "settings.network.doh_status", defaultValue: "状态"),
             subtitle: LightweightDohProxyService.shared.statusDescription
                 + " · "
-                + settings.dohProvider.title,
+                + dohServerDisplayName,
             symbolName: "checkmark.circle",
             tintColor: accent,
             backgroundColor: card
@@ -249,6 +249,17 @@ final class NetworkSettingsViewController: ObservableViewController {
             tintColor: accent,
             backgroundColor: card
         )
+    }
+
+    /// 状态行里显示的服务器：自动模式下是**实际生效**的那台，
+    /// 而不是可能已经过时的手动选择（否则会出现「显示 DNSPod、实际查 Cloudflare」）。
+    private var dohServerDisplayName: String {
+        guard settings.dohAutoSelectEnabled else { return settings.dohProvider.title }
+        let url = AppSettings.effectiveDoHServer(from: settings.defaults).url
+        let name = AppSettings.DoHProvider.builtInDisplayOrder
+            .first { DohServerCatalog.normalize($0.url) == DohServerCatalog.normalize(url) }?
+            .title ?? (URL(string: url)?.host ?? url)
+        return String(localized: "settings.network.doh.auto", defaultValue: "自动") + " · " + name
     }
 
     @objc private func openCloudflare() {

@@ -66,6 +66,22 @@ public enum DohServerCatalog: Sendable {
         ]
     )
 
+    /// IP 字面量端点：URL 的 host 就是 IP，证书都带对应 IP SAN，连名称解析都不需要。
+    ///
+    /// 取自 CFluxDo 的 `PUBLIC_DOH_ENDPOINTS`（那里全部用这种形式，注释写明
+    /// "证书都带 IP SAN，完全不经系统 DNS"）。给公共 DoH 竞速用——取 ECH 钥匙、
+    /// 解析优选候选域名——**不进设置页**，用户选不到它。
+    ///
+    /// 只放实测可达的国内端点（2026-11）：这几台都是 200 + 带 `ech`，40ms–1.1s；
+    /// `1.1.1.1` / `8.8.8.8` 这类境外地址在国内握手就断，放进来只会浪费一次超时。
+    public static let ipLiteral: [DohServerDescriptor] = [
+        DohServerDescriptor(name: "阿里 DNS", url: "https://223.5.5.5/dns-query", bootstrapIPs: ["223.5.5.5"]),
+        DohServerDescriptor(name: "阿里 DNS", url: "https://223.6.6.6/dns-query", bootstrapIPs: ["223.6.6.6"]),
+        DohServerDescriptor(name: "DNSPod", url: "https://1.12.12.12/dns-query", bootstrapIPs: ["1.12.12.12"]),
+        DohServerDescriptor(name: "DNSPod", url: "https://120.53.53.53/dns-query", bootstrapIPs: ["120.53.53.53"]),
+        DohServerDescriptor(name: "360", url: "https://101.226.4.6/dns-query", bootstrapIPs: ["101.226.4.6"]),
+    ]
+
     /// FluxDo order. First entry is the new-install default.
     public static let builtIn: [DohServerDescriptor] = [
         dnsPod,
