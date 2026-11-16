@@ -7,6 +7,9 @@ import UIKit
 final class TappableImageContainer: UIView {
     /// URL used when tapped — prefers the full-size href over the img src.
     var imageURL: URL?
+    /// Set for `<a href="page"><img></a>` cards (red packets, event banners).
+    /// The href is a page, not a lightbox original, so a tap must navigate.
+    var linkURL: URL?
     var galleryImageURLs: [URL] = []
     weak var delegate: PostCellDelegate?
 
@@ -42,10 +45,12 @@ final class TappableImageContainer: UIView {
         height: Int?,
         containerWidth: CGFloat,
         href: URL? = nil,
+        linkURL: URL? = nil,
         galleryImageURLs: [URL] = [],
         refererBaseURL: String? = nil
     ) {
         imageURL = href ?? url
+        self.linkURL = linkURL
         self.galleryImageURLs = galleryImageURLs
         self.refererBaseURL = refererBaseURL
         self.sourceURL = url
@@ -141,10 +146,9 @@ final class TappableImageContainer: UIView {
         let tap = UITapGestureRecognizer(target: self, action: #selector(imageTapped))
         addGestureRecognizer(tap)
         isUserInteractionEnabled = true
-        accessibilityHint = String(
-            localized: "topic.image.retry_hint",
-            defaultValue: "加载失败时可点按重试"
-        )
+        accessibilityHint = linkURL == nil
+            ? String(localized: "topic.image.retry_hint", defaultValue: "加载失败时可点按重试")
+            : String(localized: "topic.image.link_hint", defaultValue: "点按打开链接")
     }
 
     @available(*, unavailable)
@@ -293,6 +297,12 @@ final class TappableImageContainer: UIView {
     }
 
     @objc private func imageTapped() {
+        // Link cards navigate even while the bitmap is missing: a retry would
+        // leave no way to reach the page behind the card.
+        if let linkURL {
+            delegate?.postCell(didTapLinkURL: linkURL)
+            return
+        }
         // No successful bitmap yet (failed, loading, or timed out) → force network retry.
         // Previously only `didFailLoad` retried; gray "still loading" tiles opened gallery.
         if didFailLoad || !hasDisplayedImage {
@@ -400,11 +410,20 @@ enum ImageRenderer: BlockRenderer {
             height: height,
             containerWidth: config.contentWidth,
             href: hrefURL,
+            linkURL: pageLinkURL(forHref: href),
             galleryImageURLs: config.galleryImageURLs,
             refererBaseURL: config.baseURL
         )
         container.delegate = delegate
         return container
+    }
+
+    /// `<a href="page"><img></a>` is a link card (red packets, event banners):
+    /// the href is an HTML page, so a tap must open it instead of the gallery.
+    /// Image hrefs stay lightbox originals and keep the gallery behaviour.
+    nonisolated static func pageLinkURL(forHref href: String?) -> URL? {
+        guard let href, !href.isEmpty, !ImageURLDetector.isImageURL(href) else { return nil }
+        return makeURL(href)
     }
 
     nonisolated private static func makeURL(_ raw: String) -> URL? {

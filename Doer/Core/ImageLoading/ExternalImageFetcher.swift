@@ -1,4 +1,5 @@
 import SDWebImage
+import SDWebImageSVGCoder
 import UIKit
 
 /// FluxDo-aligned image download path for topic body / external beds.
@@ -175,24 +176,36 @@ enum ExternalImageFetcher {
 
     private static func decodeImage(data: Data?, response: URLResponse?) -> UIImage? {
         guard let data, !data.isEmpty else { return nil }
-        if let http = response as? HTTPURLResponse, !(200 ..< 300).contains(http.statusCode) {
+        let http = response as? HTTPURLResponse
+        if let http, !(200 ..< 300).contains(http.statusCode) {
             return nil
         }
+        let mime = (http?.mimeType ?? "").lowercased()
         // Reject obvious non-image payloads (CF HTML challenge pages).
-        if let http = response as? HTTPURLResponse {
-            let mime = (http.mimeType ?? "").lowercased()
-            if mime.contains("text/html") || mime.contains("application/json") {
-                return nil
-            }
+        if mime.contains("text/html") || mime.contains("application/json") {
+            return nil
         }
         if let prefix = String(data: data.prefix(64), encoding: .utf8)?.lowercased(),
            prefix.contains("<!doctype html") || prefix.contains("<html") {
             return nil
         }
+        if let svg = decodeSVG(data: data, mime: mime) {
+            return svg
+        }
         if let animated = SDAnimatedImage(data: data) {
             return animated
         }
         return UIImage(data: data)
+    }
+
+    /// UIKit has no SVG decoder. Community cards (red packets, event banners) on
+    /// linux.do are raw `image/svg+xml`, so without this they only ever paint a
+    /// gray retry tile.
+    nonisolated static func decodeSVG(data: Data, mime: String) -> UIImage? {
+        let head = String(data: data.prefix(512), encoding: .utf8)?.lowercased() ?? ""
+        guard mime.contains("svg") || head.contains("<svg") else { return nil }
+        guard SDImageSVGCoder.shared.canDecode(from: data) else { return nil }
+        return SDImageSVGCoder.shared.decodedImage(with: data, options: nil)
     }
 
     private static func finish(cacheKey: String, image: UIImage?) {

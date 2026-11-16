@@ -48084,6 +48084,34 @@
         }
       }
     },
+    "topic.image.link_hint" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tap to open the link"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "点按打开链接"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "點按打開鏈接"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "點按打開鏈接"
+          }
+        }
+      }
+    },
     "topic.image.load_failed" : {
       "localizations" : {
         "en" : {

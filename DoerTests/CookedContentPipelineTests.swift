@@ -1,3 +1,5 @@
+import CookedHTML
+import UIKit
 import XCTest
 @testable import Doer
 
@@ -63,5 +65,30 @@ final class CookedContentPipelineTests: XCTestCase {
         )
         XCTAssertEqual(attr.string, "Plain title only")
         XCTAssertFalse(attr.string.contains("<"))
+    }
+
+    // MARK: - Linked card images (red packets / event banners)
+
+    func testLinkedCardImageKeepsPageLinkForTap() {
+        let cooked = ##"<p><a href="https://hb.unsnow.org/hb/40faa92d6a193727dd8c8839efadae66" rel="noopener nofollow ugc"><picture><source type="image/svg+xml" srcset="https://hb.unsnow.org/share/cards/40faa92d6a193727dd8c8839efadae66/753f5de1b0ac56dab34bbdfbfa78ea91.svg 1x"><img src="https://cdn3.ldstatic.com/original/4X/e/a/e/eae408e6d0da13636b3bcf26c6bf3ccbd24bdf2b.svg" data-base62-sha1="xvWi01XrkOcx2MJtTlEbSugXKVZ" width="300" height="409" alt="红包卡片"></picture></a></p>"##
+        let blocks = CookedContentPipeline.blocks(fromCooked: cooked)
+        guard case .image(let src, _, _, _, let href)? = blocks.first else {
+            return XCTFail("expected a promoted image block, got \(blocks)")
+        }
+        XCTAssertTrue(src.contains("cdn3.ldstatic.com"))
+        XCTAssertEqual(href, "https://hb.unsnow.org/hb/40faa92d6a193727dd8c8839efadae66")
+        // The href is an HTML page, so a tap must navigate instead of opening
+        // the gallery of the card bitmap itself.
+        XCTAssertEqual(ImageRenderer.pageLinkURL(forHref: href)?.host, "hb.unsnow.org")
+        XCTAssertNil(ImageRenderer.pageLinkURL(forHref: src))
+    }
+
+    func testCommunityCardSVGDecodesThroughFetcher() {
+        let svg = ##"<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="300" height="409" viewBox="0 0 300 409"><defs><linearGradient id="g"><stop offset="0" stop-color="#F52A30"/><stop offset="1" stop-color="#EF1B24"/></linearGradient></defs><rect width="300" height="409" fill="url(#g)"/></svg>"##
+        let data = Data(svg.utf8)
+        // UIKit alone cannot decode SVG; without the coder the card stays a gray tile.
+        XCTAssertNil(UIImage(data: data))
+        XCTAssertNotNil(ExternalImageFetcher.decodeSVG(data: data, mime: "image/svg+xml"))
+        XCTAssertNil(ExternalImageFetcher.decodeSVG(data: Data([0xFF, 0xD8, 0xFF, 0xE0]), mime: "image/jpeg"))
     }
 }
