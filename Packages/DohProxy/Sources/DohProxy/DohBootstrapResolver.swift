@@ -24,6 +24,12 @@ public final class DohBootstrapResolver: @unchecked Sendable {
     public static let staleServingWindow: TimeInterval = 120
     /// 解析失败后的短负缓存，挡住同一秒里涌进来的重试。
     public static let negativeTTL: TimeInterval = 3
+    /// 单次 resolve 的总预算。A / AAAA / HTTPS 三路并发查询，任何一路不回调
+    /// （HTTPS 走 ECH endpoint，其 bootstrap 在 TUN fake-IP 上会超时）都不能
+    /// 让 resolve 永远不返回——那会把上层的 CONNECT 和 WKWebView 一起挂死。
+    /// 必须大于 `DohBootstrapTransport` 单轮查询的 6s 预算，否则会抢在传输层
+    /// 自己的超时前面误杀正常慢查询；8s = 6s transport + 排队余量。
+    private static let resolveTimeout: TimeInterval = 8
 
     private let queue = DispatchQueue(label: "doer.doh.bootstrap-resolver")
     private var config: DohProxyConfig
@@ -32,6 +38,10 @@ public final class DohBootstrapResolver: @unchecked Sendable {
     private var stickyUntil: [String: (ip: String, expires: Date)] = [:]
     private var penalties: [String: [String: Date]] = [:]
     private var failures: [String: (until: Date, error: Error)] = [:]
+    /// 每次 `load` 递增的全局代号，按 host 记住当前代。超时与迟到的
+    /// `group.notify` 都靠它判断自己是否已经过期。
+    private var loadGeneration = 0
+    private var currentGeneration: [String: Int] = [:]
 
     public init(config: DohProxyConfig) {
         self.config = config
@@ -156,6 +166,21 @@ public final class DohBootstrapResolver: @unchecked Sendable {
     }
 
     private func load(host: String) {
+        loadGeneration &+= 1
+        let generation = loadGeneration
+        currentGeneration[host] = generation
+
+        // 总超时。work item 与 `group.notify` 跑在同一条串行队列上，所以
+        // 对 inflight / currentGeneration 的检查与改写之间没有并发窗口。
+        // 只在本代仍有效、且还有人在等的情况下才收尾，避免把后来者的请求误杀。
+        queue.asyncAfter(deadline: .now() + Self.resolveTimeout) { [weak self] in
+            guard let self,
+                  self.currentGeneration[host] == generation,
+                  self.inflight[host] != nil else { return }
+            DohBootstrapTransport.log?("resolve timeout host=\(host) after \(Int(Self.resolveTimeout))s")
+            self.finish(host: host, result: .failure(DohProxyError.resolveTimeout(host)))
+        }
+
         guard let dns = DohEndpoint(
             url: config.serverURL,
             bootstrapIPs: config.bootstrapIPs,
@@ -228,9 +253,24 @@ public final class DohBootstrapResolver: @unchecked Sendable {
         addQuery(endpoint: ech, type: DohDNSMessage.typeHTTPS)
 
         group.notify(queue: queue) {
+            // 这一代是否还被认可：超时已经 finish（inflight 被清空），或者
+            // 同一 host 又开了新的一代，都算过期。过期答案不得再回调调用方，
+            // 但拿到的记录仍然有缓存价值，不能白白丢掉。
+            let isCurrent = self.currentGeneration[host] == generation && self.inflight[host] != nil
+
             let unique = Self.unique(addresses)
             let echResult = DohEchClient().result(host: host, httpsAnswers: httpsRData)
             if unique.isEmpty, echResult.echConfig == nil {
+                guard isCurrent else {
+                    // 过期代且没有答案：不能回调调用方（超时已经 finish 过了），
+                    // 但错误信息要留下来，否则日志里只有 timeout、看不到根因。
+                    DohBootstrapTransport.log?(
+                        "resolve stale empty answer host=\(host) generation=\(generation) "
+                            + "current=\(self.currentGeneration[host] ?? -1) "
+                            + "error=\(errors.first.map { String(describing: $0) } ?? "none")"
+                    )
+                    return
+                }
                 self.finish(host: host, result: .failure(errors.first ?? DohProxyError.emptyAnswer(host)))
                 return
             }
@@ -245,6 +285,15 @@ public final class DohBootstrapResolver: @unchecked Sendable {
                 expiresAt: Date().addingTimeInterval(ttl)
             )
             self.store(record)
+            guard isCurrent else {
+                // 迟到的好答案：缓存留下，顺手清掉超时写下的负缓存，
+                // 否则接着 3 秒里的重试还会撞在失败上。
+                self.failures.removeValue(forKey: host)
+                DohBootstrapTransport.log?(
+                    "resolve late answer cached host=\(host) generation=\(generation) current=\(self.currentGeneration[host] ?? -1)"
+                )
+                return
+            }
             self.finish(host: host, result: .success(self.applyingStickyAndPenalties(record)))
         }
     }
@@ -288,6 +337,9 @@ public final class DohBootstrapResolver: @unchecked Sendable {
             failures[host] = (Date().addingTimeInterval(Self.negativeTTL), error)
         }
         let completions = inflight.removeValue(forKey: host) ?? []
+        // 这一代已经收尾：清掉代号，让还在排队的总超时 work item 变成 no-op，
+        // 同时避免 currentGeneration 随访问过的 host 无限增长。
+        currentGeneration.removeValue(forKey: host)
         completions.forEach { $0(result) }
     }
 
