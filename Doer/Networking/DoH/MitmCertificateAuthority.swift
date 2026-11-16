@@ -242,7 +242,10 @@ private enum X509Issuer {
     ) -> Data {
         let now = Date()
         let notBefore = now.addingTimeInterval(-86_400)
-        let notAfter = now.addingTimeInterval(86_400 * 365 * 5)
+        // 叶子证书按 Apple 的硬上限签：2020-09 之后签发的 TLS 服务器证书有效期
+        // 超过 397 天会被直接判死（`证书超出了最高临时验证期`）。以前签 5 年，
+        // 于是 MITM 握手在客户端验签这一步全军覆没。CA 是自签根，不受这条限制。
+        let notAfter = now.addingTimeInterval(86_400 * (isCA ? 365 * 5 : 90))
         let subjectName = derSequence([
             derSet([derSequence([derOID([2, 5, 4, 3]), derUTF8(subject)])]),
         ])
@@ -263,8 +266,20 @@ private enum X509Issuer {
                 derOctet(san),
             ]))
         }
-        let ext = derSequence([derOID([2, 5, 29, 15]), derOctet(derBitString(Data([isCA ? 0x01 : 0x80])))])
-        extensions.append(ext)
+        // keyUsage（2.5.29.15）是 NamedBitList，DER 要按"最后一位之后还有几个空位"编码。
+        // 以前 CA 只写了 0x01（最末一位 = encipherOnly），完全没有 keyCertSign，
+        // 客户端于是报「密钥使用与证书使用不匹配」；叶子也缺 keyEncipherment。
+        //   叶子：digitalSignature(0x80) + keyEncipherment(0x20)
+        //   CA  ：digitalSignature(0x80) + keyCertSign(0x04) + cRLSign(0x02)
+        let usage: UInt8 = isCA ? 0x86 : 0xA0
+        extensions.append(derSequence([derOID([2, 5, 29, 15]), derOctet(derKeyUsage(usage))]))
+        if !isCA {
+            // 叶子必须声明 serverAuth，否则同样的"扩展密钥使用与证书使用不匹配"。
+            extensions.append(derSequence([
+                derOID([2, 5, 29, 37]),
+                derOctet(derSequence([derOID([1, 3, 6, 1, 5, 5, 7, 3, 1])])),
+            ]))
+        }
         return derSequence([
             Data([0xA0, 0x03, 0x02, 0x01, 0x02]),
             derInteger(Data([0x01])),
@@ -306,6 +321,17 @@ private enum X509Issuer {
 
     private static func derBitString(_ data: Data) -> Data {
         Data([0x03]) + derLength(data.count + 1) + Data([0x00]) + data
+    }
+
+    /// keyUsage 这种 NamedBitList：DER 要求去掉尾部的 0 位，并把"空位数"写在最前面。
+    private static func derKeyUsage(_ bits: UInt8) -> Data {
+        var unused: UInt8 = 0
+        var value = bits
+        while value != 0, value & 1 == 0 {
+            unused += 1
+            value >>= 1
+        }
+        return Data([0x03]) + derLength(2) + Data([unused, bits])
     }
 
     private static func derUTF8(_ string: String) -> Data {
