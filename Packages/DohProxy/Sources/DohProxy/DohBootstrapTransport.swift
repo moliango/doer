@@ -15,6 +15,8 @@ public enum DohBootstrapTransport {
     /// 最多并行试几个地址，避免候选收集那种一次十几个端点的场景把连接数打爆。
     private static let maxHedgedAddresses = 3
     private static let systemAddressTTL: TimeInterval = 60
+    /// 连不上的 bootstrap IP 先冷藏这么久，别让每个查询都陪它等满超时。
+    private static let addressPenaltyTTL: TimeInterval = 60
 
     private static let skipSystemLookupLock = NSLock()
     private static var skipSystemAddressLookupLocked = false
@@ -55,8 +57,20 @@ public enum DohBootstrapTransport {
         }
         let logger: ((String) -> Void)? = quiet ? nil : log
         var addresses = endpoint.bootstrapIPs
-        if !DohProxyConfig.looksLikeIPAddress(endpoint.host), !skipSystemAddressLookup {
-            let resolved = systemAddresses(for: endpoint.host)
+        if !DohProxyConfig.looksLikeIPAddress(endpoint.host) {
+            // Encrypted DNS 开着时不能再同步做 `getaddrinfo`（会递归到同一台 DoH 上
+            // 等 30 秒），但**缓存里**的系统 IP 仍然可用，过期的也先用着——
+            // DoH 服务器的 CDN IP 会轮换，旧地址失效后没有新地址就是彻底没网。
+            let cached = cachedSystemAddresses(for: endpoint.host)
+            let resolved: [String]
+            if !cached.isEmpty {
+                resolved = cached
+                scheduleSystemRefresh(for: endpoint.host)
+            } else if skipSystemAddressLookup {
+                resolved = []
+            } else {
+                resolved = systemAddresses(for: endpoint.host)
+            }
             if !resolved.isEmpty {
                 logger?("DoH server \(endpoint.host) system DNS -> \(resolved.joined(separator: ", "))")
                 var seen = Set<String>()
@@ -70,6 +84,7 @@ public enum DohBootstrapTransport {
             completion(.failure(DohProxyError.bootstrapUnavailable(endpoint.host)))
             return
         }
+        addresses = droppingPenalized(addresses)
         race(
             addresses: Array(addresses.prefix(maxHedgedAddresses)),
             host: endpoint.host,
@@ -118,6 +133,10 @@ public enum DohBootstrapTransport {
             }
             lock.unlock()
             guard let deliver else { return }
+            switch deliver {
+            case .success: noteQueryResult(host: host, success: true)
+            case .failure: noteQueryResult(host: host, success: false)
+            }
             queue.async { completion(deliver) }
         }
 
@@ -142,6 +161,7 @@ public enum DohBootstrapTransport {
                         settle(.success(body))
                     case .failure(let error):
                         logger?("bootstrap failed \(ip): \(error.localizedDescription)")
+                        noteAddressFailure(ip)
                         settle(.failure(error))
                     }
                 }
@@ -171,6 +191,94 @@ public enum DohBootstrapTransport {
 
     private static let addressCacheLock = NSLock()
     private static var addressCache: [String: (addresses: [String], at: Date)] = [:]
+    private static var addressPenalizedUntil: [String: Date] = [:]
+
+    /// 后台补一次系统解析。Encrypted DNS 开着时 `getaddrinfo` 会走同一台 DoH，
+    /// 所以只能放在这条专用队列上，绝不阻塞调用方（尤其是主线程）。
+    private static let refreshQueue = DispatchQueue(label: "doer.doh.system-address-refresh")
+    private static let refreshInterval: TimeInterval = 300
+    private static var lastRefreshAt: [String: Date] = [:]
+
+    /// 一台 DoH 连续几轮查询全军覆没，就认为它已经不可用。
+    private static let failureWatchdogThreshold = 3
+    private static let watchdogLock = NSLock()
+    private static var consecutiveFailuresByHost: [String: Int] = [:]
+    /// 触发时在后台线程回调。App 层据此把 Encrypted DNS 退回系统 DNS，
+    /// 否则整个进程的解析都压在一台连不上的服务器上，表现为「完全没网」。
+    public static var onRepeatedFailure: ((String) -> Void)?
+
+    private static func scheduleSystemRefresh(for host: String) {
+        let key = host.lowercased()
+        addressCacheLock.lock()
+        let due = Date().timeIntervalSince(lastRefreshAt[key] ?? .distantPast) >= refreshInterval
+        if due { lastRefreshAt[key] = Date() }
+        addressCacheLock.unlock()
+        guard due else { return }
+        refreshQueue.async {
+            let addresses = resolveSystemAddresses(for: host)
+            guard !addresses.isEmpty else { return }
+            addressCacheLock.lock()
+            addressCache[key] = (addresses, Date())
+            addressCacheLock.unlock()
+        }
+    }
+
+    private static func noteQueryResult(host: String, success: Bool) {
+        watchdogLock.lock()
+        if success {
+            consecutiveFailuresByHost[host] = 0
+            watchdogLock.unlock()
+            return
+        }
+        let count = (consecutiveFailuresByHost[host] ?? 0) + 1
+        consecutiveFailuresByHost[host] = count
+        guard count >= failureWatchdogThreshold else {
+            watchdogLock.unlock()
+            return
+        }
+        consecutiveFailuresByHost[host] = 0
+        let callback = onRepeatedFailure
+        watchdogLock.unlock()
+        guard let callback else { return }
+        DispatchQueue.global(qos: .utility).async { callback(host) }
+    }
+
+    /// 只读缓存，绝不做 `getaddrinfo`。Encrypted DNS 开启后系统解析会递归到同一
+    /// 台 DoH 上，所以这时只能用之前缓存下来的 IP。
+    public static func cachedSystemAddresses(for host: String) -> [String] {
+        addressCacheLock.lock()
+        defer { addressCacheLock.unlock() }
+        return addressCache[host.lowercased()]?.addresses ?? []
+    }
+
+    /// 把已经拿到手的系统 IP 灌进缓存（App 层在开启 Encrypted DNS 前调用）。
+    public static func seedSystemAddresses(_ addresses: [String], for host: String) {
+        guard !addresses.isEmpty else { return }
+        addressCacheLock.lock()
+        addressCache[host.lowercased()] = (addresses, Date())
+        addressCacheLock.unlock()
+    }
+
+    private static func noteAddressFailure(_ ip: String) {
+        addressCacheLock.lock()
+        addressPenalizedUntil[ip] = Date().addingTimeInterval(addressPenaltyTTL)
+        if addressPenalizedUntil.count > 64 {
+            let now = Date()
+            addressPenalizedUntil = addressPenalizedUntil.filter { $0.value > now }
+        }
+        addressCacheLock.unlock()
+    }
+
+    /// 连不上的 IP 排到后面；全都冷藏过就照原样试，避免一个都不剩。
+    private static func droppingPenalized(_ addresses: [String]) -> [String] {
+        addressCacheLock.lock()
+        let now = Date()
+        let penalized = Set(addressPenalizedUntil.filter { $0.value > now }.keys)
+        addressCacheLock.unlock()
+        guard !penalized.isEmpty else { return addresses }
+        let alive = addresses.filter { !penalized.contains($0) }
+        return alive.isEmpty ? addresses : alive
+    }
 
     /// `getaddrinfo` 是同步阻塞调用，而解析一次域名要打三个查询；不缓存就会在
     /// 解析器的串行队列上连做三次。结果按主机名缓存一分钟。
@@ -201,6 +309,7 @@ public enum DohBootstrapTransport {
     public static func clearSystemAddressCache() {
         addressCacheLock.lock()
         addressCache.removeAll()
+        addressPenalizedUntil.removeAll()
         addressCacheLock.unlock()
     }
 

@@ -632,6 +632,10 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
         var best: [String] = []
         var answered = 0
         var poisoned = 0
+        /// 每个解析器这一轮还剩几条查询没回来。A/AAAA 各记一次失败会在一次网络
+        /// 抖动里直接把它暂停掉（日志里就是「连续失败 2 次」），所以按解析器汇总。
+        var pendingByResolver: [String: Int] = [:]
+        var healthyResolvers = Set<String>()
         let group = DispatchGroup()
 
         for descriptor in active {
@@ -643,6 +647,9 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
 
             for type in types {
                 guard let query = DohDNSMessage.makeQuery(host: domain, type: type) else { continue }
+                lock.lock()
+                pendingByResolver[descriptor.url, default: 0] += 1
+                lock.unlock()
                 group.enter()
                 DohBootstrapTransport.query(
                     endpoint: endpoint,
@@ -651,35 +658,38 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
                     quiet: true
                 ) { result in
                     defer { group.leave() }
-                    guard case .success(let body) = result,
-                          let resources = try? DohDNSMessage.parseResources(body, expectedType: type)
-                    else {
-                        self.noteResolverResult(descriptor.url, ok: false)
-                        return
-                    }
-                    let ips = resources.compactMap { resource -> String? in
-                        switch type {
-                        case DohDNSMessage.typeA: return DohDNSMessage.ipv4String(from: resource.rdata)
-                        case DohDNSMessage.typeAAAA: return DohDNSMessage.ipv6String(from: resource.rdata)
-                        default: return nil
+                    var ips: [String] = []
+                    var poisonedAnswer = false
+                    if case .success(let body) = result,
+                       let resources = try? DohDNSMessage.parseResources(body, expectedType: type) {
+                        ips = resources.compactMap { resource -> String? in
+                            switch type {
+                            case DohDNSMessage.typeA: return DohDNSMessage.ipv4String(from: resource.rdata)
+                            case DohDNSMessage.typeAAAA: return DohDNSMessage.ipv6String(from: resource.rdata)
+                            default: return nil
+                            }
                         }
+                        // 解析成功但答案不在 CF 网段 = 投毒，这个解析器同样不可信。
+                        poisonedAnswer = !CloudflareRanges.allCloudflare(ips)
                     }
-                    // 解析成功但答案不在 CF 网段 = 投毒，这个解析器同样不可信。
-                    guard CloudflareRanges.allCloudflare(ips) else {
-                        self.noteResolverResult(descriptor.url, ok: false)
-                        lock.lock()
-                        poisoned += 1
-                        lock.unlock()
-                        return
-                    }
-                    self.noteResolverResult(descriptor.url, ok: true)
                     lock.lock()
-                    answered += 1
-                    if !settled, !ips.isEmpty {
-                        settled = true
-                        best = ips
+                    if !ips.isEmpty, !poisonedAnswer {
+                        healthyResolvers.insert(descriptor.url)
+                        answered += 1
+                        if !settled {
+                            settled = true
+                            best = ips
+                        }
+                    } else if poisonedAnswer {
+                        poisoned += 1
                     }
+                    let left = (pendingByResolver[descriptor.url] ?? 1) - 1
+                    pendingByResolver[descriptor.url] = left
+                    let healthy = healthyResolvers.contains(descriptor.url)
                     lock.unlock()
+                    // 这一轮这个解析器还有查询在路上就先不判，等最后一条回来再说。
+                    guard left <= 0 else { return }
+                    self.noteResolverResult(descriptor.url, ok: healthy)
                 }
             }
         }

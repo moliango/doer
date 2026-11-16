@@ -54,11 +54,17 @@ nonisolated enum EncryptedDnsService {
     /// 全进程所有 host 重新解析，没必要每次都付这个代价。
     private static var lastFlushAt: Date?
     private static let flushCooldown: TimeInterval = 120
+    /// DoH 连续不可达退回系统 DNS 后的冷却。Encrypted DNS 把整个进程的解析都
+    /// 压在这一台服务器上，它一坏就是「完全没网」，所以必须能自己退出来。
+    private static let unreachableCooldown: TimeInterval = 300
+    private static var retrySuppressedUntil: Date?
+    private static var retrySuppressedSpec: ResolverSpec?
     private static var encryptedResolutionEnabled = false
     private static let checkQueue = DispatchQueue(
         label: "doer.encrypted-dns.bootstrap-check",
         attributes: .concurrent
     )
+    private static let applyQueue = DispatchQueue(label: "doer.encrypted-dns.apply")
 
     /// 装上一份 resolver。
     ///
@@ -66,10 +72,27 @@ nonisolated enum EncryptedDnsService {
     /// 解析都交给这台 DoH，交给一台连不上的（Google / Quad9 / Cloudflare 在国内就是这种）
     /// 等于让整个 App 断网。探不通就回退到上一次验证通过的，再不行退回系统 DNS。
     static func apply(_ spec: ResolverSpec) {
+        // 这里会做 `getaddrinfo`（阻塞，DNS 坏了能卡几十秒），而调用方常常是
+        // 主线程（启动 / 回前台）。整段挪到专用串行队列上，顺序不变。
+        applyQueue.async { applyNow(spec) }
+    }
+
+    private static func applyNow(_ spec: ResolverSpec) {
         applyLock.lock()
         let alreadyEncrypted = encryptedResolutionEnabled
         let cachedSystem = lastLiveSystemIPs
+        let suppressedUntil = retrySuppressedUntil
+        let suppressedSpec = retrySuppressedSpec
         applyLock.unlock()
+        // 上一轮判定这台 DoH 不可达：冷却期内继续用系统 DNS，别再把自己锁死。
+        // 换了服务器（spec 不同）就立刻允许重试。
+        if let suppressedUntil, suppressedUntil > Date(), suppressedSpec == spec {
+            DohDebugLog.record(
+                "Encrypted DNS 冷却中（上次不可达），保持系统 DNS",
+                subsystem: "DoH"
+            )
+            return
+        }
 
         let system: [String]
         if alreadyEncrypted {
@@ -83,6 +106,12 @@ nonisolated enum EncryptedDnsService {
             applyLock.unlock()
         } else {
             system = []
+        }
+        // 打开 Encrypted DNS 之后 `getaddrinfo` 就废了（会递归到同一台 DoH 上），
+        // 传输层只能吃缓存；这里先把刚拿到的系统 IP 灌进去，否则它就只剩配置里
+        // 那个可能连不上的 bootstrap（例如国内连不上的 8.8.8.8）。
+        if let host = spec.url.host {
+            DohBootstrapTransport.seedSystemAddresses(system, for: host)
         }
         let ips = encryptedDNSBootstrapIPs(
             configured: spec.bootstrapIPs,
@@ -108,9 +137,9 @@ nonisolated enum EncryptedDnsService {
         }
 
         checkQueue.async {
-            guard hasReachableBootstrap(ips) else {
+            guard canReachDoH(normalized) else {
                 DohDebugLog.record(
-                    "Encrypted DNS 拒绝启用 \(normalized.url.host ?? "?"): bootstrap \(ips.joined(separator: ",")) 都连不上"
+                    "Encrypted DNS 拒绝启用 \(normalized.url.host ?? "?"): bootstrap \(ips.joined(separator: ",")) 握手或查询失败"
                 )
                 fallBackOrDisable()
                 return
@@ -133,6 +162,8 @@ nonisolated enum EncryptedDnsService {
         lastApplied = spec
         lastVerified = spec
         encryptedResolutionEnabled = true
+        retrySuppressedUntil = nil
+        retrySuppressedSpec = nil
         applyLock.unlock()
         DohBootstrapTransport.skipSystemAddressLookup = true
         let endpoints = bootstrapEndpoints(spec.bootstrapIPs)
@@ -168,43 +199,33 @@ nonisolated enum EncryptedDnsService {
         commit(fallback)
     }
 
-    /// bootstrap IP 里至少有一个能在预算内连上 443。
-    private static func hasReachableBootstrap(_ ips: [String], timeout: TimeInterval = 1.2) -> Bool {
-        let candidates = ips.prefix(4).compactMap { ip -> NWEndpoint.Host? in
-            if let v4 = IPv4Address(ip) { return .ipv4(v4) }
-            if let v6 = IPv6Address(ip) { return .ipv6(v6) }
-            return nil
-        }
-        guard !candidates.isEmpty else { return false }
+    /// 真的打一条 DoH 查询过去，而不是只 TCP 连一下 443。
+    ///
+    /// 只探 TCP 的话，一个能连上但不服务这个主机名的 IP（比如填错、CDN 换边）
+    /// 会被当成可用，`requireEncryptedNameResolution(true)` 一交出去整个 App 就
+    /// 没网了。这里用真实查询验证 TLS + 路径 + 应答都通。
+    private static func canReachDoH(_ spec: ResolverSpec, timeout: TimeInterval = 3) -> Bool {
+        guard let endpoint = DohEndpoint(
+            url: spec.url.absoluteString,
+            bootstrapIPs: spec.bootstrapIPs,
+            preferIPv6: false
+        ), endpoint.isReady,
+            let query = DohDNSMessage.makeQuery(host: "linux.do", type: DohDNSMessage.typeA)
+        else { return false }
 
+        let semaphore = DispatchSemaphore(value: 0)
+        let queue = DispatchQueue(label: "doer.encrypted-dns.probe")
         let lock = NSLock()
         var reachable = false
-        let group = DispatchGroup()
-        for host in candidates {
-            group.enter()
-            var settled = false
-            let connection = NWConnection(host: host, port: 443, using: .tcp)
-            let settle: (Bool) -> Void = { ok in
+        DohBootstrapTransport.query(endpoint: endpoint, dnsQuery: query, queue: queue, quiet: true) { result in
+            if case .success = result {
                 lock.lock()
-                let first = !settled
-                settled = true
-                if ok { reachable = true }
+                reachable = true
                 lock.unlock()
-                guard first else { return }
-                connection.cancel()
-                group.leave()
             }
-            connection.stateUpdateHandler = { state in
-                switch state {
-                case .ready: settle(true)
-                case .failed, .cancelled: settle(false)
-                default: break
-                }
-            }
-            connection.start(queue: checkQueue)
-            checkQueue.asyncAfter(deadline: .now() + timeout) { settle(false) }
+            semaphore.signal()
         }
-        _ = group.wait(timeout: .now() + timeout + 0.3)
+        _ = semaphore.wait(timeout: .now() + timeout)
         lock.lock()
         let result = reachable
         lock.unlock()
@@ -220,6 +241,33 @@ nonisolated enum EncryptedDnsService {
         applyFromDefaults()
     }
 
+    /// DoH 已经连不上时退回系统 DNS。
+    ///
+    /// `requireEncryptedNameResolution(true)` 一旦指向一台坏掉的服务器，整个进程
+    /// 就没有解析可用——表现为「完全没网」。这里主动退出，并冷却一段时间，
+    /// 期间前台重装 resolver 不会再把同一台坏服务器交出去。
+    static func fallbackToSystemDNS(reason: String) {
+        applyLock.lock()
+        let spec = lastApplied
+        lastApplied = nil
+        lastVerified = nil
+        lastFlushAt = nil
+        encryptedResolutionEnabled = false
+        retrySuppressedUntil = Date().addingTimeInterval(unreachableCooldown)
+        retrySuppressedSpec = spec
+        applyLock.unlock()
+        DohBootstrapTransport.skipSystemAddressLookup = false
+        NWParameters.PrivacyContext.default.requireEncryptedNameResolution(
+            false,
+            fallbackResolver: nil
+        )
+        NWParameters.PrivacyContext.default.flushCache()
+        DohDebugLog.record(
+            "Encrypted DNS 退回系统 DNS（\(reason)），\(Int(unreachableCooldown))s 内不再尝试",
+            subsystem: "DoH"
+        )
+    }
+
     static func disable() {
         applyLock.lock()
         lastApplied = nil
@@ -227,6 +275,8 @@ nonisolated enum EncryptedDnsService {
         lastLiveSystemIPs = []
         lastFlushAt = nil
         encryptedResolutionEnabled = false
+        retrySuppressedUntil = nil
+        retrySuppressedSpec = nil
         applyLock.unlock()
         DohBootstrapTransport.skipSystemAddressLookup = false
         NWParameters.PrivacyContext.default.requireEncryptedNameResolution(

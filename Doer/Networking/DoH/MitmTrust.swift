@@ -475,7 +475,9 @@ final class WebViewHTTPClient: NSObject, WKNavigationDelegate {
     }
 
     private func logNavigationTimeout(_ request: URLRequest) {
-        let ips = DohBootstrapTransport.systemAddresses(for: "linux.do")
+        // 只读缓存：这条是诊断日志，跑在主线程上。Encrypted DNS 开着时
+        // `getaddrinfo` 会递归到同一台 DoH，DNS 一坏就能把界面卡死几十秒。
+        let ips = DohBootstrapTransport.cachedSystemAddresses(for: "linux.do")
         let fake = ips.filter { EncryptedDnsService.isTunnelFakeIP($0) }
         DohDebugLog.record(
             "webview http nav timeout \(request.url?.path ?? "") hosted=\(webView?.superview != nil) inWindow=\(webView?.window != nil) dns=\(ips.prefix(4).joined(separator: ",")) fakeIP=\(!fake.isEmpty)",

@@ -24,7 +24,18 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     /// as live so resume does not restart DoH in a loop.
     private var stackReady = false
 
-    private init() {}
+    private init() {
+        // DoH 连续不可达就退回系统 DNS。Encrypted DNS 一旦指向一台坏掉的服务器，
+        // 整个进程的解析都没了（用户看到的就是「完全没网」），必须能自己退出来。
+        // 只认当前配置的那台：优选候选里的公共解析器连不上是常态，不该触发。
+        DohBootstrapTransport.onRepeatedFailure = { host in
+            let configured = AppSettings.dohProxyConfig(from: .standard)
+            guard URL(string: configured.serverURL)?.host?.lowercased() == host.lowercased() else {
+                return
+            }
+            EncryptedDnsService.fallbackToSystemDNS(reason: "DoH \(host) 连续查询失败")
+        }
+    }
 
     enum DohProxyLiveness {
         /// Config changed, or DoH is on but the loopback listener is not ready.

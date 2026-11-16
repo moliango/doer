@@ -1495,7 +1495,9 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
     }
 
     static func refreshSystemNameResolutionHealth() {
-        let ips = DohBootstrapTransport.systemAddresses(for: "linux.do")
+        // 只读缓存：这里只做健康判断，不能为了看一眼 DNS 就把调用线程（可能是
+        // 主线程）卡在一次 `getaddrinfo` 上。
+        let ips = DohBootstrapTransport.cachedSystemAddresses(for: "linux.do")
         systemNameResolutionBlockedLinuxDo = isPoisonedLinuxDoAddresses(ips)
         if systemNameResolutionBlockedLinuxDo {
             DohDebugLog.record(
