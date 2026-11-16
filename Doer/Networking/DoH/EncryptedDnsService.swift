@@ -60,6 +60,11 @@ nonisolated enum EncryptedDnsService {
     private static var retrySuppressedUntil: Date?
     private static var retrySuppressedSpec: ResolverSpec?
     private static var encryptedResolutionEnabled = false
+    /// 每次「改变解析状态」的意图都 +1：apply / disable / fallbackToSystemDNS。
+    /// apply 现在是异步的，探活又要等几秒，所以排队中的那一次可能在用户关掉
+    /// DoH（或看门狗退回系统 DNS）之后才落地，把刚关掉的东西又装回去。
+    /// 落地前对一次代次，过期的直接丢弃。
+    private static var applyGeneration = 0
     private static let checkQueue = DispatchQueue(
         label: "doer.encrypted-dns.bootstrap-check",
         attributes: .concurrent
@@ -74,16 +79,31 @@ nonisolated enum EncryptedDnsService {
     static func apply(_ spec: ResolverSpec) {
         // 这里会做 `getaddrinfo`（阻塞，DNS 坏了能卡几十秒），而调用方常常是
         // 主线程（启动 / 回前台）。整段挪到专用串行队列上，顺序不变。
-        applyQueue.async { applyNow(spec) }
+        applyLock.lock()
+        applyGeneration += 1
+        let generation = applyGeneration
+        applyLock.unlock()
+        applyQueue.async { applyNow(spec, generation: generation) }
     }
 
-    private static func applyNow(_ spec: ResolverSpec) {
+    private static func isCurrent(_ generation: Int) -> Bool {
+        applyLock.lock()
+        defer { applyLock.unlock() }
+        return generation == applyGeneration
+    }
+
+    private static func applyNow(_ spec: ResolverSpec, generation: Int) {
         applyLock.lock()
         let alreadyEncrypted = encryptedResolutionEnabled
         let cachedSystem = lastLiveSystemIPs
         let suppressedUntil = retrySuppressedUntil
         let suppressedSpec = retrySuppressedSpec
         applyLock.unlock()
+        // 排队期间已经有更新的意图（关掉 DoH、或看门狗退回系统 DNS），放弃这次。
+        guard isCurrent(generation) else {
+            DohDebugLog.record("Encrypted DNS apply 丢弃：已被更新的状态取代", subsystem: "DoH")
+            return
+        }
         // 上一轮判定这台 DoH 不可达：冷却期内继续用系统 DNS，别再把自己锁死。
         // 换了服务器（spec 不同）就立刻允许重试。
         if let suppressedUntil, suppressedUntil > Date(), suppressedSpec == spec {
@@ -132,25 +152,37 @@ nonisolated enum EncryptedDnsService {
         // 同一份 spec 已经验证过就不必再探活：探活只是防止「新换的服务器
         // 根本连不上」，回前台 / 切网络时重复探一轮等于白开 4 条 TCP。
         if alreadyApplied || alreadyVerified {
-            commit(normalized)
+            commit(normalized, generation: generation)
             return
         }
 
         checkQueue.async {
+            // 探活要几秒，这期间用户可能已经把 DoH 关掉、或看门狗已退回
+            // 系统 DNS；那样这次补交就等于把刚关掉的东西又打开。
+            guard isCurrent(generation) else {
+                DohDebugLog.record("Encrypted DNS 探活结果丢弃：状态已变更", subsystem: "DoH")
+                return
+            }
             guard canReachDoH(normalized) else {
                 DohDebugLog.record(
                     "Encrypted DNS 拒绝启用 \(normalized.url.host ?? "?"): bootstrap \(ips.joined(separator: ",")) 握手或查询失败"
                 )
-                fallBackOrDisable()
+                fallBackOrDisable(generation: generation)
                 return
             }
-            commit(normalized)
+            commit(normalized, generation: generation)
         }
     }
 
     /// 真正把 resolver 交给 Network.framework。调用方已确认这台服务器可用。
-    private static func commit(_ spec: ResolverSpec) {
+    /// `generation` 用来挡住「落地时状态已经变了」的过期提交。
+    private static func commit(_ spec: ResolverSpec, generation: Int) {
         applyLock.lock()
+        guard generation == applyGeneration else {
+            applyLock.unlock()
+            DohDebugLog.record("Encrypted DNS commit 丢弃：状态已变更", subsystem: "DoH")
+            return
+        }
         let previous = lastApplied
         let now = Date()
         // 换服务器必须清；只是回前台重新装上同一份 resolver 时，跟着冷却走。
@@ -185,7 +217,7 @@ nonisolated enum EncryptedDnsService {
 
     /// 新服务器不可用时回退到上一次验证通过的；没有就退回系统 DNS。
     /// 无论哪条路，都不会留一个连不上的 resolver。
-    private static func fallBackOrDisable() {
+    private static func fallBackOrDisable(generation: Int) {
         applyLock.lock()
         let fallback = lastVerified
         let current = lastApplied
@@ -196,7 +228,7 @@ nonisolated enum EncryptedDnsService {
             return
         }
         DohDebugLog.record("Encrypted DNS 回退到上一次可用的 \(fallback.url.host ?? "?")")
-        commit(fallback)
+        commit(fallback, generation: generation)
     }
 
     /// 真的打一条 DoH 查询过去，而不是只 TCP 连一下 443。
@@ -248,6 +280,8 @@ nonisolated enum EncryptedDnsService {
     /// 期间前台重装 resolver 不会再把同一台坏服务器交出去。
     static func fallbackToSystemDNS(reason: String) {
         applyLock.lock()
+        // 作废所有在途的 apply/commit：它们会在探活结束后把坏服务器装回来。
+        applyGeneration += 1
         let spec = lastApplied
         lastApplied = nil
         lastVerified = nil
@@ -270,6 +304,8 @@ nonisolated enum EncryptedDnsService {
 
     static func disable() {
         applyLock.lock()
+        // 作废所有在途的 apply/commit，否则关掉之后队列里的那次会把它又打开。
+        applyGeneration += 1
         lastApplied = nil
         lastVerified = nil
         lastLiveSystemIPs = []
