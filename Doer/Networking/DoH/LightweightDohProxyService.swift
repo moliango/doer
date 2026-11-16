@@ -207,8 +207,16 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
         guard UserDefaults.standard.bool(forKey: "dohEnabled") else { return }
         DohDebugLog.record("DoH recovering after network path change")
         clearCache()
+        // 旧接口上的隧道全部作废：不主动收掉，URLSession 会继续复用它们并挂死。
+        lock.lock()
+        let proxy = self.proxy
+        lock.unlock()
+        proxy?.noteNetworkPathChanged(reason: "Wi‑Fi / 蜂窝切换")
+        // 赢家是上一个网络选出来的，先按新路径校验一次。
+        PreferredNodeStore.shared.handlePathChange()
         ensureProxyAlive()
         PreferredNodeSelector.shared.reselect(trigger: .networkChange)
+        DoHServerAutoSelector.rescan(trigger: .networkChange)
     }
 
     // MARK: - Cloudflare 本地优选

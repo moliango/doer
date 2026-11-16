@@ -54,6 +54,7 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
     private static let randomV6Samples = 4
     private static let publicDohConcurrency = 6
     private static let minRaceInterval: TimeInterval = 60
+    private static let networkChangeCooldown: TimeInterval = 10
     private static let maxAutoRacesPerHour = 4
     private static let manualCooldown: TimeInterval = 10
     private static let failedRetry: TimeInterval = 300
@@ -616,8 +617,11 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
             }
             return nil
         case .networkChange:
-            if let last = lastRaceAt, now.timeIntervalSince(last) < Self.minRaceInterval {
-                return "距上次竞速不足 \(Int(Self.minRaceInterval))s"
+            // 换网正是最该重新竞速的时候：旧赢家的出口可能已经不可达。
+            // 一次切换会连着报好几条 path 事件，用短冷却挡住重复触发就够了，
+            // 不能被 60 秒的主限流挡在门外。
+            if let last = lastRaceAt, now.timeIntervalSince(last) < Self.networkChangeCooldown {
+                return "换网竞速冷却中"
             }
             if let start = autoRaceWindowStart, now.timeIntervalSince(start) < 3600,
                autoRacesThisHour >= Self.maxAutoRacesPerHour {

@@ -71,8 +71,18 @@ nonisolated final class PreferredNodeStore: @unchecked Sendable {
     func pinnedAddress(forHost host: String) -> String? {
         guard Self.isCoveredHost(host) else { return nil }
         lock.lock()
-        defer { lock.unlock() }
-        return stored?.ip
+        let ip = stored?.ip
+        lock.unlock()
+        guard let ip else { return nil }
+        // 赢家是上一个网络选出来的：换到只有 v4 的蜂窝时钉着一个 v6 地址，
+        // 每次 CONNECT 都要先白等 8 秒超时才回退解析。
+        guard Self.isRoutable(ip) else { return nil }
+        return ip
+    }
+
+    private static func isRoutable(_ ip: String) -> Bool {
+        let family = CloudflareRanges.localFamilySupport()
+        return ip.contains(":") ? family.v6 : family.v4
     }
 
     /// linux.do 与其子域必须连同一个边缘 IP、走同一个地址族。
@@ -116,6 +126,33 @@ nonisolated final class PreferredNodeStore: @unchecked Sendable {
             subsystem: "优选"
         )
         onWinnerDemoted?()
+    }
+
+    /// 换网后校验一次赢家。
+    ///
+    /// - 地址族在新网络里不可路由：直接解除钉住，不然每次 CONNECT 都白等 8 秒。
+    /// - 还能路由：保留（免得 linux.do 立刻没网），但把连败计数顶到阈值前一次，
+    ///   新网络上它还没被验证过，第一次失败就该降级重赛，而不是连败三次。
+    func handlePathChange() {
+        lock.lock()
+        let ip = stored?.ip
+        let drop = ip.map { !Self.isRoutable($0) } ?? false
+        if drop {
+            stored = nil
+            failStreak = 0
+        } else {
+            failStreak = max(0, Self.demoteFailStreak - 1)
+        }
+        lastFailureAt = nil
+        lock.unlock()
+
+        guard let ip else { return }
+        if drop {
+            persist(nil)
+            DohDebugLog.record("换网后赢家 \(ip) 地址族不可路由，解除钉住", subsystem: "优选")
+        } else {
+            DohDebugLog.record("换网：赢家 \(ip) 保留，下一次连败即降级", subsystem: "优选")
+        }
     }
 
     func clear() {

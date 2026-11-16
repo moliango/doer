@@ -11,6 +11,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
     private var listener: NWListener?
     private var boundPort: UInt16?
     private var connections: [ObjectIdentifier: NWConnection] = [:]
+    private var stallWatchdogs: [ObjectIdentifier: DispatchWorkItem] = [:]
     private var mitmBridges: [ObjectIdentifier: MitmTLSBridge] = [:]
     private var originClients: [ObjectIdentifier: OriginNIOClient] = [:]
     private var ssSessions: [ObjectIdentifier: ShadowsocksAEADSession] = [:]
@@ -18,7 +19,9 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
     private var gatewayOriginInflight = 0
     private var gatewayOriginWaiters: [() -> Void] = []
     private let gatewayOriginLimit = 2
-    private var streamContexts: [ObjectIdentifier: NWConnection.ContentContext] = [:]
+    /// 隧道建立后上游进 `.waiting` 的容忍时间：换网、接口消失时状态可能就这么挂着，
+    /// 两边既收不到数据也收不到错误。
+    private static let stallWatchdogSeconds: TimeInterval = 6
     var onListening: ((UInt16) -> Void)?
     var onFailed: ((Error) -> Void)?
 
@@ -40,10 +43,52 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         return listener != nil && boundPort != nil
     }
 
+    /// 换 Wi‑Fi / 蜂窝：旧接口上的 socket 全部作废。
+    ///
+    /// 不主动收掉的话，URLSession 会继续复用它连到回环代理的那些连接——上游其实
+    /// 已经停在 `.waiting`，请求只能干等到自己的超时，表现就是「换网后一直转圈」。
+    /// 全部在 `queue` 上同步做，晚于此刻建立的连接不会被误杀。
+    func noteNetworkPathChanged(reason: String) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let stale = Array(self.connections.values)
+            self.connections.removeAll()
+            self.mitmBridges.removeAll()
+            self.originClients.removeAll()
+            self.ssSessions.removeAll()
+            self.hostAttemptOffsets.removeAll()
+            self.gatewayOriginWaiters.removeAll()
+            self.gatewayOriginInflight = 0
+            self.stallWatchdogs.values.forEach { $0.cancel() }
+            self.stallWatchdogs.removeAll()
+            stale.forEach { $0.cancel() }
+            DohDebugLog.record("换网（\(reason)）收掉 \(stale.count) 条旧连接")
+        }
+    }
+
+    private func armStallWatchdog(_ connection: NWConnection, label: String) {
+        let id = ObjectIdentifier(connection)
+        guard stallWatchdogs[id] == nil else { return }
+        let work = DispatchWorkItem { [weak self, weak connection] in
+            guard let self, let connection else { return }
+            self.stallWatchdogs.removeValue(forKey: id)
+            DohDebugLog.record("隧道停滞 \(label)：\(Self.stallWatchdogSeconds) 秒没恢复，收掉重连")
+            connection.cancel()
+        }
+        stallWatchdogs[id] = work
+        queue.asyncAfter(deadline: .now() + Self.stallWatchdogSeconds, execute: work)
+    }
+
+    private func cancelStallWatchdog(_ connection: NWConnection?) {
+        guard let connection else { return }
+        stallWatchdogs.removeValue(forKey: ObjectIdentifier(connection))?.cancel()
+    }
+
     /// Starts the loopback listener without blocking the caller.
     /// Waiting here from the main thread deadlocks: NWListener callbacks can
     /// hop to MainActor while launch is still inside `didFinishLaunching`.
     func start() throws {
+        MitmNIOPipe.log = { DohDebugLog.record($0, subsystem: "MITM") }
         guard listener == nil else { return }
         guard let endpointPort = NWEndpoint.Port(rawValue: requestedPort) else {
             throw LocalConnectProxyError.invalidPort
@@ -472,7 +517,11 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
             switch state {
             case .waiting(let error):
                 DohDebugLog.record("Upstream waiting \(target): \(error)")
+                if gate.hasSettled {
+                    self.armStallWatchdog(upstream, label: "\(target):\(port.rawValue)")
+                }
             case .ready:
+                self.cancelStallWatchdog(upstream)
                 gate.settle {
                     timeout.cancel()
                     DohDebugLog.record("Upstream connected \(target):\(port.rawValue)")
@@ -507,6 +556,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                 }
             case .failed, .cancelled:
                 timeout.cancel()
+                self.cancelStallWatchdog(upstream)
                 self.connections.removeValue(forKey: ObjectIdentifier(upstream))
                 gate.settle {
                     guard let client else { return }
@@ -1348,7 +1398,11 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
             switch state {
             case .waiting(let error):
                 DohDebugLog.record("Gateway origin TCP waiting \(target): \(error)")
+                if gate.hasSettled {
+                    self.armStallWatchdog(upstream, label: "\(target):\(port.rawValue)")
+                }
             case .ready:
+                self.cancelStallWatchdog(upstream)
                 gate.settle {
                     timeout.cancel()
                     DohDebugLog.record("Gateway origin TCP ready \(target)")
@@ -1390,10 +1444,14 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                 }
             case .failed(let error):
                 timeout.cancel()
+                self.cancelStallWatchdog(upstream)
                 self.connections.removeValue(forKey: ObjectIdentifier(upstream))
                 DohDebugLog.record("Gateway origin TCP error \(target): \(error)")
                 PreferredNodeStore.shared.reportOutcome(host: request.host, ip: target, success: false)
                 if gate.hasSettled {
+                    // 握手/请求已经过完，这条响应不会再回来了。网关模式下客户端不会
+                    // 自己失败，只会干等到自己的请求超时（图片 15 秒），必须一起收掉。
+                    self.close(client)
                     return
                 }
                 gate.settle {
@@ -1411,8 +1469,12 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                 }
             case .cancelled:
                 timeout.cancel()
+                self.cancelStallWatchdog(upstream)
                 self.connections.removeValue(forKey: ObjectIdentifier(upstream))
                 if gate.hasSettled {
+                    // 同上：上游事后被收掉（watchdog / 换网 / 边缘回收），
+                    // 客户端也必须看到连接断开，否则它会一直等到自身超时。
+                    self.close(client)
                     return
                 }
                 gate.settle {
@@ -1720,11 +1782,11 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
     private func close(_ connection: NWConnection?) {
         guard let connection else { return }
         let id = ObjectIdentifier(connection)
+        cancelStallWatchdog(connection)
         connections.removeValue(forKey: id)
         ssSessions.removeValue(forKey: id)
         originClients.removeValue(forKey: id)
         mitmBridges.removeValue(forKey: id)
-        streamContexts.removeValue(forKey: id)
         connection.cancel()
     }
 }

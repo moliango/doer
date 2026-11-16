@@ -39,26 +39,55 @@ final class ConnectivityService {
     /// wait out a request timeout use this flag.
     private(set) var isKnownOffline = false
     private var lastPathStatus: NWPath.Status?
-    private var lastTransport: PathTransport?
+    private var lastSatisfiedTransport: PathTransport?
 
     private init() {}
 
-    /// Wi‑Fi / 5G / Ethernet mix. Interface swaps often stay `.satisfied`.
+    /// Wi‑Fi / 5G / Ethernet mix。Interface swaps often stay `.satisfied`.
+    ///
+    /// 只比「哪几类接口在用」不够：断开重连、换 AP、双栈掉成单栈都不会改变
+    /// 接口类型，但旧的 bootstrap IP、DoH 长连接和优选赢家全部失效了。
     nonisolated struct PathTransport: Equatable {
         var wifi: Bool
         var cellular: Bool
         var wired: Bool
+        /// 只统计真正承载流量的接口类型。`awdl0`（AirDrop）、`utun*`（VPN）
+        /// 会随隔空投送、后台隧道频繁出现消失，把它们算进签名会让「网络没换」
+        /// 也触发一轮收连接。
+        var interfaceNames: [String]
+        var isExpensive: Bool
+        var supportsIPv4: Bool
+        var supportsIPv6: Bool
 
-        init(wifi: Bool, cellular: Bool, wired: Bool = false) {
+        init(
+            wifi: Bool,
+            cellular: Bool,
+            wired: Bool = false,
+            interfaceNames: [String] = [],
+            isExpensive: Bool = false,
+            supportsIPv4: Bool = true,
+            supportsIPv6: Bool = true
+        ) {
             self.wifi = wifi
             self.cellular = cellular
             self.wired = wired
+            self.interfaceNames = interfaceNames
+            self.isExpensive = isExpensive
+            self.supportsIPv4 = supportsIPv4
+            self.supportsIPv6 = supportsIPv6
         }
 
         init(path: NWPath) {
             wifi = path.usesInterfaceType(.wifi)
             cellular = path.usesInterfaceType(.cellular)
             wired = path.usesInterfaceType(.wiredEthernet)
+            interfaceNames = path.availableInterfaces
+                .filter { [.wifi, .cellular, .wiredEthernet].contains($0.type) }
+                .map(\.name)
+                .sorted()
+            isExpensive = path.isExpensive
+            supportsIPv4 = path.supportsIPv4
+            supportsIPv6 = path.supportsIPv6
         }
     }
 
@@ -114,6 +143,7 @@ final class ConnectivityService {
 
     private func handlePathUpdate(_ path: NWPath) {
         let status = path.status
+        let previousStatus = lastPathStatus
         lastPathStatus = status
         let hasNetwork = status == .satisfied
 
@@ -126,8 +156,12 @@ final class ConnectivityService {
 
         cancelDisconnectDebounce()
         let transport = PathTransport(path: path)
-        let recoverDoH = Self.shouldRecoverDoH(previous: lastTransport, current: transport)
-        lastTransport = transport
+        // 断网再连回来，哪怕还是同一个 Wi‑Fi，出口也已经换过了：
+        // 旧 socket 和 bootstrap 都属于那个已经消失的网络。
+        let wasOffline = previousStatus != nil && previousStatus != .satisfied
+        let recoverDoH = Self.shouldRecoverDoH(previous: lastSatisfiedTransport, current: transport)
+            || (wasOffline && lastSatisfiedTransport != nil)
+        lastSatisfiedTransport = transport
 
         if Self.enableServerPing {
             Task { @MainActor in
