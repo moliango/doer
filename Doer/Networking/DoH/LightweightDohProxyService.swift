@@ -218,6 +218,8 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
     /// 运行时回退过（WebView 过盾后）就不再自动切回来，否则每次 reapply 都会把
     /// 刚回退掉的那条路又打开。
     private func applyConnectionMode() {
+        // 老版本默认是 Encrypted DNS，升级过来的人会一直停在那条死路上。
+        AppSettings.migrateConnectionModeIfNeeded(in: .standard)
         let mode = AppSettings.dohConnectionMode(from: .standard)
         let enabled = UserDefaults.standard.bool(forKey: "dohEnabled")
         let ready = DohProxyLiveness.shouldEnableOriginECH(

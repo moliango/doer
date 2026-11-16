@@ -82,10 +82,14 @@ extension AppSettings {
     /// `originECHReady` 只能走本地 CONNECT + MITM + ECH 那条路（谁做 TCP 连接谁才能决定 IP），
     /// 而 Encrypted DNS 只换了解析器、连不上注入 ECH，也没有地方消费优选钉选。
     enum DohConnectionMode: Int, CaseIterable {
-        /// 现状：Network.framework Encrypted DNS。明文 SNI，优选不生效。
-        case encryptedDNS = 0
         /// 本地 CONNECT + MITM + ECH：能藏 SNI，优选钉选才会被消费。
         case localECH = 1
+        /// 兜底：Network.framework Encrypted DNS。明文 SNI，优选不生效，
+        /// 只在本地代理运行时回退（`runtimeECHEscaped`）或用户显式选择时使用。
+        case encryptedDNS = 0
+
+        /// 设置页里推荐的排前面。
+        static var allCases: [DohConnectionMode] { [.localECH, .encryptedDNS] }
 
         var title: String {
             switch self {
@@ -126,10 +130,28 @@ extension AppSettings {
         }
     }
 
-    /// 默认保持现状（Encrypted DNS），切到本地 ECH 由用户显式选择。
+    /// 默认走本地代理 + ECH。
+    ///
+    /// 投毒网络下 Encrypted DNS 拿到的就是投毒地址（linux.do → Facebook 段），
+    /// 而且那条路没有地方消费优选钉选、也注入不了 ECH，等于把两套防线全关掉。
+    /// 它只剩一个作用：本地代理运行时回退（`runtimeECHEscaped`）时的兜底。
     nonisolated static func dohConnectionMode(from defaults: UserDefaults) -> DohConnectionMode {
-        guard defaults.object(forKey: "dohConnectionMode") != nil else { return .encryptedDNS }
-        return DohConnectionMode(rawValue: defaults.integer(forKey: "dohConnectionMode")) ?? .encryptedDNS
+        guard defaults.object(forKey: "dohConnectionMode") != nil else { return .localECH }
+        return DohConnectionMode(rawValue: defaults.integer(forKey: "dohConnectionMode")) ?? .localECH
+    }
+
+    /// 一次性把老安装的「Encrypted DNS」翻到默认的本地代理 + ECH。
+    ///
+    /// 老版本的默认值就是 Encrypted DNS，用户没主动选过也会落在这条路上，
+    /// 于是升级后仍然没网。迁移只跑一次：之后再在设置里选回 Encrypted DNS 不会被改回去。
+    nonisolated static func migrateConnectionModeIfNeeded(in defaults: UserDefaults) {
+        let marker = "dohConnectionModeMigratedToLocalECH"
+        guard defaults.object(forKey: marker) == nil else { return }
+        defaults.set(true, forKey: marker)
+        guard defaults.object(forKey: "dohConnectionMode") != nil,
+              defaults.integer(forKey: "dohConnectionMode") == DohConnectionMode.encryptedDNS.rawValue
+        else { return }
+        defaults.set(DohConnectionMode.localECH.rawValue, forKey: "dohConnectionMode")
     }
 
     /// 优选模式：本地优选 + atlas 池一起竞速（默认），或只用 atlas 池。
