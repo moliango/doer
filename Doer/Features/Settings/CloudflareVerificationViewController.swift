@@ -194,11 +194,48 @@ enum CloudflareVerificationPolicy {
         return query.contains("__cf_chl_") || query.contains("cf_chl_")
     }
 
-    /// Offscreen 1x1 WKWebView cannot complete interactive Turnstile, and a
-    /// leftover Safari `cf_clearance` is not a pass. Skip background and let
-    /// the container present the human sheet immediately.
-    static func shouldAttemptBackgroundVerification() -> Bool {
-        false
+    /// 出盾时先让隐藏的 WKWebView 自动过一遍：过了用户完全无感，过不了再弹人工过盾页。
+    ///
+    /// 交互式 Turnstile 在离屏页面里通常过不去，所以同一站点失败一次就冷却一段
+    /// 时间：否则每次挑战都要白等十几秒，还会多消耗 Cloudflare 的挑战次数（评分
+    /// 只会更差）。
+    private static let backgroundAttemptCooldown: TimeInterval = 10 * 60
+    private static var backgroundAttemptFailedAtByBaseURL: [String: Date] = [:]
+    private static let backgroundAttemptLock = NSLock()
+
+    static func shouldAttemptBackgroundVerification(baseURL: String, now: Date = Date()) -> Bool {
+        let key = normalizedBaseKey(baseURL)
+        backgroundAttemptLock.lock()
+        defer { backgroundAttemptLock.unlock() }
+        guard let failedAt = backgroundAttemptFailedAtByBaseURL[key] else { return true }
+        if now.timeIntervalSince(failedAt) < backgroundAttemptCooldown { return false }
+        backgroundAttemptFailedAtByBaseURL[key] = nil
+        return true
+    }
+
+    static func markBackgroundAttemptSucceeded(baseURL: String) {
+        let key = normalizedBaseKey(baseURL)
+        backgroundAttemptLock.lock()
+        backgroundAttemptFailedAtByBaseURL[key] = nil
+        backgroundAttemptLock.unlock()
+    }
+
+    static func markBackgroundAttemptFailed(baseURL: String, now: Date = Date()) {
+        let key = normalizedBaseKey(baseURL)
+        backgroundAttemptLock.lock()
+        backgroundAttemptFailedAtByBaseURL[key] = now
+        backgroundAttemptLock.unlock()
+        DohDebugLog.record(
+            "background attempt failed; cooldown \(Int(backgroundAttemptCooldown))s base=\(key)",
+            subsystem: "CF"
+        )
+    }
+
+    static func clearBackgroundAttemptCooldown(baseURL: String) {
+        let key = normalizedBaseKey(baseURL)
+        backgroundAttemptLock.lock()
+        backgroundAttemptFailedAtByBaseURL[key] = nil
+        backgroundAttemptLock.unlock()
     }
 
     /// Grace/suppression only delay auto-present. The floating shield must

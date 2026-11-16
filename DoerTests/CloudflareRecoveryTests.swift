@@ -237,7 +237,18 @@ final class CloudflareRecoveryTests: XCTestCase {
         XCTAssertTrue(CloudflareVerificationPolicy.shouldPromptAfterBackgroundFailure(isInGrace: false))
         XCTAssertTrue(CloudflareVerificationPolicy.shouldTreatCooldownAsVerified(isInGrace: true))
         XCTAssertFalse(CloudflareVerificationPolicy.shouldTreatCooldownAsVerified(isInGrace: false))
-        XCTAssertFalse(CloudflareVerificationPolicy.shouldAttemptBackgroundVerification())
+        // 出盾先静默试一次；失败后冷却，别让每次挑战都白等一轮隐藏加载。
+        CloudflareVerificationPolicy.clearBackgroundAttemptCooldown(baseURL: base)
+        XCTAssertTrue(CloudflareVerificationPolicy.shouldAttemptBackgroundVerification(baseURL: base))
+        CloudflareVerificationPolicy.markBackgroundAttemptFailed(baseURL: base)
+        XCTAssertFalse(CloudflareVerificationPolicy.shouldAttemptBackgroundVerification(baseURL: base))
+        XCTAssertTrue(CloudflareVerificationPolicy.shouldAttemptBackgroundVerification(
+            baseURL: "https://LINUX.DO/",
+            now: Date().addingTimeInterval(11 * 60)
+        ))
+        CloudflareVerificationPolicy.markBackgroundAttemptFailed(baseURL: base)
+        CloudflareVerificationPolicy.markBackgroundAttemptSucceeded(baseURL: base)
+        XCTAssertTrue(CloudflareVerificationPolicy.shouldAttemptBackgroundVerification(baseURL: base))
         XCTAssertTrue(CloudflareVerificationPolicy.shouldShowShieldOnChallenge())
         XCTAssertFalse(
             CloudflareVerificationPolicy.shouldAutoPresentVerificationSheet(

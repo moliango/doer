@@ -918,7 +918,7 @@ final class ForumContainerViewController: UIViewController, AuthGating {
             logCloudflareState("background verification skipped because foreground verification is active base=\(baseURLString)")
             return
         }
-        if CloudflareVerificationPolicy.shouldAttemptBackgroundVerification() {
+        if CloudflareVerificationPolicy.shouldAttemptBackgroundVerification(baseURL: baseURLString) {
             logCloudflareState("challenge detected; starting background verification base=\(baseURLString)")
             CloudflareBackgroundVerificationService.shared.ensureInBackground(
                 baseURL: baseURL,

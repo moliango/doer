@@ -54,9 +54,9 @@ final class CloudflareBackgroundVerificationService {
             log("skipped reason=\(reason) base=\(key) skip=verification_grace")
             return true
         }
-        if !CloudflareVerificationPolicy.shouldAttemptBackgroundVerification() {
-            log("skipped reason=\(reason) base=\(key) skip=interactive_challenge")
-            postNeedsUserInteraction(baseURL: baseURL, responseURL: responseURL, reason: "interactive_challenge")
+        if !CloudflareVerificationPolicy.shouldAttemptBackgroundVerification(baseURL: key) {
+            log("skipped reason=\(reason) base=\(key) skip=background_cooldown")
+            postNeedsUserInteraction(baseURL: baseURL, responseURL: responseURL, reason: "background_cooldown")
             return false
         }
 
@@ -97,6 +97,7 @@ final class CloudflareBackgroundVerificationService {
 
         if ok {
             log("completed reason=\(reason) base=\(key)")
+            CloudflareVerificationPolicy.markBackgroundAttemptSucceeded(baseURL: key)
             CloudflareVerificationPolicy.markVerificationGrace(baseURL: baseURL)
             NotificationCenter.default.post(
                 name: DiscourseAPI.cloudflareVerificationCompletedNotification,
@@ -108,6 +109,8 @@ final class CloudflareBackgroundVerificationService {
         } else if CloudflareVerificationPolicy.shouldPromptAfterBackgroundFailure(
             isInGrace: CloudflareVerificationPolicy.isInVerificationGrace(baseURL: baseURL)
         ) {
+            // 交互式挑战在隐藏页面里过不去：冷却一段时间，别让每次挑战都白等。
+            CloudflareVerificationPolicy.markBackgroundAttemptFailed(baseURL: key)
             postNeedsUserInteraction(baseURL: baseURL, responseURL: responseURL, reason: reason)
         } else {
             log("failed during verification grace reason=\(reason) base=\(key); skip user prompt")
@@ -159,7 +162,9 @@ private final class CloudflareBackgroundVerificationAttempt: NSObject, WKNavigat
     /// Ephemeral: the hidden challenge load must not be a second `_t` client and
     /// must not evict the in-app browser's copy of the ticket.
     private let dataStore = WKWebsiteDataStore.nonPersistent()
-    private let maxDurationNanoseconds: UInt64 = 12_000_000_000
+    /// 隐藏尝试的预算。它挡在人工过盾页前面，所以不能太长：非交互挑战一般在
+    /// 1–4 秒内自动放行，8 秒还没拿到新 cookie 就基本可以判定过不去了。
+    private let maxDurationNanoseconds: UInt64 = 8_000_000_000
     private let checkDelays: [UInt64] = [
         250_000_000,
         700_000_000,
@@ -194,10 +199,23 @@ private final class CloudflareBackgroundVerificationAttempt: NSObject, WKNavigat
         configuration.websiteDataStore = dataStore
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
 
-        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1, height: 1), configuration: configuration)
+        // WebKit 只把挂在窗口上的页面当可见：不在窗口里时 `document.hidden` 为真、
+        // rAF 不跑，Turnstile 的 JS 根本不会初始化。所以这里用真实尺寸挂在窗口上，
+        // 再整块移出可视区——用户看不到，但页面是「可见」的。
+        // 1×1 的离屏尺寸还会被当成异常环境，直接把挑战判死。
+        let window = Self.hostWindow()
+        let size = window?.bounds.size ?? CGSize(width: 390, height: 844)
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: -(size.height + 200), width: size.width, height: size.height),
+            configuration: configuration
+        )
         webView.navigationDelegate = self
-        webView.customUserAgent = WebCookieStore.shared.userAgent
-            ?? "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+        webView.isUserInteractionEnabled = false
+        // 与过盾页/登录页同一 UA：`cf_clearance` 绑定 UA，换一个就等于白过。
+        webView.customUserAgent = CloudflareVerificationPolicy.browserUserAgent(
+            stored: WebCookieStore.shared.userAgent
+        )
+        window?.addSubview(webView)
         self.webView = webView
 
         var request = URLRequest(url: verificationURL())
@@ -212,6 +230,7 @@ private final class CloudflareBackgroundVerificationAttempt: NSObject, WKNavigat
 
         webView.stopLoading()
         webView.navigationDelegate = nil
+        webView.removeFromSuperview()
         self.webView = nil
 
         let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
@@ -239,15 +258,18 @@ private final class CloudflareBackgroundVerificationAttempt: NSObject, WKNavigat
         guard let webView else { return false }
 
         let clearanceValue = WebCookieStore.shared.cookieValue(named: "cf_clearance", for: baseURL)
+        // 这次隐藏加载是「已经被拦了」才发起的，罐子里那枚旧 cookie 就是被拒的那枚，
+        // 拿它当通过会让 grace 生效、盾被藏起来，而 API 依旧 403。必须拿到新的。
         let hasClearance = CloudflareVerificationPolicy.hasUsableClearance(
             currentValue: clearanceValue,
             initialValue: initialClearanceValue,
-            requiresFreshValue: responseURL != nil
+            requiresFreshValue: true
         )
         let activeChallenge = await pageHasActiveCloudflareChallenge(in: webView)
         let currentURL = webView.url?.absoluteString ?? "none"
+        let visibility = (try? await webView.evaluateJavaScript("document.visibilityState") as? String) ?? "unknown"
 
-        log("check url=\(currentURL) cf=\(hasClearance) activeChallenge=\(activeChallenge)")
+        log("check url=\(currentURL) visibility=\(visibility) cf=\(hasClearance) activeChallenge=\(activeChallenge)")
         return hasClearance && !activeChallenge
     }
 
@@ -296,8 +318,25 @@ private final class CloudflareBackgroundVerificationAttempt: NSObject, WKNavigat
             || (lowerText.contains("just a moment") && lowerText.contains("cloudflare"))
     }
 
+    /// 离屏页面要挂在这里：只有挂在窗口上，WebKit 才把页面算作可见。
+    private static func hostWindow() -> UIWindow? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let windows = scenes.flatMap(\.windows)
+        return windows.first { $0.isKeyWindow } ?? windows.first
+    }
+
     private func log(_ message: String) {
         DohDebugLog.record("background attempt \(message)", subsystem: "CF")
+    }
+
+    /// MITM 模式下源站证书是我们自己签的，隐藏页面同样要走 `MitmTrust`，
+    /// 否则加载在 TLS 阶段就失败了。
+    func webView(
+        _ webView: WKWebView,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        MitmTrust.handle(challenge, completionHandler: completionHandler)
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
