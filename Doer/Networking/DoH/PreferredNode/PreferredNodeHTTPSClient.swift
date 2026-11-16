@@ -61,11 +61,6 @@ nonisolated final class PreferredNodeHTTPSClient: @unchecked Sendable {
     /// 探测与小请求共用的 User-Agent：安卓上最常见的 HTTP 库。
     static let userAgent = "okhttp/4.12.0"
 
-    private static let queue = DispatchQueue(
-        label: "doer.preferred-node.http",
-        attributes: .concurrent
-    )
-
     private let timeouts: Timeouts
     private let echConfig: Data?
 
@@ -83,6 +78,11 @@ nonisolated final class PreferredNodeHTTPSClient: @unchecked Sendable {
         completion: @escaping (Result<PreferredNodeHTTPReply, PreferredNodeHTTPFailure>) -> Void
     ) {
         guard let port = NWEndpoint.Port(rawValue: 443) else { return }
+        // `NWConnection.start(queue:)` 要求**串行**队列。以前 30 个探针共用一条
+        // `.concurrent` 队列，回调会在不同线程上并发跑，Network.framework 的
+        // "不重入 / 有序投递" 保证失效——表现就是字节发出去了却永远读不到回包。
+        // 每条探测独占一条串行队列，代价可以忽略。
+        let workQueue = DispatchQueue(label: "doer.preferred-node.probe")
         let start = Date()
         let lock = NSLock()
         var finished = false
@@ -97,6 +97,20 @@ nonisolated final class PreferredNodeHTTPSClient: @unchecked Sendable {
 
         let connection = NWConnection(host: Self.endpointHost(from: ip), port: port, using: parameters)
         var buffer = Data()
+        /// 诊断用：这一次探测到底发出去多少、收回来多少。
+        /// `http 超时` 分不出"请求根本没发出去"和"发出去了但没回"，这两个数字能。
+        var sentBytes = 0
+        var receivedBytes = 0
+        /// 握手完成之后才发出去的应用数据，以及解密后的明文字节数。
+        var appBytesSent = 0
+        var plaintextBytes = 0
+        var plaintextHead = ""
+        var handshakeDone = false
+
+        /// 三段超时都登记在这里，成功时统一取消。
+        /// 不取消的话，已经拿到响应的探测会在 2 秒后再跑一次 `fail(.httpTimeout)`，
+        /// 日志里就出现「赢家同时也是超时失败」这种自相矛盾的记录。
+        var pendingTimeouts: [DispatchWorkItem] = []
 
         func finish(_ result: Result<PreferredNodeHTTPReply, PreferredNodeHTTPFailure>) {
             lock.lock()
@@ -105,13 +119,35 @@ nonisolated final class PreferredNodeHTTPSClient: @unchecked Sendable {
                 return
             }
             finished = true
+            let timeouts = pendingTimeouts
+            pendingTimeouts = []
             lock.unlock()
+            timeouts.forEach { $0.cancel() }
             connection.stateUpdateHandler = nil
             connection.cancel()
             completion(result)
         }
 
         func fail(_ failure: PreferredNodeHTTPFailure) {
+            lock.lock()
+            let alreadyDone = finished
+            lock.unlock()
+            guard !alreadyDone else { return }
+            if case .httpTimeout = failure {
+                lock.lock()
+                let sent = sentBytes
+                let received = receivedBytes
+                let appSent = appBytesSent
+                let plain = plaintextBytes
+                let head = plaintextHead
+                lock.unlock()
+                DohDebugLog.record(
+                    "探测 \(ip)：TLS 已通但 \(Int(timeouts.http))s 内没有完整响应"
+                        + "（发出 \(sent)B/应用 \(appSent)B，收回 \(received)B/明文 \(plain)B）"
+                        + (head.isEmpty ? "" : "，首段「\(head)」"),
+                    subsystem: "优选"
+                )
+            }
             finish(.failure(failure))
         }
 
@@ -187,13 +223,20 @@ nonisolated final class PreferredNodeHTTPSClient: @unchecked Sendable {
             )))
         }
 
-        let tcpTimeout = DispatchWorkItem { fail(.tcpTimeout) }
-        Self.queue.asyncAfter(deadline: .now() + timeouts.tcp, execute: tcpTimeout)
+        func schedule(_ item: DispatchWorkItem, after seconds: TimeInterval) {
+            lock.lock()
+            let done = finished
+            if !done { pendingTimeouts.append(item) }
+            lock.unlock()
+            guard !done else { return }
+            workQueue.asyncAfter(deadline: .now() + seconds, execute: item)
+        }
+
+        schedule(DispatchWorkItem { fail(.tcpTimeout) }, after: timeouts.tcp)
 
         connection.stateUpdateHandler = { state in
             switch state {
             case .ready:
-                tcpTimeout.cancel()
                 guard !finished else { return }
                 do {
                     let client = try OriginNIOClient(
@@ -203,17 +246,57 @@ nonisolated final class PreferredNodeHTTPSClient: @unchecked Sendable {
                     )
                     let tlsTimeout = DispatchWorkItem { fail(.tlsTimeout) }
                     let httpTimeout = DispatchWorkItem { fail(.httpTimeout) }
-                    Self.queue.asyncAfter(deadline: .now() + self.timeouts.tls, execute: tlsTimeout)
+                    schedule(tlsTimeout, after: self.timeouts.tls)
+
+                    // 写路径必须**同一个**闭包传给 `start` 和 `writeApplication`：
+                    // 握手已经完成时 `writeApplication` 会直接调用它把密文发出去，
+                    // 传个空闭包就等于把请求扔掉——表现为"TLS 通了但 HTTP 一直超时"。
+                    let socketWrite: (Data, @escaping () -> Void) -> Void = { data, done in
+                        lock.lock()
+                        sentBytes += data.count
+                        if handshakeDone { appBytesSent += data.count }
+                        lock.unlock()
+                        connection.send(
+                            content: data,
+                            // 用默认消息上下文并把这一条标成完整：自定义 content context
+                            // 配 `isComplete: false` 时，Network.framework 可能把数据留在
+                            // 本地缓冲等后续片段，连接又一直开着，于是永远发不出去。
+                            contentContext: .defaultMessage,
+                            isComplete: true,
+                            completion: .contentProcessed { _ in }
+                        )
+                        // `done` 必须立刻调，不能挂在 `.contentProcessed` 上：
+                        // `OriginNIOClient` 的读循环是在 `socketWrite` 的 done 回调里
+                        // 才挂下一次 `receive` 的，发送完成回调不来（真机上就遇到过），
+                        // 读就永远停在那里——表现是"请求发出去了、响应一个字节都收不到"。
+                        done()
+                    }
+                    let requestData = Self.requestData(host: host, path: path, headers: headers)
 
                     client.start(
                         socketRead: { deliver in
                             func receive() {
                                 connection.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { data, _, isComplete, error in
                                     if let data, !data.isEmpty {
+                                        lock.lock()
+                                        receivedBytes += data.count
+                                        lock.unlock()
                                         deliver(data)
                                         return
                                     }
                                     if error != nil || isComplete {
+                                        // 连接被对端关掉时 `pumpSocket` 不会再挂下一次读，
+                                        // 不在这里报错就只能干等 http 超时，日志里完全看不出
+                                        // "服务端/中间盒 RST 了"还是"根本没回"。
+                                        lock.lock()
+                                        let handshook = handshakeDone
+                                        lock.unlock()
+                                        if handshook {
+                                            let reason = error.map {
+                                                "连接被关闭：\($0.localizedDescription)"
+                                            } ?? "连接被对端关闭（握手后无响应）"
+                                            fail(.http(reason))
+                                        }
                                         deliver(nil)
                                         return
                                     }
@@ -222,18 +305,16 @@ nonisolated final class PreferredNodeHTTPSClient: @unchecked Sendable {
                             }
                             receive()
                         },
-                        socketWrite: { data, done in
-                            connection.send(
-                                content: data,
-                                contentContext: NWConnection.ContentContext(
-                                    identifier: "doer.preferred-node.http",
-                                    isFinal: false
-                                ),
-                                isComplete: false,
-                                completion: .contentProcessed { _ in done() }
-                            )
-                        },
+                        socketWrite: socketWrite,
                         appRead: { plaintext in
+                            lock.lock()
+                            plaintextBytes += plaintext.count
+                            if plaintextHead.isEmpty {
+                                plaintextHead = String(data: plaintext.prefix(120), encoding: .isoLatin1)?
+                                    .replacingOccurrences(of: "\r\n", with: "⏎")
+                                    ?? ""
+                            }
+                            lock.unlock()
                             consume(plaintext)
                         },
                         completion: { _ in },
@@ -241,6 +322,7 @@ nonisolated final class PreferredNodeHTTPSClient: @unchecked Sendable {
                             tlsTimeout.cancel()
                             lock.lock()
                             echAccepted = client.echAccepted
+                            handshakeDone = true
                             lock.unlock()
                             guard ok else {
                                 // 服务端拒绝 ECH 时会给出 retry_configs，调用方可以当场换钥匙重试。
@@ -251,11 +333,16 @@ nonisolated final class PreferredNodeHTTPSClient: @unchecked Sendable {
                                 }
                                 return
                             }
-                            Self.queue.asyncAfter(deadline: .now() + self.timeouts.http, execute: httpTimeout)
+                            schedule(httpTimeout, after: self.timeouts.http)
+                            // 请求在**握手完成之后**才写：这样一定走 `writeApplication` 的直写分支，
+                            // 不依赖 `pendingApplication` 那条"等下一次 ingest 才补发"的路径。
+                            // 再 `async` 一下，让它排在本次 `flushOutbound`（发客户端 Finished）之后，
+                            // 免得明文抢在握手最后一条记录前面上线路。
+                            workQueue.async {
+                                client.writeApplication(requestData, socketWrite: socketWrite)
+                            }
                         }
                     )
-
-                    client.writeApplication(Self.requestData(host: host, path: path, headers: headers)) { _, _ in }
                 } catch {
                     fail(.tls(String(describing: error)))
                 }
@@ -263,11 +350,23 @@ nonisolated final class PreferredNodeHTTPSClient: @unchecked Sendable {
                 fail(.tcpConnect)
             case .cancelled:
                 fail(.tcpConnect)
+            case .waiting(let error):
+                // 被 RST 时 NWConnection 走的是 `.waiting`，不是 `.failed`。
+                // 以前这里被 `default` 吞掉，只能干等到 http 超时 ——
+                // 日志里"TLS 通了但没有响应"其实多半就是被重置了。
+                lock.lock()
+                let handshook = handshakeDone
+                lock.unlock()
+                if handshook {
+                    fail(.http("连接被重置：\(error)"))
+                } else {
+                    fail(.tcpConnect)
+                }
             default:
                 break
             }
         }
-        connection.start(queue: Self.queue)
+        connection.start(queue: workQueue)
     }
 
     private static func requestData(host: String, path: String, headers: [(String, String)]) -> Data {

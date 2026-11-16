@@ -299,24 +299,70 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
 
         let useMITM = Self.shouldMITM(host)
 
-        // 优选赢家 + 随赢家落盘的 ECH 钥匙：直接连，连 linux.do 的 DNS 都不查。
-        if let pinned = PreferredNodeStore.shared.pinnedAddress(forHost: host),
-           let ech = PreferredNodeStore.shared.node?.echConfig, !ech.isEmpty {
-            DohDebugLog.record("优选直连 \(host) -> \(pinned)（不查 DNS）", subsystem: "优选")
-            connectUpstream(
-                addresses: [pinned],
-                port: upstreamPort,
-                addressIndex: 0,
-                client: client,
-                bufferedClientData: bufferedClientData,
-                hostname: host,
-                readyReply: readyReply,
-                useMITM: useMITM,
-                echConfig: ech
-            )
-            return
+        // 优选赢家：直接连，连 linux.do 的 DNS 都不查。
+        //
+        // 本地 ECH 模式下必须带 ECH——那条路的目的就是藏 SNI，没有 ECH 等于放弃它。
+        // Encrypted DNS 模式的 SNI 本来就是明文，有赢家直连就够；否则 ECH 抓取一失败
+        // 这条捷径就静默失效，退回等 DNS，正好是"赢了优选却还在依赖 DoH"的成因。
+        if let pinned = PreferredNodeStore.shared.pinnedAddress(forHost: host) {
+            let ech = PreferredNodeStore.shared.node?.echConfig
+            let hasECH = !(ech?.isEmpty ?? true)
+            if hasECH || !Self.originECHReady {
+                // Encrypted DNS 走的是 pass-through，ECH 钥匙根本不会被注入，
+                // 日志里别把它写成「已注入」。
+                let modeNote = useMITM
+                    ? (hasECH ? "ECH 已注入" : "ECH 未启用")
+                    : "Encrypted DNS"
+                DohDebugLog.record(
+                    "优选直连 \(host) -> \(pinned)（不查 DNS，\(modeNote)）",
+                    subsystem: "优选"
+                )
+                connectUpstream(
+                    addresses: [pinned],
+                    port: upstreamPort,
+                    addressIndex: 0,
+                    client: client,
+                    bufferedClientData: bufferedClientData,
+                    hostname: host,
+                    readyReply: readyReply,
+                    useMITM: useMITM,
+                    echConfig: hasECH ? ech : nil,
+                    onExhausted: { [weak self] in
+                        guard let self else { return }
+                        // 捷径失败不能把这次 CONNECT 判死：回到正常解析，
+                        // 让 DoH 给出的地址（含赢家本身）继续试。
+                        DohDebugLog.record("优选直连失败，回退解析 \(host)", subsystem: "优选")
+                        self.resolveAndConnect(
+                            host: host,
+                            upstreamPort: upstreamPort,
+                            client: client,
+                            bufferedClientData: bufferedClientData,
+                            readyReply: readyReply
+                        )
+                    }
+                )
+                return
+            }
         }
 
+        resolveAndConnect(
+            host: host,
+            upstreamPort: upstreamPort,
+            client: client,
+            bufferedClientData: bufferedClientData,
+            readyReply: readyReply
+        )
+    }
+
+    /// 正常解析路径：DoH 解析 →（有赢家就排第一）→ 依次连接。
+    private func resolveAndConnect(
+        host: String,
+        upstreamPort: NWEndpoint.Port,
+        client: NWConnection,
+        bufferedClientData: Data,
+        readyReply: Data
+    ) {
+        let useMITM = Self.shouldMITM(host)
         resolver.resolve(host: host) { [weak self, weak client] result in
             guard let self, let client else { return }
             self.queue.async {
@@ -376,7 +422,9 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         readyReply: Data,
         replayHello: Data? = nil,
         useMITM: Bool = false,
-        echConfig: Data? = nil
+        echConfig: Data? = nil,
+        /// 地址全部失败时的兜底。传了就代替 `reject`，用于"优选直连失败退回解析"。
+        onExhausted: (() -> Void)? = nil
     ) {
         if addressIndex == 0, let hop = config.upstream, hop.isValid {
             connectViaConfiguredUpstream(
@@ -395,6 +443,10 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
             return
         }
         guard addressIndex < addresses.count else {
+            if let onExhausted {
+                onExhausted()
+                return
+            }
             reject(client, reason: "all upstream addresses failed")
             return
         }
@@ -471,7 +523,8 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                         readyReply: readyReply,
                         replayHello: replayHello,
                         useMITM: useMITM,
-                        echConfig: echConfig
+                        echConfig: echConfig,
+                        onExhausted: onExhausted
                     )
                 }
             default:

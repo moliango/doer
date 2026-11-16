@@ -42,6 +42,9 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
     private static let concurrency = 8
     private static let graceInterval: TimeInterval = 0.4
     private static let raceTotal: TimeInterval = 4
+    /// 一个赢家都没有时的硬上限。16 个候选并发 8 个，每个都要走完 tcp/tls/http 三段超时，
+    /// 4 秒只够跑完一半——按 4 秒砍会把还没探完的候选当成失败，等于自己判自己输。
+    private static let raceDeadline: TimeInterval = 15
     private static let gatherTimeout: TimeInterval = 4.5
     private static let maxCandidates = 32
     private static let vendorMaxPerDomain = 4
@@ -61,9 +64,17 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
     /// 一轮竞速最多重跑几次（换钥匙 / 服务端给新钥匙）。
     private static let maxRacePasses = 4
 
-    /// ECH 钥匙的备用来源：CF 共享钥匙，所以用别的 CF zone 就够了，
-    /// **不必也不该去查 linux.do**（对齐 `select.rs:103`）。
-    static let httpsKeyDomains = ["icook.tw", "skk.moe", "japan.com"]
+    /// ECH 钥匙的来源域名，**不必也不该去查 linux.do**。
+    ///
+    /// 排第一的是 `cloudflare-ech.com`：这是 Cloudflare 官方的**公共 ECH 入口**，
+    /// 它的 HTTPS 记录里带一把 `public_name = cloudflare-ech.com` 的 ECHConfigList，
+    /// 任何 CF 边缘都接受它，内层 SNI 填哪个 zone 就路由到哪个 zone——正是为
+    /// "目标 zone 自己没发布 ECH" 这种情形准备的。
+    ///
+    /// 后三个是历史来源（对齐 `select.rs:103`）。实测 2026-11 它们的 HTTPS 记录已经
+    /// 不再带 `ech` 参数，只能当兜底，不能当主力：只靠它们会一把钥匙都取不到，
+    /// 优选整条路会被跳过。
+    static let httpsKeyDomains = ["cloudflare-ech.com", "icook.tw", "skk.moe", "japan.com"]
     private static let httpsKeyDomainsToTry = 2
 
     /// 解析器连续失败到这个次数就暂停。
@@ -91,16 +102,24 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
         "cf.877774.xyz",
     ]
 
-    /// 内置公共 DoH 端点：全部用 `DohServerCatalog` 的「域名 + bootstrap IP」组合，
-    /// SNI 仍是域名，完全不经系统 DNS。
-    private static let publicResolvers: [DohServerDescriptor] = [
-        DohServerCatalog.dnsPod,
-        DohServerCatalog.tencent,
-        DohServerCatalog.aliDNS,
-        DohServerCatalog.cloudflare,
-        DohServerCatalog.quad9,
-        DohServerCatalog.google,
-    ]
+    /// 内置公共 DoH 端点，用于解析优选候选域名。
+    ///
+    /// 头一组是 **IP 字面量**（证书带 IP SAN，不经系统 DNS，与"配置的 DoH 有没有被投毒"
+    /// 无关）；后面才是「域名 + bootstrap」形式。
+    ///
+    /// 顺序不是重点（`resolveCloudflareDomain` 是全部并发），但**必须包含 IP 字面量**：
+    /// 只放域名形式时，境外那几家（cloudflare/quad9/google）在这张网上一律连不上，
+    /// 解析被拖到 4.5s 收集超时之后，候选池里就只剩随机抽样——日志里
+    /// 「候选 16 个」正好等于 `randomV4Samples + randomV6Samples`，就是这种情形。
+    private static let publicResolvers: [DohServerDescriptor] =
+        DohServerCatalog.ipLiteral + [
+            DohServerCatalog.aliDNS,
+            DohServerCatalog.dnsPod,
+            DohServerCatalog.tencent,
+            DohServerCatalog.cloudflare,
+            DohServerCatalog.quad9,
+            DohServerCatalog.google,
+        ]
 
     /// 状态变化回调，在主线程触发。
     var onStatusChange: ((Status) -> Void)?
@@ -226,8 +245,14 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
                 return
             }
             let keys = EchKeyStore.shared.liveKeys
+            // 候选构成要写出来：只有 random 就说明 vendor/atlas 那两路全没出东西，
+            // 竞速失败时一眼能分清是"节点不可达"还是"根本没找到真节点"。
+            let composition = Dictionary(grouping: sources.values, by: \.rawValue)
+                .map { "\($0.key)×\($0.value.count)" }
+                .sorted()
+                .joined(separator: " ")
             DohDebugLog.record(
-                "候选 \(candidates.count) 个 · ECH 钥匙 \(keys.count) 把"
+                "候选 \(candidates.count) 个（\(composition)）· ECH 钥匙 \(keys.count) 把"
                     + (keys.isEmpty ? "（无钥匙，探针发的是明文 SNI）"
                                     : "（\(keys.map(\.source.rawValue).joined(separator: ","))）")
                     + " · 开始竞速",
@@ -256,7 +281,11 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
     /// 2. 池里还有下一把钥匙 —— 换一把再试。
     ///
     /// 钥匙池为空时先补齐：非 linux.do 的 CF 域名 HTTPS 记录 → atlas 表里的 ech。
-    /// **从不查询 linux.do 本身**，取不到就放弃优选（退回普通 DoH 解析）。
+    /// **从不查询 linux.do 本身**。
+    ///
+    /// 补不到钥匙也**不再放弃**：照 CFluxDo 的做法，用明文 SNI 继续竞速。
+    /// 被投毒的网络里配置的 DoH 会连 HTTPS 记录一起污染，此时放弃就等于把优选整条路关掉；
+    /// 明文探测虽然可能被 RST，但至少能找出没被 RST 的节点。
     private func racePasses(
         candidates: [String],
         sources: [String: PreferredNode.Source],
@@ -273,9 +302,20 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
         if keys.isEmpty, pass == 0 {
             fetchKeysFromHTTPSRecords { [weak self] fresh in
                 guard let self else { return }
-                guard !fresh.isEmpty else {
-                    DohDebugLog.record("取不到 ECH 钥匙，跳过优选（不查 linux.do）", subsystem: "优选")
-                    completion(nil)
+                if fresh.isEmpty {
+                    DohDebugLog.record(
+                        "取不到 ECH 钥匙，按明文 SNI 继续竞速（不查 linux.do）",
+                        subsystem: "优选"
+                    )
+                    // pass 1 跳过本轮补钥匙的分支，直接带着空钥匙开赛。
+                    self.racePasses(
+                        candidates: candidates,
+                        sources: sources,
+                        family: family,
+                        keys: [],
+                        pass: 1,
+                        completion: completion
+                    )
                     return
                 }
                 self.racePasses(
@@ -333,11 +373,17 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
                 return
             }
 
-            // 3. 池里的钥匙全试过了，去 HTTPS 记录换一批
-            if !keys.isEmpty, pass + 1 < Self.maxRacePasses {
+            // 3. 池里的钥匙全试过了，去 HTTPS 记录换一批。
+            //    只在本轮的首个 pass 试一次：CF 的共享钥匙要么没变（再查也是同一把），
+            //    要么早就被 retry_configs 换掉了，反复查只会把失败拖成几十秒。
+            if !keys.isEmpty, pass == 0 {
                 self.fetchKeysFromHTTPSRecords { fresh in
                     let usable = fresh.filter { !keys.contains($0) }
                     guard !usable.isEmpty else {
+                        DohDebugLog.record(
+                            "HTTPS 记录没给出新钥匙（池里那把仍是最新），停止重赛",
+                            subsystem: "优选"
+                        )
                         completion(nil)
                         return
                     }
@@ -357,24 +403,169 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
     }
 
     /// 从非 linux.do 的 CF 域名 HTTPS 记录取钥匙（CF 共享钥匙，取到 `httpsKeyDomainsToTry` 把就停）。
+    ///
+    /// 每个域名同时问两条来源，**谁先带回钥匙算谁的**：
+    /// - 公共 DoH 端点：全部自带 bootstrap IP、不经系统 DNS，与用户选了哪台 DoH 无关。
+    ///   这是 CFluxDo `gather()` 里 `keys_task` 的做法——用户配置的那台一旦被投毒，
+    ///   HTTPS 记录会跟着一起坏，只走它会出现"一把钥匙都取不到 → 优选整条路被跳过"。
+    /// - 当前配置的解析器：公共端点在这张网络上可能被整段掐掉（实测全灭），
+    ///   而配置的解析器对 HTTPS 记录往往还是好的，串行等公共端点要白等 16 秒。
+    ///
+    /// 两条来源并发，某个域名两条都没拿到才顺延到下一个域名。
     private func fetchKeysFromHTTPSRecords(completion: @escaping ([Data]) -> Void) {
         let domains = Self.httpsKeyDomains
         var found: [Data] = []
 
         func step(_ index: Int) {
             guard index < domains.count, found.count < Self.httpsKeyDomainsToTry else {
+                if found.isEmpty {
+                    DohDebugLog.record("两条来源都没取到 ECH 钥匙，按明文 SNI 继续", subsystem: "优选")
+                }
                 completion(found)
                 return
             }
-            resolver.lookupEchConfig(host: domains[index]) { result in
-                if let bytes = (try? result.get())?.echConfig, !bytes.isEmpty {
-                    EchKeyStore.shared.adopt(bytes, source: .httpsRecord)
-                    found.append(bytes)
+            let domain = domains[index]
+            let lock = NSLock()
+            var settled = false
+            var pending = 2
+
+            // 拿到钥匙就走下一个域名，不等另一条来源的超时。
+            func settle(_ bytes: Data?) {
+                var advance = false
+                lock.lock()
+                if !settled {
+                    pending -= 1
+                    if bytes != nil || pending <= 0 {
+                        settled = true
+                        advance = true
+                    }
                 }
-                step(index + 1)
+                lock.unlock()
+                if let bytes, !bytes.isEmpty {
+                    // `adopt` 只认"池里有没有变化"：钥匙已经躺在池里时它返回 false，
+                    // 但那把钥匙照样能用。早期版本拿返回值当"取到了没有"，结果第二次
+                    // 优选时日志写成"两条来源都没取到 ECH 钥匙"，白等 17 秒。
+                    let normalized = BoringSSLECH.configList(from: bytes)
+                    if normalized.count > 2 {
+                        EchKeyStore.shared.adopt(normalized, source: .httpsRecord)
+                        found.append(normalized)
+                    }
+                }
+                if advance { step(index + 1) }
+            }
+
+            publicECHKey(domain: domain) { settle($0) }
+            resolver.lookupEchConfig(host: domain) { result in
+                let bytes = (try? result.get())?.echConfig
+                settle((bytes?.isEmpty == false) ? bytes : nil)
             }
         }
         step(0)
+    }
+
+    /// 取钥匙用的公共 DoH 端点，对齐 CFluxDo 的 `PUBLIC_DOH_ENDPOINTS` 思路：
+    /// **IP 字面量 URL**，证书自带 IP SAN，连 `getaddrinfo` 都不需要，
+    /// 与"用户配了哪台 DoH、系统 DNS 有没有被投毒"彻底无关。
+    ///
+    /// 末尾再挂三台厂商域名形式兜底——万一某台机器的 TLS 栈不认 IP 字面量的证书校验，
+    /// 这条路还能顶上（多了三次并发查询，代价可以忽略）。
+    private static let publicKeyFallbackProviders: [AppSettings.DoHProvider] = [
+        .dnspod, .tencent, .alidns,
+    ]
+
+    private static func publicKeyEndpoints() -> [DohEndpoint] {
+        let descriptors = DohServerCatalog.ipLiteral
+            + publicKeyFallbackProviders.map {
+                DohServerDescriptor(name: $0.title, url: $0.url, bootstrapIPs: $0.bootstrapIPs)
+            }
+        var endpoints: [DohEndpoint] = []
+        var known = Set<String>()
+        for descriptor in descriptors {
+            guard let endpoint = DohEndpoint(
+                url: descriptor.url,
+                bootstrapIPs: descriptor.bootstrapIPs,
+                preferIPv6: false
+            ), endpoint.isReady, known.insert(endpoint.url).inserted else { continue }
+            endpoints.append(endpoint)
+        }
+        return endpoints
+    }
+
+    /// 在一个域名的 HTTPS 记录上并发问全部公共端点，首个带回 ECH config 的胜出。
+    ///
+    /// 判定与 CFluxDo 的 `accept_ech_answer` 一致：只看答案里有没有 ECH config，
+    /// 没钥匙的应答（NoError/NXDomain）算"这家没有"，别家继续。
+    private func publicECHKey(domain: String, completion: @escaping (Data?) -> Void) {
+        guard let query = DohDNSMessage.makeQuery(host: domain, type: DohHttpsRecord.qtype) else {
+            completion(nil)
+            return
+        }
+        let endpoints = Self.publicKeyEndpoints()
+        guard !endpoints.isEmpty else {
+            completion(nil)
+            return
+        }
+
+        let lock = NSLock()
+        var settled = false
+        var remaining = endpoints.count
+        var failed = 0
+        let startedAt = Date()
+
+        func settle(_ key: Data?, from label: String) {
+            var deliver: Data?
+            var shouldDeliver = false
+            var failureCount = 0
+            lock.lock()
+            if !settled {
+                remaining -= 1
+                if let key {
+                    settled = true
+                    deliver = key
+                    shouldDeliver = true
+                } else {
+                    failed += 1
+                    if remaining <= 0 {
+                        settled = true
+                        shouldDeliver = true
+                        failureCount = failed
+                    }
+                }
+            }
+            lock.unlock()
+            guard shouldDeliver else { return }
+            let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+            if deliver != nil {
+                DohDebugLog.record("ECH 钥匙来自 \(label)（\(elapsedMs)ms）", subsystem: "优选")
+            } else {
+                DohDebugLog.record(
+                    "\(domain) 的 HTTPS 记录 \(failureCount) 个端点都没给钥匙（\(elapsedMs)ms）",
+                    subsystem: "优选"
+                )
+            }
+            completion(deliver)
+        }
+
+        for endpoint in endpoints {
+            let label = endpoint.host
+            DohBootstrapTransport.query(
+                endpoint: endpoint,
+                dnsQuery: query,
+                queue: dohQueue,
+                quiet: true
+            ) { result in
+                guard case .success(let body) = result,
+                      let resources = try? DohDNSMessage.parseResources(
+                          body,
+                          expectedType: DohHttpsRecord.qtype
+                      )
+                else {
+                    settle(nil, from: label)
+                    return
+                }
+                settle(DohHttpsRecord.firstECHConfig(from: resources.map(\.rdata)), from: label)
+            }
+        }
     }
 
     private func finishRace(
@@ -637,6 +828,33 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
         var pendingByResolver: [String: Int] = [:]
         var healthyResolvers = Set<String>()
         let group = DispatchGroup()
+        var delivered = false
+
+        /// 首个通过投毒检查的答案就算数，其余查询不再等——CFluxDo 的 `public_query`
+        /// 也是这样：Accept 之后 `abort_all()` 立刻返回。
+        ///
+        /// 不等齐很关键：境外那几家（Cloudflare / Quad9 / Google）在国内要挂到超时，
+        /// 等齐的话每个域名都要多等几秒，整批 vendor 域名会全部错过收集超时，
+        /// 候选池最后只剩随机抽样。
+        func deliver(_ ips: [String]) {
+            lock.lock()
+            if delivered {
+                lock.unlock()
+                return
+            }
+            delivered = true
+            let answers = answered
+            let poisons = poisoned
+            let resolverCount = active.count
+            lock.unlock()
+            if ips.isEmpty {
+                DohDebugLog.record(
+                    "\(domain) 没拿到 CF 候选（\(resolverCount) 个健康解析器，成功 \(answers)，投毒 \(poisons)）",
+                    subsystem: "优选"
+                )
+            }
+            completion(ips)
+        }
 
         for descriptor in active {
             guard let endpoint = DohEndpoint(
@@ -673,12 +891,14 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
                         poisonedAnswer = !CloudflareRanges.allCloudflare(ips)
                     }
                     lock.lock()
+                    var firstGoodAnswer: [String]?
                     if !ips.isEmpty, !poisonedAnswer {
                         healthyResolvers.insert(descriptor.url)
                         answered += 1
                         if !settled {
                             settled = true
                             best = ips
+                            firstGoodAnswer = ips
                         }
                     } else if poisonedAnswer {
                         poisoned += 1
@@ -687,6 +907,10 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
                     pendingByResolver[descriptor.url] = left
                     let healthy = healthyResolvers.contains(descriptor.url)
                     lock.unlock()
+                    if let firstGoodAnswer {
+                        deliver(firstGoodAnswer)
+                        return
+                    }
                     // 这一轮这个解析器还有查询在路上就先不判，等最后一条回来再说。
                     guard left <= 0 else { return }
                     self.noteResolverResult(descriptor.url, ok: healthy)
@@ -697,16 +921,9 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
         group.notify(queue: dohQueue) {
             lock.lock()
             let result = best
-            let answers = answered
-            let poisons = poisoned
             lock.unlock()
-            if result.isEmpty {
-                DohDebugLog.record(
-                    "\(domain) 没拿到 CF 候选（\(active.count) 个健康解析器，成功 \(answers)，投毒 \(poisons)）",
-                    subsystem: "优选"
-                )
-            }
-            completion(result)
+            // 已经有答案时这里会因为 `delivered` 直接返回；一条都没有才算真失败。
+            deliver(result)
         }
     }
 
@@ -822,7 +1039,7 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
                     .map { "\($0.key)×\($0.value)" }
                     .joined(separator: " ")
                 DohDebugLog.record(
-                    "竞速全失败（\(total) 个候选）：\(summary.isEmpty ? "无结果" : summary)",
+                    "竞速全失败（\(total) 个候选，完成 \(done) 个）：\(summary.isEmpty ? "无结果" : summary)",
                     subsystem: "优选"
                 )
                 completion(nil, learnedKeys)
@@ -870,7 +1087,12 @@ nonisolated final class PreferredNodeSelector: @unchecked Sendable {
         }
 
         pump()
-        queue.asyncAfter(deadline: .now() + Self.raceTotal) { settle() }
+        // 有赢家时 `graceInterval` 会收尾；这里只负责两件事：
+        // 4 秒还没人赢就继续等（多半还有一半候选在探测），15 秒硬上限防探针不回调把竞速挂死。
+        queue.asyncAfter(deadline: .now() + Self.raceTotal) {
+            if !winners.isEmpty { settle() }
+        }
+        queue.asyncAfter(deadline: .now() + Self.raceDeadline) { settle() }
     }
 
     // MARK: - 地址族
