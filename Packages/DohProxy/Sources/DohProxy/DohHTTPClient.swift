@@ -177,18 +177,18 @@ final class DohHTTPClient {
         }
 
         let send = {
+            // 必须用完整消息发送：自定义 `ContentContext(isFinal: false)` 配 `isComplete: false`
+            // 会让 Network.framework 把请求留在本地缓冲等"消息剩余部分"，连接又一直开着，
+            // 于是请求永远不上线路，DoH 查询一律超时后回落系统 DNS（拿到的正是投毒答案）。
             connection.send(
                 content: request,
-                contentContext: NWConnection.ContentContext(identifier: "doer.doh.bootstrap", isFinal: false),
-                isComplete: false,
-                completion: .contentProcessed { error in
-                    if let error {
-                        failOrRetry(error)
-                        return
-                    }
-                    receiveMore()
-                }
+                contentContext: .defaultMessage,
+                isComplete: true,
+                completion: .contentProcessed { _ in }
             )
+            // 读循环立刻挂上，不挂在 `.contentProcessed` 里：发送完成的时机不该决定能不能收。
+            // 真的发不出去时 receive 会带着错误回来，`failOrRetry` 照样接得住。
+            receiveMore()
         }
 
         if reused {

@@ -83,7 +83,19 @@ nonisolated final class MitmTLSBridge: @unchecked Sendable {
                         }
                     },
                     completion: { _ in },
-                    onHandshake: onOriginHandshake
+                    onHandshake: { ok in
+                        DohDebugLog.record(
+                            ok
+                                ? "MITM 源站握手成功 \(sni)（ECH \(origin.echAccepted ? "已接受" : "未接受")）"
+                                : "MITM 源站握手失败 \(sni)：\(origin.lastError ?? "unknown")"
+                        )
+                        onOriginHandshake(ok)
+                    },
+                    // 边缘回收 / FIN / RST：必须把断连传回客户端，否则 URLSession 会
+                    // 一直复用这条死隧道，表现为「用了一会儿突然全都没网」。
+                    onSocketClosed: { [weak self] in
+                        self?.closeBoth(reason: "源站关闭 \(sni)")
+                    }
                 )
             }
             pipe.start(
@@ -128,7 +140,9 @@ nonisolated final class MitmTLSBridge: @unchecked Sendable {
                         self.send(self.wrapUpstreamWrite?(outbound) ?? outbound, on: self.upstream, done: done)
                     }
                 },
-                completion: completion
+                completion: completion,
+                // 客户端那头收掉了，源站这头也别挂着。
+                onClientClosed: { [weak self] in self?.upstream.cancel() }
             )
         } catch {
             DohDebugLog.record("MITM NIOSSL failed: \(error)")
@@ -163,12 +177,30 @@ nonisolated final class MitmTLSBridge: @unchecked Sendable {
         return h2Session.pushOrigin(data, originHTTP1: originHTTP1)
     }
 
+    /// 两头一起收掉：客户端看到 EOF/RST 才会重开连接，源站那头也不会挂着一个死 socket。
+    private func closeBoth(reason: String) {
+        DohDebugLog.record("MITM 隧道关闭 \(reason)")
+        client.cancel()
+        upstream.cancel()
+    }
+
     private func send(_ data: Data, on connection: NWConnection?, done: @escaping () -> Void) {
-        connection?.send(
+        guard let connection else {
+            done()
+            return
+        }
+        // `.defaultMessage` + `isComplete: true` 就是 `send(content:completion:)` 的默认参数，
+        // 也是 TCP 上发一段字节的标准写法；它不会 FIN 连接（那要用 `.finalMessage`）。
+        // 反过来，自定义 `ContentContext(isFinal: false)` + `isComplete: false` 会把数据
+        // 留在本地缓冲里，隧道两端都只进不出。
+        connection.send(
             content: data,
-            contentContext: NWConnection.ContentContext(identifier: "doer.doh.mitm-nio", isFinal: false),
-            isComplete: false,
-            completion: .contentProcessed { _ in done() }
+            contentContext: .defaultMessage,
+            isComplete: true,
+            completion: .contentProcessed { _ in }
         )
+        // `done` 立刻调：`OriginNIOClient` 的读循环挂在下一次 receive 上，等
+        // `.contentProcessed` 会把读也一起拖住。
+        done()
     }
 }

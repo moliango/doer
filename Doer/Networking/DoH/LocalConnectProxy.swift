@@ -110,7 +110,6 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
             mitmBridges.removeAll()
             originClients.removeAll()
             ssSessions.removeAll()
-            streamContexts.removeAll()
             gatewayOriginWaiters.removeAll()
             gatewayOriginInflight = 0
             active.forEach { $0.cancel() }
@@ -840,10 +839,15 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         } else {
             payload = content
         }
+        // `.defaultMessage` + `isComplete: true` 是 `send(content:completion:)` 的默认参数，
+        // 也是 TCP 上推一段字节的标准写法，不会 FIN 连接（FIN 要用 `.finalMessage`）。
+        // 以前这里用一条自定义的非 final ContentContext 配 `isComplete: false`，结果每个
+        // 分片都被 Network.framework 留在本地缓冲：CONNECT 200 发不回去，客户端请求也
+        // 推不到源站，整条 DoH 代理看着握手成功却一个字节都不通。
         connection.send(
             content: payload,
-            contentContext: streamingContext(for: connection),
-            isComplete: false,
+            contentContext: .defaultMessage,
+            isComplete: true,
             completion: .contentProcessed { error in
                 completion(error)
             }
@@ -860,19 +864,6 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                 self?.close(connection)
             }
         }
-    }
-
-    /// Reuse one non-final context per connection. A new context per send
-    /// leaves each chunk incomplete; `defaultMessage` is final and can FIN
-    /// the socket after the CONNECT 200.
-    private func streamingContext(for connection: NWConnection) -> NWConnection.ContentContext {
-        let id = ObjectIdentifier(connection)
-        if let existing = streamContexts[id] {
-            return existing
-        }
-        let context = NWConnection.ContentContext(identifier: "doer.doh.stream", isFinal: false)
-        streamContexts[id] = context
-        return context
     }
 
     static let connectSuccessResponse = Data("HTTP/1.1 200 Connection Established\r\n\r\n".utf8)
@@ -1221,6 +1212,15 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                     timeout.cancel()
                     self?.queue.async {
                         settleHandshake(ok)
+                    }
+                },
+                // 源站那头断了：让 `upstream.stateUpdateHandler` 走 cancelled/failed
+                // 分支去换下一个地址，而不是把客户端挂在一个已经死掉的响应上。
+                onSocketClosed: { [weak self, weak upstream] in
+                    guard let self, let upstream else { return }
+                    self.queue.async {
+                        DohDebugLog.record("Gateway origin 关闭 \(request.host) \(originAddress)")
+                        self.close(upstream)
                     }
                 }
             )

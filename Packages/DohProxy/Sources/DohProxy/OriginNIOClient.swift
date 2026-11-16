@@ -77,7 +77,11 @@ public final class OriginNIOClient: @unchecked Sendable {
         socketWrite: @escaping (Data, @escaping () -> Void) -> Void,
         appRead: @escaping (Data) -> Void,
         completion: @escaping (Bool) -> Void,
-        onHandshake: @escaping (Bool) -> Void = { _ in }
+        onHandshake: @escaping (Bool) -> Void = { _ in },
+        /// 上游 socket 被关闭 / 出错（对端 FIN、边缘回收、RST）。
+        /// 握手完成之后再报错没有意义，必须显式把这个事件交给上层：
+        /// 否则客户端以为隧道还活着，请求全挂在那里，日志里一条错误都没有。
+        onSocketClosed: @escaping () -> Void = {}
     ) {
         lock.lock()
         if started {
@@ -143,6 +147,9 @@ public final class OriginNIOClient: @unchecked Sendable {
             }
             if BoringSSLECH.isHandshakeFinished(handler), !pendingApplication.isEmpty {
                 _ = try? channel.writeOutbound(ByteBuffer(bytes: pendingApplication))
+                // 写完要让内嵌事件循环跑一遍，SSL 层才会把明文加密并投递到 outbound；
+                // 不跑的话调用方的 `flushOutbound` 读到的永远是空，请求就发不出去。
+                channel.embeddedEventLoop.run()
                 pendingApplication = Data()
             }
             var plaintext = Data()
@@ -155,10 +162,22 @@ public final class OriginNIOClient: @unchecked Sendable {
             return plaintext
         }
 
+        /// 只上报一次断连，避免读循环里重复触发。
+        var closedReported = false
+        func reportClosed() {
+            lock.lock()
+            let first = !closedReported
+            closedReported = true
+            lock.unlock()
+            guard first else { return }
+            onSocketClosed()
+        }
+
         func pumpSocket() {
             socketRead { data in
                 guard let data, !data.isEmpty else {
                     notifyHandshake(false, error: self.lastError ?? "origin socket closed")
+                    reportClosed()
                     return
                 }
                 let plaintext = ingest(data)
@@ -189,6 +208,8 @@ public final class OriginNIOClient: @unchecked Sendable {
             return
         }
         _ = try? channel?.writeOutbound(ByteBuffer(bytes: data))
+        // 同上：不跑事件循环，SSL 层可能还没把密文投递到 outbound。
+        channel?.embeddedEventLoop.run()
         var encrypted = Data()
         while let buffer = try? channel?.readOutbound(as: ByteBuffer.self) {
             var copy = buffer
