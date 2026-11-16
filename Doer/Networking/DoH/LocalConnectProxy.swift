@@ -1600,7 +1600,13 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
 
     static func shouldMITM(_ host: String) -> Bool {
         guard originECHReady else { return false }
-        return !MitmCertificateAuthority.isCloudflareChallengeHost(host)
+        // 只对需要「藏 SNI」的站点做 MITM，也就是 linux.do 及其子域。
+        //
+        // 之前是「除 challenges.cloudflare.com 以外全 MITM」，结果 CDN（cdn*.ldstatic.com）
+        // 也被换成我们自签的叶子证书：`FluxDoMitmTrustManager` 只挂在 DiscourseAPI 的
+        // Alamofire session 上，SDWebImage 的下载 session 没有它，图片全卡在证书校验，
+        // 表现就是「CDN 不通」。这些域名没被墙，直通隧道让客户端自己验真证书即可。
+        return PreferredNodeStore.isCoveredHost(host)
     }
 
     static var shouldSwitchToSystemTLSAfterWebViewClearance: Bool {
