@@ -469,6 +469,12 @@ private final class ImageCarouselSlideView: UIView {
     private var loadGeneration = 0
     private var pendingImage: UIImage?
     private var pendingSource: ImagePaintCacheSource = .memory
+    private var hasDisplayedImage = false
+    private var didFailLoad = false
+    private var displayURL: URL?
+    private var refererBaseURL: String?
+    private var loadTimeoutWorkItem: DispatchWorkItem?
+    private var gateResumeObserver: NSObjectProtocol?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -483,11 +489,37 @@ private final class ImageCarouselSlideView: UIView {
         ])
         let tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
         addGestureRecognizer(tap)
+
+        // 和单图容器（`TappableImageContainer`）一致：CF 图片闸门解除后自动重拉。
+        // 闸门期间 `ExternalImageFetcher` 直接回 nil，不重试的话这一格会一直空白，
+        // 只有点开全屏（那条路径带 forceRetry）才看得到图。
+        gateResumeObserver = NotificationCenter.default.addObserver(
+            forName: CloudflareImageGate.didResumeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self, self.didFailLoad, let url = self.displayURL else { return }
+            if let base = note.userInfo?[CloudflareImageGate.resumedBaseURLKey] as? String,
+               let referer = self.refererBaseURL {
+                let a = CloudflareImageGate.normalizedKey(base)
+                let b = CloudflareImageGate.normalizedKey(referer)
+                // 只重拉同一个论坛的图。
+                guard a == b || a.contains(b) || b.contains(a) else { return }
+            }
+            self.load(url: url, forceRetry: true)
+        }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        loadTimeoutWorkItem?.cancel()
+        if let gateResumeObserver {
+            NotificationCenter.default.removeObserver(gateResumeObserver)
+        }
     }
 
     override func layoutSubviews() {
@@ -504,28 +536,71 @@ private final class ImageCarouselSlideView: UIView {
 
     func configure(item: ImageGridItem, refererBaseURL: String?, tapHandler: @escaping () -> Void) {
         self.tapHandler = tapHandler
+        self.refererBaseURL = refererBaseURL
+        // 轨道里画的是**缩略图**（Discourse 的 `_690x` 优化图），原图只留给全屏查看器：
+        // 和网格瓦片、`TappableImageContainer` 的语义保持一致。之前这里取的是
+        // `lightboxURL`，等于在一格 300pt 的轨道里拉几 MB 原图，慢网或 CF 闸门期间
+        // 就是长时间白屏，点开全屏反而先看到图。
+        let displayRaw = item.src.isEmpty ? item.lightboxURL : item.src
+        guard let url = URL(string: displayRaw) else {
+            displayURL = nil
+            applyFailure()
+            return
+        }
+        displayURL = url
+        load(url: url, forceRetry: false)
+    }
+
+    private func load(url: URL, forceRetry: Bool) {
+        loadTimeoutWorkItem?.cancel()
+        loadTimeoutWorkItem = nil
         loadGeneration += 1
         let generation = loadGeneration
+
+        let wasFailed = didFailLoad
+        didFailLoad = false
+        hasDisplayedImage = imageView.image != nil && !wasFailed
         pendingImage = nil
         pendingSource = .memory
         imageView.contentMode = .scaleAspectFit
         ImagePaintPolicy.prepareForLoad(on: imageView)
-        let raw = item.lightboxURL.isEmpty ? item.src : item.lightboxURL
-        guard let url = URL(string: raw) else {
+        if wasFailed || imageView.image == nil {
+            // 重试时先把失败图标摘掉，换成等待填充，别让用户以为没在加载。
             imageView.image = nil
-            return
+            imageView.tintColor = nil
+            imageView.backgroundColor = ImagePaintPolicy.waitingFillColor
         }
-        if let cached = AvatarImageLoader.cachedImageIfAvailable(for: url) {
+
+        if !forceRetry, let cached = AvatarImageLoader.cachedImageIfAvailable(for: url) {
             pendingImage = cached
             pendingSource = .memory
             paintIfNeeded()
             return
         }
-        if imageView.image == nil {
-            imageView.backgroundColor = ImagePaintPolicy.waitingFillColor
+
+        // 请求自身有 20s 超时，但闸门 / inflight 合并可能让回调一直不来：
+        // 到点还没画出图就翻成重试图标，不留一块空白。
+        let timeout = DispatchWorkItem { [weak self] in
+            guard let self, self.loadGeneration == generation, !self.hasDisplayedImage else { return }
+            // 图已经到手、只是这一格还没布局（bounds 为 0）时不能判失败：
+            // `pendingImage` 要留着等 `layoutSubviews` 再画。
+            guard self.pendingImage == nil else { return }
+            self.applyFailure()
         }
-        ExternalImageFetcher.fetch(url: url, refererBaseURL: refererBaseURL, forceRetry: false) { [weak self] image in
+        loadTimeoutWorkItem = timeout
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 18_000_000_000)
+            timeout.perform()
+        }
+
+        ExternalImageFetcher.fetch(url: url, refererBaseURL: refererBaseURL, forceRetry: forceRetry) { [weak self] image in
             guard let self, generation == self.loadGeneration else { return }
+            self.loadTimeoutWorkItem?.cancel()
+            self.loadTimeoutWorkItem = nil
+            guard let image else {
+                self.applyFailure()
+                return
+            }
             self.imageView.contentMode = .scaleAspectFit
             self.pendingImage = image
             self.pendingSource = .network
@@ -533,9 +608,28 @@ private final class ImageCarouselSlideView: UIView {
         }
     }
 
+    private func applyFailure() {
+        didFailLoad = true
+        hasDisplayedImage = false
+        pendingImage = nil
+        imageView.backgroundColor = .tertiarySystemFill
+        imageView.contentMode = .center
+        imageView.image = UIImage(
+            systemName: "arrow.clockwise.circle",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 28, weight: .regular)
+        )
+        imageView.tintColor = .tertiaryLabel
+    }
+
     func paintIfNeeded() {
         guard bounds.width > 1, bounds.height > 1, let image = pendingImage else { return }
         pendingImage = nil
+        hasDisplayedImage = true
+        didFailLoad = false
+        // 失败态把 contentMode 改成了 `.center`（画图标），重试成功后必须还原，
+        // 否则内存命中的这条分支会把真图画成原始像素大小居中。
+        imageView.contentMode = .scaleAspectFit
+        imageView.tintColor = nil
         if pendingSource == .memory {
             // Re-assign so SDAnimatedImageView / iOS 14+ UIImageView actually
             // displayLayer: after growing from a zero frame (cache hits during init).
@@ -550,6 +644,12 @@ private final class ImageCarouselSlideView: UIView {
     }
 
     @objc private func tapped() {
+        // 失败态下点按先重试：图标本身就在说「点一下再试」，
+        // 直接弹全屏会让人以为点了没用。
+        if didFailLoad, let url = displayURL {
+            load(url: url, forceRetry: true)
+            return
+        }
         tapHandler?()
     }
 }
