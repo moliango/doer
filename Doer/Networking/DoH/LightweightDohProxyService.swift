@@ -185,15 +185,39 @@ nonisolated final class LightweightDohProxyService: @unchecked Sendable {
             guard let self else { return }
             self.lock.lock()
             self.consecutiveStartFailures = 0
-            let isLive = self.proxy?.isRunning == true
+            let liveProxy = self.proxy
+            let isLive = liveProxy?.isRunning == true
             let starting = self.isStartingProxy
             let ready = self.stackReady
             self.lock.unlock()
             self.reassertNameResolution()
-            if isLive || starting || ready {
-                if isLive {
-                    self.publishAppClients()
+            if isLive, let liveProxy {
+                guard liveProxy.isAcceptingConnections() else {
+                    // 状态字段还叫 ready，但监听器已经被系统挂起、不再 accept。
+                    // 只重建一次：先彻底收掉旧实例并清掉存活标记，否则
+                    // `configureFromSettings` 里的 `shouldReapply` 会认为还活着
+                    // 直接 return，重建根本不会发生。
+                    let port = liveProxy.proxyPort
+                    DohDebugLog.record(
+                        "DoH proxy listener unresponsive on 127.0.0.1:\(port.map { String($0) } ?? "?"); rebuilding"
+                    )
+                    self.lock.lock()
+                    let sameProxy = self.proxy === liveProxy
+                    if sameProxy {
+                        self.stackReady = false
+                        self.isStartingProxy = false
+                    }
+                    self.lock.unlock()
+                    // 已经被别的路径换掉了，交给那条路径收敛。
+                    guard sameProxy else { return }
+                    self.stop(clearError: false)
+                    self.configureFromSettings()
+                    return
                 }
+                self.publishAppClients()
+                return
+            }
+            if starting || ready {
                 return
             }
             DohDebugLog.record("DoH proxy not alive; restarting")

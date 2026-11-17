@@ -10,6 +10,10 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
     private let requestedPort: UInt16
     private var listener: NWListener?
     private var boundPort: UInt16?
+    /// `NWListener` 最近一次上报的状态是否为 `.ready`。`.waiting` 时内核的
+    /// listen socket 可能还在（于是回环 connect 照样成功），但 App 已经不再
+    /// accept，光靠 connect 探活会漏判，必须连状态一起看。
+    private var listenerIsReady = false
     private var connections: [ObjectIdentifier: NWConnection] = [:]
     private var stallWatchdogs: [ObjectIdentifier: DispatchWorkItem] = [:]
     private var mitmBridges: [ObjectIdentifier: MitmTLSBridge] = [:]
@@ -41,6 +45,75 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         stateLock.lock()
         defer { stateLock.unlock() }
         return listener != nil && boundPort != nil
+    }
+
+    /// 回环监听器是否真的还在 accept。
+    ///
+    /// App 回前台后 `NWListener` 可能被系统挂起：状态停在 `.waiting`（甚至不再
+    /// 回调 `stateUpdateHandler`），`listener` / `boundPort` 也都还在，于是
+    /// `isRunning` 一直判活，而 URLSession 连 127.0.0.1 直接拿 310（HTTPS proxy
+    /// 连接失败）。`boundPort` 区分不出这种情况，所以要两个条件同时成立：
+    /// 最近一次状态是 `.ready`（App 仍在 accept），并且自己真连一下——
+    /// 回环 connect 正常是微秒级，返回 0 说明监听队列还在接受连接。
+    func isAcceptingConnections() -> Bool {
+        stateLock.lock()
+        let port = boundPort
+        let ready = listenerIsReady
+        stateLock.unlock()
+        guard let port, port != 0 else { return false }
+        guard ready else {
+            DohDebugLog.record("Local CONNECT health check failed: 127.0.0.1:\(port) listener not ready")
+            return false
+        }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = port.bigEndian
+        guard inet_pton(AF_INET, "127.0.0.1", &address.sin_addr) == 1 else { return false }
+
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else {
+            let code = errno
+            DohDebugLog.record("Local CONNECT health check socket failed: 127.0.0.1:\(port) errno=\(code)")
+            return false
+        }
+        // `close` 在本类里有同名方法（NWConnection 版），这里必须显式走 Darwin。
+        defer { Darwin.close(fd) }
+
+        // 非阻塞 + poll：回环 connect 正常是微秒级，但没有监听者时也可能因为
+        // accept 队列满而丢 SYN，阻塞版要等系统级重传超时（几十秒）。这个方法
+        // 跑在 `startQueue` 上，卡住会把整条 DoH 启动链路一起拖死。
+        let flags = fcntl(fd, F_GETFL, 0)
+        if flags >= 0 {
+            _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+        }
+
+        let size = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                connect(fd, sockaddrPointer, size)
+            }
+        }
+        if result == 0 { return true }
+        let connectError = errno
+        guard connectError == EINPROGRESS || connectError == EALREADY else {
+            DohDebugLog.record("Local CONNECT health check failed: 127.0.0.1:\(port) errno=\(connectError)")
+            return false
+        }
+
+        var descriptor = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        guard poll(&descriptor, 1, 250) > 0 else {
+            DohDebugLog.record("Local CONNECT health check timed out: 127.0.0.1:\(port)")
+            return false
+        }
+        var socketError: Int32 = 0
+        var length = socklen_t(MemoryLayout<Int32>.size)
+        guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &socketError, &length) == 0, socketError == 0 else {
+            DohDebugLog.record("Local CONNECT health check failed: 127.0.0.1:\(port) errno=\(socketError)")
+            return false
+        }
+        return true
     }
 
     /// 换 Wi‑Fi / 蜂窝：旧接口上的 socket 全部作废。
@@ -113,18 +186,30 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                 }
                 self.stateLock.lock()
                 self.boundPort = port
+                self.listenerIsReady = true
                 self.stateLock.unlock()
                 DohDebugLog.record("Local CONNECT proxy ready on 127.0.0.1:\(port)")
                 self.onListening?(port)
+            case .waiting(let error):
+                // `.waiting` 有可能自己回到 `.ready`，所以这里只记日志、不清
+                // `boundPort`：清了会引起无谓重建。但要把 `listenerIsReady`
+                // 打掉——内核的 listen socket 可能还在，客户端能连上却没人
+                // accept，必须让 `isAcceptingConnections()` 判失败并重建。
+                self.stateLock.lock()
+                self.listenerIsReady = false
+                self.stateLock.unlock()
+                DohDebugLog.record("Local CONNECT proxy waiting: \(error)")
             case .failed(let error):
                 DohDebugLog.record("Local CONNECT proxy failed: \(error)")
                 self.stateLock.lock()
                 self.boundPort = nil
+                self.listenerIsReady = false
                 self.stateLock.unlock()
                 self.onFailed?(LocalConnectProxyError.listenerFailed(error))
             case .cancelled:
                 self.stateLock.lock()
                 self.boundPort = nil
+                self.listenerIsReady = false
                 self.stateLock.unlock()
             default:
                 break
@@ -132,6 +217,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         }
         stateLock.lock()
         self.listener = listener
+        self.listenerIsReady = false
         stateLock.unlock()
         listener.start(queue: queue)
     }
@@ -146,6 +232,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         let currentListener = listener
         listener = nil
         boundPort = nil
+        listenerIsReady = false
         stateLock.unlock()
         currentListener?.cancel()
 
@@ -399,6 +486,60 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         )
     }
 
+    /// 目标 host 属于验证页依赖、且确定托管在 CF 上的域名，并且当前存在一个
+    /// 本机地址族可路由的优选赢家时，返回该赢家 IP。
+    /// - Parameter excluding: 本次已经试过的地址。赢家已经试过就不再返回，
+    ///   否则 TLS 重试路径会对着同一个 IP 反复重连。
+    private func cloudflareEdgeFallbackAddress(
+        for host: String,
+        excluding addresses: [String] = []
+    ) -> String? {
+        guard Self.isCloudflareHostedRegardlessOfDNS(host),
+              let edge = PreferredNodeStore.shared.cloudflareEdgeAddress(),
+              !addresses.contains(edge)
+        else { return nil }
+        return edge
+    }
+
+    /// DoH 解析不出来时，用优选赢家 IP 直连 CF 域名。
+    /// 返回 false 表示这个 host 不适用兜底（或没有可用赢家），调用方照原样 reject。
+    @discardableResult
+    private func connectViaCloudflareEdge(
+        host: String,
+        upstreamPort: NWEndpoint.Port,
+        client: NWConnection,
+        bufferedClientData: Data,
+        readyReply: Data,
+        useMITM: Bool,
+        replayHello: Data? = nil,
+        excluding: [String] = [],
+        onExhausted: (() -> Void)? = nil
+    ) -> Bool {
+        guard let edge = cloudflareEdgeFallbackAddress(for: host, excluding: excluding) else {
+            return false
+        }
+        DohDebugLog.record(
+            "Resolve unavailable for \(host); using Cloudflare edge \(edge)",
+            subsystem: "优选"
+        )
+        connectUpstream(
+            addresses: [edge],
+            port: upstreamPort,
+            addressIndex: 0,
+            client: client,
+            bufferedClientData: bufferedClientData,
+            hostname: host,
+            readyReply: readyReply,
+            replayHello: replayHello,
+            useMITM: useMITM,
+            // 赢家随身的 ECH 钥匙是 linux.do 的，别的 host 不能用它，否则握手必失败。
+            echConfig: nil,
+            // 兜底自身不再兜底：地址只有赢家一个，失败就 reject，避免递归。
+            onExhausted: onExhausted
+        )
+        return true
+    }
+
     /// 正常解析路径：DoH 解析 →（有赢家就排第一）→ 依次连接。
     private func resolveAndConnect(
         host: String,
@@ -408,12 +549,81 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         readyReply: Data
     ) {
         let useMITM = Self.shouldMITM(host)
+        // CF 自家域名（验证页 / Turnstile / CDN）直接走赢家，**不等 DoH**：
+        // 它们都在同一张 CF anycast 上，而 DoH 一旦不可用，每次解析都要白等 8 秒
+        // （负缓存只有 3 秒），一帖几张图排在网关队列后面就是几十秒白屏。
+        // 赢家连不上再回到 DoH。
+        if Self.isCloudflareHostedRegardlessOfDNS(host),
+           let edge = PreferredNodeStore.shared.cloudflareEdgeAddress() {
+            DohDebugLog.record(
+                "Cloudflare host \(host): using edge \(edge) without DNS",
+                subsystem: "优选"
+            )
+            connectUpstream(
+                addresses: [edge],
+                port: upstreamPort,
+                addressIndex: 0,
+                client: client,
+                bufferedClientData: bufferedClientData,
+                hostname: host,
+                readyReply: readyReply,
+                useMITM: useMITM,
+                echConfig: nil,
+                onExhausted: { [weak self, weak client] in
+                    guard let self, let client else { return }
+                    DohDebugLog.record("Cloudflare edge failed for \(host); falling back to DoH")
+                    self.resolveAndConnectViaDoH(
+                        host: host,
+                        upstreamPort: upstreamPort,
+                        client: client,
+                        bufferedClientData: bufferedClientData,
+                        readyReply: readyReply,
+                        useMITM: useMITM,
+                        allowEdgeFallback: false
+                    )
+                }
+            )
+            return
+        }
+        resolveAndConnectViaDoH(
+            host: host,
+            upstreamPort: upstreamPort,
+            client: client,
+            bufferedClientData: bufferedClientData,
+            readyReply: readyReply,
+            useMITM: useMITM,
+            allowEdgeFallback: true
+        )
+    }
+
+    /// DoH 解析路径。`allowEdgeFallback` 为 false 表示已经试过赢家才来到这里，
+    /// 不要再退回去，避免两边来回递归。
+    private func resolveAndConnectViaDoH(
+        host: String,
+        upstreamPort: NWEndpoint.Port,
+        client: NWConnection,
+        bufferedClientData: Data,
+        readyReply: Data,
+        useMITM: Bool,
+        allowEdgeFallback: Bool
+    ) {
         resolver.resolve(host: host) { [weak self, weak client] result in
             guard let self, let client else { return }
             self.queue.async {
                 switch result {
                 case .failure(let error):
                     DohDebugLog.record("Resolve failed for \(host): \(error.localizedDescription)")
+                    if allowEdgeFallback,
+                       self.connectViaCloudflareEdge(
+                        host: host,
+                        upstreamPort: upstreamPort,
+                        client: client,
+                        bufferedClientData: bufferedClientData,
+                        readyReply: readyReply,
+                        useMITM: useMITM
+                    ) {
+                        return
+                    }
                     self.reject(client, reason: "resolve failed", socks: readyReply == Socks5Handshake.connectOK)
                 case .success(let answer):
                     let resolved = Self.preferredUpstreamAddresses(answer.addresses)
@@ -435,11 +645,55 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                     }
                     DohDebugLog.record("Resolved \(host) -> \(addresses.joined(separator: ", "))")
                     guard !addresses.isEmpty else {
+                        // 应答全被过滤掉（投毒 / 假地址）和解析失败一样致命：
+                        // 验证页依赖的 CF 域名还有赢家可用，先试赢家，不行再 reject。
+                        if allowEdgeFallback,
+                           self.connectViaCloudflareEdge(
+                            host: host,
+                            upstreamPort: upstreamPort,
+                            client: client,
+                            bufferedClientData: bufferedClientData,
+                            readyReply: readyReply,
+                            useMITM: useMITM
+                        ) {
+                            return
+                        }
                         self.reject(client, reason: "empty resolved address", socks: readyReply == Socks5Handshake.connectOK)
                         return
                     }
                     if !useMITM {
                         DohDebugLog.record("CONNECT pass-through \(host) via DoH IP \(addresses[0])")
+                    }
+                    // 解析成功但地址全连不上时也退到 CF 边缘：DNS 给出的地址可能整批被墙，
+                    // 而赢家是竞速验证过能用的。`addresses` 里已有赢家就不重复兜底。
+                    var edgeFallback: (() -> Void)? = nil
+                    if allowEdgeFallback,
+                       Self.isCloudflareHostedRegardlessOfDNS(host),
+                       let edge = PreferredNodeStore.shared.cloudflareEdgeAddress(),
+                       !addresses.contains(edge) {
+                        edgeFallback = { [weak self, weak client] in
+                            guard let self, let client else { return }
+                            guard self.connectViaCloudflareEdge(
+                                host: host,
+                                upstreamPort: upstreamPort,
+                                client: client,
+                                bufferedClientData: bufferedClientData,
+                                readyReply: readyReply,
+                                useMITM: useMITM,
+                                excluding: addresses
+                            ) else {
+                                // 赢家可能在构造兜底之后被降级/清除（连败、换网）。
+                                // 这时兜底拿不到地址，必须显式 reject：`onExhausted`
+                                // 已经吃掉了原生的 reject 分支，这里再不动就让
+                                // 客户端挂在一条永远不会重试的连接上。
+                                self.reject(
+                                    client,
+                                    reason: "all upstream addresses failed",
+                                    socks: readyReply == Socks5Handshake.connectOK
+                                )
+                                return
+                            }
+                        }
                     }
                     self.connectUpstream(
                         addresses: addresses,
@@ -450,7 +704,8 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                         hostname: host,
                         readyReply: readyReply,
                         useMITM: useMITM,
-                        echConfig: answer.echConfig
+                        echConfig: answer.echConfig,
+                        onExhausted: edgeFallback
                     )
                 }
             }
@@ -512,10 +767,55 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
             upstream.cancel()
         }
         queue.asyncAfter(deadline: .now() + 8, execute: timeout)
+
+        /// 放弃当前地址并换下一个。
+        ///
+        /// `.failed/.cancelled` 与 `.waiting` 的不可达错误共用。`gate.settle`
+        /// 保证换地址只发生一次：握手已结算（`.ready` 之后掉线）时这里只做
+        /// 幂等清理——`gate.settle` 的 body 不会再跑，隧道层自己收尾。
+        /// 先 `cancel` 掉旧连接，避免 `.waiting` 之后自己恢复成 `.ready`
+        /// 留下一条没人管的上游。
+        let abandonAndRetry: (String) -> Void = { [weak self, weak upstream, weak client] logLine in
+            guard let self, let upstream else { return }
+            timeout.cancel()
+            self.cancelStallWatchdog(upstream)
+            self.connections.removeValue(forKey: upstreamId)
+            // 先摘回调再 cancel：否则 `.cancelled` 会再进一遍。虽然 `gate.settle`
+            // 只结算一次、字典清理也幂等，但重入没有收益，日志里也会多一条
+            // 「failed」掩盖真正的失败原因。
+            upstream.stateUpdateHandler = nil
+            upstream.cancel()
+            gate.settle {
+                guard let client else { return }
+                DohDebugLog.record(logLine)
+                PreferredNodeStore.shared.reportOutcome(host: hostname, ip: target, success: false)
+                self.resolver.recordHostFailure(host: hostname, ip: target)
+                self.connectUpstream(
+                    addresses: addresses,
+                    port: port,
+                    addressIndex: addressIndex + 1,
+                    client: client,
+                    bufferedClientData: bufferedClientData,
+                    hostname: hostname,
+                    readyReply: readyReply,
+                    replayHello: replayHello,
+                    useMITM: useMITM,
+                    echConfig: echConfig,
+                    onExhausted: onExhausted
+                )
+            }
+        }
+
         upstream.stateUpdateHandler = { [weak self, weak upstream, weak client] state in
             guard let self, let upstream else { return }
             switch state {
             case .waiting(let error):
+                if Self.isUnreachableNetworkError(error) {
+                    abandonAndRetry(
+                        "Upstream unreachable \(target):\(port.rawValue) \(error), trying next"
+                    )
+                    return
+                }
                 DohDebugLog.record("Upstream waiting \(target): \(error)")
                 if gate.hasSettled {
                     self.armStallWatchdog(upstream, label: "\(target):\(port.rawValue)")
@@ -555,28 +855,7 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                     }
                 }
             case .failed, .cancelled:
-                timeout.cancel()
-                self.cancelStallWatchdog(upstream)
-                self.connections.removeValue(forKey: ObjectIdentifier(upstream))
-                gate.settle {
-                    guard let client else { return }
-                    DohDebugLog.record("Upstream failed \(target):\(port.rawValue), trying next")
-                    PreferredNodeStore.shared.reportOutcome(host: hostname, ip: target, success: false)
-                    self.resolver.recordHostFailure(host: hostname, ip: target)
-                    self.connectUpstream(
-                        addresses: addresses,
-                        port: port,
-                        addressIndex: addressIndex + 1,
-                        client: client,
-                        bufferedClientData: bufferedClientData,
-                        hostname: hostname,
-                        readyReply: readyReply,
-                        replayHello: replayHello,
-                        useMITM: useMITM,
-                        echConfig: echConfig,
-                        onExhausted: onExhausted
-                    )
-                }
+                abandonAndRetry("Upstream failed \(target):\(port.rawValue), trying next")
             default:
                 break
             }
@@ -904,6 +1183,23 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
     ) {
         close(upstream)
         guard !sawUpstreamData, addressIndex + 1 < addresses.count else {
+            // DoH 给出的地址 TCP 都通了、TLS 却全被 RST：这是"边缘坏了"，不是
+            // "域名不存在"。验证页依赖的 CF 域名还有竞速验证过的赢家可用，先试它。
+            // CF 自有域名是 pass-through（`shouldMITM` 为 false），不带 linux.do 的 ECH 钥匙。
+            if !sawUpstreamData,
+               let tlsPort = NWEndpoint.Port(rawValue: 443),
+               connectViaCloudflareEdge(
+                   host: hostname,
+                   upstreamPort: tlsPort,
+                   client: client,
+                   bufferedClientData: hello,
+                   readyReply: readyReply,
+                   useMITM: false,
+                   replayHello: hello,
+                   excluding: addresses
+               ) {
+                return
+            }
             DohDebugLog.record("All DoH IPs RST TLS for \(hostname)")
             reject(client, reason: "tls reset", socks: readyReply == Socks5Handshake.connectOK)
             return
@@ -1359,6 +1655,30 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         gatewayOriginInflight = max(0, gatewayOriginInflight - 1)
     }
 
+    /// 网关路径用优选赢家直连验证页依赖的 CF 域名。
+    /// 调用方已确认 host 适用且赢家存在；这里只负责记日志并入队。
+    private func enqueueGatewayAtCloudflareEdge(
+        _ edge: String,
+        request: DohGatewayHTTPRequest,
+        client: NWConnection
+    ) {
+        DohDebugLog.record(
+            "Resolve unavailable for \(request.host); using Cloudflare edge \(edge)",
+            subsystem: "优选"
+        )
+        enqueueGatewayOrigin {
+            // 赢家自己失败时不再兜底，直接走 reject。
+            self.connectGatewayOriginTCP(
+                addresses: [edge],
+                index: 0,
+                request: request,
+                client: client,
+                echConfig: nil,
+                allowEdgeFallback: false
+            )
+        }
+    }
+
     /// Raw TCP to the DoH-resolved origin IP, then NIO TLS with ECH.
     /// Network.framework TLS to the hostname sends a clear `SNI=linux.do` and is RST.
     private func connectGatewayOriginTCP(
@@ -1366,11 +1686,39 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         index: Int,
         request: DohGatewayHTTPRequest,
         client: NWConnection,
-        echConfig: Data?
+        echConfig: Data?,
+        /// 地址全部失败时是否允许退到优选赢家。赢家自己失败时传 false，防止递归。
+        allowEdgeFallback: Bool = true,
+        /// 地址全部失败时的接管者（例如「赢家直连失败 → 回到 DoH 解析」）。
+        /// 调用方负责收尾（归还网关并发槽 / reject）。
+        onExhausted: (() -> Void)? = nil
     ) {
         guard index < addresses.count,
               let port = NWEndpoint.Port(rawValue: request.port)
         else {
+            if let onExhausted {
+                onExhausted()
+                return
+            }
+            // 解析成功但地址全连不上，和解析失败一样：验证页依赖的 CF 域名还有
+            // 竞速验证过的赢家可用，先试它，再决定 reject。
+            if allowEdgeFallback,
+               let edge = cloudflareEdgeFallbackAddress(for: request.host, excluding: addresses) {
+                DohDebugLog.record(
+                    "Resolve unavailable for \(request.host); using Cloudflare edge \(edge)",
+                    subsystem: "优选"
+                )
+                // 不调 `completeGatewayOrigin()`：仍是同一笔请求，继续占用并发配额。
+                connectGatewayOriginTCP(
+                    addresses: [edge],
+                    index: 0,
+                    request: request,
+                    client: client,
+                    echConfig: nil,
+                    allowEdgeFallback: false
+                )
+                return
+            }
             completeGatewayOrigin()
             DohDebugLog.record("Gateway origin TCP gave up \(request.host)")
             reject(client, reason: "gateway tls")
@@ -1397,9 +1745,47 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
             guard let self, let upstream else { return }
             switch state {
             case .waiting(let error):
-                DohDebugLog.record("Gateway origin TCP waiting \(target): \(error)")
+                guard Self.isUnreachableNetworkError(error) else {
+                    DohDebugLog.record("Gateway origin TCP waiting \(target): \(error)")
+                    if gate.hasSettled {
+                        self.armStallWatchdog(upstream, label: "\(target):\(port.rawValue)")
+                    }
+                    return
+                }
+                // 网关模式同样会遇到 IPv6-only 域名：这张网卡连 IPv6 地址立刻
+                // ENETDOWN，等看门狗只是白等，直接换下一个地址。
+                DohDebugLog.record(
+                    "Gateway origin TCP unreachable \(target):\(port.rawValue) \(error), trying next"
+                )
+                timeout.cancel()
+                self.cancelStallWatchdog(upstream)
+                self.connections.removeValue(forKey: ObjectIdentifier(upstream))
+                PreferredNodeStore.shared.reportOutcome(host: request.host, ip: target, success: false)
+                // 必须先摘掉回调再 cancel：`.cancelled` 分支把「gate 已结算」
+                // 解释成「握手后的响应丢了，客户端不能干等」。而这里换地址时
+                // gate 会先结算一次，迟到的 `.cancelled` 若还走那条路，就会把
+                // 正在重试的客户端当场关掉，换地址等于没做。
+                upstream.stateUpdateHandler = nil
+                upstream.cancel()
                 if gate.hasSettled {
-                    self.armStallWatchdog(upstream, label: "\(target):\(port.rawValue)")
+                    // 握手已过：这条响应不会再回来了，客户端不能干等。
+                    self.close(client)
+                    return
+                }
+                gate.settle {
+                    guard let client else {
+                        self.completeGatewayOrigin()
+                        return
+                    }
+                    self.connectGatewayOriginTCP(
+                        addresses: addresses,
+                        index: index + 1,
+                        request: request,
+                        client: client,
+                        echConfig: echConfig,
+                        allowEdgeFallback: allowEdgeFallback,
+                        onExhausted: onExhausted
+                    )
                 }
             case .ready:
                 self.cancelStallWatchdog(upstream)
@@ -1438,7 +1824,9 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                             index: index + 1,
                             request: request,
                             client: client,
-                            echConfig: echConfig
+                            echConfig: echConfig,
+                            allowEdgeFallback: allowEdgeFallback,
+                            onExhausted: onExhausted
                         )
                     }
                 }
@@ -1464,7 +1852,9 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                         index: index + 1,
                         request: request,
                         client: client,
-                        echConfig: echConfig
+                        echConfig: echConfig,
+                        allowEdgeFallback: allowEdgeFallback,
+                        onExhausted: onExhausted
                     )
                 }
             case .cancelled:
@@ -1489,7 +1879,9 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                         index: index + 1,
                         request: request,
                         client: client,
-                        echConfig: echConfig
+                        echConfig: echConfig,
+                        allowEdgeFallback: allowEdgeFallback,
+                        onExhausted: onExhausted
                     )
                 }
             default:
@@ -1534,12 +1926,65 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
             return
         }
 
+        // CF 自家域名（验证页 Turnstile / CDN 图）同样直接走赢家，不等 DoH：
+        // 网关只有 2 个并发槽，一次解析超时是 8 秒，一帖几张图就是几十秒白屏。
+        if !hasUpstream,
+           Self.isCloudflareHostedRegardlessOfDNS(request.host),
+           let edge = PreferredNodeStore.shared.cloudflareEdgeAddress() {
+            DohDebugLog.record(
+                "Cloudflare host \(request.host): using edge \(edge) without DNS",
+                subsystem: "优选"
+            )
+            enqueueGatewayOrigin {
+                self.connectGatewayOriginTCP(
+                    addresses: [edge],
+                    index: 0,
+                    request: request,
+                    client: client,
+                    echConfig: nil,
+                    allowEdgeFallback: false,
+                    onExhausted: { [weak self, weak client] in
+                        guard let self, let client else { return }
+                        // 这一槽还没归还：先 complete 再重新入队，别让并发配额泄漏。
+                        self.completeGatewayOrigin()
+                        DohDebugLog.record(
+                            "Cloudflare edge failed for \(request.host); falling back to DoH"
+                        )
+                        self.openGatewayViaDoH(
+                            request,
+                            client: client,
+                            allowEdgeFallback: false
+                        )
+                    }
+                )
+            }
+            return
+        }
+
+        openGatewayViaDoH(request, client: client, allowEdgeFallback: true)
+    }
+
+    /// 网关模式的 DoH 解析路径。`allowEdgeFallback` 为 false 表示已经试过赢家。
+    private func openGatewayViaDoH(
+        _ request: DohGatewayHTTPRequest,
+        client: NWConnection,
+        allowEdgeFallback: Bool
+    ) {
+        let hasUpstream = config.upstream?.isValid == true
         resolver.resolve(host: request.host) { [weak self, weak client] result in
             guard let self, let client else { return }
             self.queue.async {
                 switch result {
                 case .failure(let error):
                     DohDebugLog.record("Gateway resolve failed \(request.host): \(error)")
+                    // 验证页依赖的 CF 域名解析不出来时，优选赢家仍然可用（任何 CF 边缘
+                    // 都服务所有 CF zone）；否则 Turnstile iframe 直接起不来。
+                    // 配了 upstream 时不绕开它，照旧 reject。
+                    if allowEdgeFallback, !hasUpstream,
+                       let edge = self.cloudflareEdgeFallbackAddress(for: request.host) {
+                        self.enqueueGatewayAtCloudflareEdge(edge, request: request, client: client)
+                        return
+                    }
                     self.reject(client, reason: "resolve failed")
                 case .success(let answer):
                     let resolved = Self.preferredUpstreamAddresses(answer.addresses)
@@ -1556,6 +2001,12 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                         addresses = resolved
                     }
                     guard !addresses.isEmpty else {
+                        // 应答全被过滤（投毒/假地址）时同样退到赢家，别让验证页 iframe 起不来。
+                        if allowEdgeFallback, !hasUpstream,
+                           let edge = self.cloudflareEdgeFallbackAddress(for: request.host) {
+                            self.enqueueGatewayAtCloudflareEdge(edge, request: request, client: client)
+                            return
+                        }
                         self.reject(client, reason: "empty resolved address")
                         return
                     }
@@ -1582,7 +2033,8 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
                             index: 0,
                             request: request,
                             client: client,
-                            echConfig: answer.echConfig
+                            echConfig: answer.echConfig,
+                            allowEdgeFallback: allowEdgeFallback
                         )
                     }
                 }
@@ -1713,6 +2165,16 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         return rewritten
     }
 
+    /// 验证页离不开、而且确定托管在 Cloudflare 上的域名。
+    /// 这些域名一旦解析失败，验证页的 Turnstile iframe 就起不来——宁可直连 CF 边缘也不能 reject。
+    private static func isCloudflareHostedRegardlessOfDNS(_ host: String) -> Bool {
+        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized == "challenges.cloudflare.com"
+            || normalized.hasSuffix(".challenges.cloudflare.com") { return true }
+        if normalized == "ldstatic.com" || normalized.hasSuffix(".ldstatic.com") { return true }
+        return false
+    }
+
     static func shouldMITM(_ host: String) -> Bool {
         guard originECHReady else { return false }
         // 只对需要「藏 SNI」的站点做 MITM，也就是 linux.do 及其子域。
@@ -1741,6 +2203,19 @@ nonisolated final class LocalConnectProxy: @unchecked Sendable {
         data.prefix(limit)
             .map { String(format: "%02x", $0) }
             .joined(separator: " ")
+    }
+
+    /// 地址族在当前网卡上根本不可达（典型：域名只有 AAAA，Wi‑Fi 却只给了 IPv4，
+    /// 连 `2606:...` 立刻 `ENETDOWN`）。这种 `.waiting` 不会自己好，等看门狗
+    /// 只是白等 8 秒，必须立刻换下一个地址。
+    private static func isUnreachableNetworkError(_ error: NWError) -> Bool {
+        guard case .posix(let code) = error else { return false }
+        switch code {
+        case .EAFNOSUPPORT, .ENETDOWN, .ENETUNREACH, .EHOSTUNREACH:
+            return true
+        default:
+            return false
+        }
     }
 
     private static func endpointHost(from address: String) -> NWEndpoint.Host {

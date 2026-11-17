@@ -12,7 +12,9 @@ import Foundation
 ///   所以被墙的 bootstrap IP 不会让一个候选拖满超时。
 /// - 一轮只认第一个返回**含 Cloudflare 网段 A 记录**的候选：国内解析器会把 linux.do
 ///   解析成假地址，那种应答必须淘汰，否则自动模式会主动选一台投毒的服务器。
-/// - 3 秒没有可用结果就放弃，保持现状。
+/// - 扫描预算必须长于 `DohBootstrapTransport.raceTimeout`（6s）+ 最多 3 个 IP × 0.3s 错峰：
+///   预算短于传输层竞速时，「慢但可用」的服务器会在候选回报之前就被判死，
+///   而当前服务器的失败状态又会让整个进程解析全挂。因此总预算取 8 秒。
 nonisolated enum DoHServerAutoSelector {
 
     enum Trigger: String {
@@ -39,7 +41,8 @@ nonisolated enum DoHServerAutoSelector {
     /// 同一网络下的重选间隔。
     static let refreshInterval: TimeInterval = 6 * 3600
     /// 一轮探测的总预算。超过就放弃，保留当前服务器。
-    private static let scanTimeout: TimeInterval = 3
+    /// 必须长于传输层的 6s 竞速预算 + 错峰，否则慢一点的可用服务器来不及回报。
+    private static let scanTimeout: TimeInterval = 8
     /// 探测用的目标域名，与日常解析一致，不额外制造特征。
     private static let probeHost = "linux.do"
 

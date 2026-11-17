@@ -80,6 +80,17 @@ nonisolated final class PreferredNodeStore: @unchecked Sendable {
         return ip
     }
 
+    /// CF 自家域名（验证页、Turnstile、CDN）不是 linux.do 子域，但同样落在 CF 边缘上：
+    /// 任何 CF 边缘 IP 都服务所有 CF zone，所以 DoH 解析不出来时连赢家 IP + 正确 SNI 仍然可用。
+    /// **只在解析失败时用**，不参与 linux.do 的钉选语义（`cf_clearance` 仍按 `isCoveredHost` 绑定）。
+    func cloudflareEdgeAddress() -> String? {
+        lock.lock()
+        let ip = stored?.ip
+        lock.unlock()
+        guard let ip, Self.isRoutable(ip) else { return nil }
+        return ip
+    }
+
     private static func isRoutable(_ ip: String) -> Bool {
         let family = CloudflareRanges.localFamilySupport()
         return ip.contains(":") ? family.v6 : family.v4
