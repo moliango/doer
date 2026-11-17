@@ -163,6 +163,13 @@ final class ConnectivityService {
             || (wasOffline && lastSatisfiedTransport != nil)
         lastSatisfiedTransport = transport
 
+        if recoverDoH {
+            // cf_clearance 按出口 IP 绑定：切网后旧 clearance 与 grace 立刻失效。
+            // 这里统一作废，并短暂抑制自动弹验证页（详见 CloudflareVerificationPolicy）。
+            CloudflareVerificationPolicy.noteNetworkPathChanged()
+            DiscourseAPI.clearAllCloudflareForegroundGates()
+        }
+
         if Self.enableServerPing {
             Task { @MainActor in
                 let reachable = await pingServerIfConfigured()

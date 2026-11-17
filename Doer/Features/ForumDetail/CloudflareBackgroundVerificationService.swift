@@ -17,6 +17,7 @@ final class CloudflareBackgroundVerificationService {
         let baseURL = normalizedBaseURL(rawBaseURL)
         let key = baseURL.absoluteString
         foregroundVerificationKeys.insert(key)
+        CloudflareVerificationPolicy.markForegroundVerificationActive(baseURL: key)
         guard let task = activeAttempts[key] else { return }
         log("cancelled base=\(key) reason=foreground_verification")
         task.cancel()
@@ -27,6 +28,7 @@ final class CloudflareBackgroundVerificationService {
     func endForegroundVerification(baseURL rawBaseURL: URL) {
         let key = normalizedBaseURL(rawBaseURL).absoluteString
         foregroundVerificationKeys.remove(key)
+        CloudflareVerificationPolicy.clearForegroundVerificationActive(baseURL: key)
         log("foreground verification ended base=\(key)")
     }
 

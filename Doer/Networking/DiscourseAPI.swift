@@ -750,6 +750,16 @@ final class DiscourseAPI {
             details.append("reason=unspecified")
         }
 
+        // 验证页正开着时，API 继续 403 是预期行为。再 arm gate / 暂停图片 /
+        // 发通知只会把「正在验证」放大成「盾一直在弹」，所以只记日志。
+        if CloudflareVerificationPolicy.isForegroundVerificationActive(baseURL: baseURL) {
+            DohDebugLog.record(
+                "challenge during foreground verification; not re-arming gate \(details.joined(separator: " "))",
+                subsystem: "CF"
+            )
+            return
+        }
+
         if CloudflareVerificationPolicy.isInVerificationGrace(baseURL: baseURL) {
             if CloudflareVerificationPolicy.noteChallengeDuringGrace(baseURL: baseURL, source: source) {
                 DohDebugLog.record(
@@ -836,6 +846,19 @@ final class DiscourseAPI {
         cloudflareForegroundGateUntilByBaseURL.removeValue(forKey: key)
         cloudflareForegroundGateLock.unlock()
         DohDebugLog.record("foreground challenge gate cleared base=\(key)", subsystem: "CF")
+    }
+
+    /// 切网后旧网络 arm 的 gate 只会挡住新网络上的恢复请求。
+    static func clearAllCloudflareForegroundGates() {
+        cloudflareForegroundGateLock.lock()
+        let count = cloudflareForegroundGateUntilByBaseURL.count
+        cloudflareForegroundGateUntilByBaseURL.removeAll()
+        cloudflareForegroundGateLock.unlock()
+        guard count > 0 else { return }
+        DohDebugLog.record(
+            "foreground challenge gates cleared on network change count=\(count)",
+            subsystem: "CF"
+        )
     }
 
     static func markCloudflareForegroundGate(baseURL: String) {

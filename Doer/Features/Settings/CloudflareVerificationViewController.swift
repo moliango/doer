@@ -16,6 +16,77 @@ enum CloudflareVerificationPolicy {
     private static let graceApiChallengeLimit = 3
     private static var graceApiChallengeCounts: [String: Int] = [:]
 
+    /// 切网后 `cf_clearance` 立即失效：CF 按出口 IP + UA 绑定 clearance，换 Wi‑Fi/蜂窝
+    /// 等于换出口，下一次请求必然被挑战。这段时间**不自动弹整页验证**，先让隐藏 WebView
+    /// 静默过一遍；过不去就只显示浮动盾按钮，由用户决定什么时候点，而不是每次换网都被
+    /// 强制打断。窗口过后仍没解决才恢复自动弹窗兜底。
+    private static let networkChangeSettleDuration: TimeInterval = 120
+    private static var networkChangeSettledUntil: Date?
+    /// 前台验证页正在展示时，API 继续 403 是正常的：不要每次 403 都重新 arm gate、
+    /// 暂停图片、再发一次挑战通知，否则用户看到的就是「验证页开着，盾还在反复弹」。
+    private static var foregroundVerificationBaseURLs: Set<String> = []
+
+    /// 网络出口变了：旧网络的 grace 与后台尝试冷却都不再可信，统一作废。
+    static func noteNetworkPathChanged(now: Date = Date()) {
+        graceLock.lock()
+        networkChangeSettledUntil = now.addingTimeInterval(networkChangeSettleDuration)
+        verificationGraceUntilByBaseURL.removeAll()
+        graceApiChallengeCounts.removeAll()
+        graceLock.unlock()
+
+        backgroundAttemptLock.lock()
+        backgroundAttemptFailedAtByBaseURL.removeAll()
+        backgroundAttemptLock.unlock()
+
+        DohDebugLog.record(
+            "network path changed; stale cf clearance invalidated, auto-present suppressed for \(Int(networkChangeSettleDuration))s",
+            subsystem: "CF"
+        )
+    }
+
+    static func isNetworkChangeSettling(now: Date = Date()) -> Bool {
+        graceLock.lock()
+        defer { graceLock.unlock() }
+        guard let until = networkChangeSettledUntil else { return false }
+        if now < until { return true }
+        networkChangeSettledUntil = nil
+        return false
+    }
+
+    static func markForegroundVerificationActive(baseURL: String) {
+        let key = normalizedBaseKey(baseURL)
+        graceLock.lock()
+        foregroundVerificationBaseURLs.insert(key)
+        graceLock.unlock()
+    }
+
+    static func clearForegroundVerificationActive(baseURL: String) {
+        let key = normalizedBaseKey(baseURL)
+        graceLock.lock()
+        foregroundVerificationBaseURLs.remove(key)
+        graceLock.unlock()
+    }
+
+    static func isForegroundVerificationActive(baseURL: String) -> Bool {
+        let key = normalizedBaseKey(baseURL)
+        graceLock.lock()
+        defer { graceLock.unlock() }
+        return foregroundVerificationBaseURLs.contains(key)
+    }
+
+    /// 测试用：清掉所有进程内策略状态。
+    static func resetForTests() {
+        graceLock.lock()
+        verificationGraceUntilByBaseURL.removeAll()
+        graceApiChallengeCounts.removeAll()
+        networkChangeSettledUntil = nil
+        foregroundVerificationBaseURLs.removeAll()
+        graceLock.unlock()
+        backgroundAttemptLock.lock()
+        backgroundAttemptFailedAtByBaseURL.removeAll()
+        backgroundAttemptLock.unlock()
+    }
+
     static func markVerificationGrace(baseURL: String, duration: TimeInterval = verificationGraceDuration) {
         let key = normalizedBaseKey(baseURL)
         graceLock.lock()
@@ -247,9 +318,10 @@ enum CloudflareVerificationPolicy {
     static func shouldAutoPresentVerificationSheet(
         isInGrace: Bool,
         isShieldSuppressed: Bool,
-        isAutoPresentBlocked: Bool
+        isAutoPresentBlocked: Bool,
+        isNetworkChangeSettling: Bool = false
     ) -> Bool {
-        !isInGrace && !isShieldSuppressed && !isAutoPresentBlocked
+        !isInGrace && !isShieldSuppressed && !isAutoPresentBlocked && !isNetworkChangeSettling
     }
 
     /// A leftover `cf_clearance` can be stale. Only the short post-pass grace

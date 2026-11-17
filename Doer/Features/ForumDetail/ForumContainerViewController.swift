@@ -930,7 +930,8 @@ final class ForumContainerViewController: UIViewController, AuthGating {
         let autoPresent = CloudflareVerificationPolicy.shouldAutoPresentVerificationSheet(
             isInGrace: CloudflareVerificationPolicy.isInVerificationGrace(baseURL: baseURLString),
             isShieldSuppressed: isCloudflareShieldSuppressed(),
-            isAutoPresentBlocked: isCloudflareAutoPresentBlocked()
+            isAutoPresentBlocked: isCloudflareAutoPresentBlocked(),
+            isNetworkChangeSettling: CloudflareVerificationPolicy.isNetworkChangeSettling()
         )
         guard autoPresent else {
             logCloudflareState("challenge detected; shield shown, auto-present deferred base=\(baseURLString)")
@@ -957,7 +958,8 @@ final class ForumContainerViewController: UIViewController, AuthGating {
         let autoPresent = CloudflareVerificationPolicy.shouldAutoPresentVerificationSheet(
             isInGrace: CloudflareVerificationPolicy.isInVerificationGrace(baseURL: baseURLString),
             isShieldSuppressed: isCloudflareShieldSuppressed(),
-            isAutoPresentBlocked: isCloudflareAutoPresentBlocked()
+            isAutoPresentBlocked: isCloudflareAutoPresentBlocked(),
+            isNetworkChangeSettling: CloudflareVerificationPolicy.isNetworkChangeSettling()
         )
         guard autoPresent, !isPresentingCloudflareVerification else {
             logCloudflareState("needs-user; shield shown, auto-present deferred base=\(baseURLString)")

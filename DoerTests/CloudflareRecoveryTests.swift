@@ -266,6 +266,47 @@ final class CloudflareRecoveryTests: XCTestCase {
         )
     }
 
+    func testNetworkPathChangeInvalidatesClearanceAndDefersAutoPrompt() {
+        CloudflareVerificationPolicy.resetForTests()
+        let base = "https://linux.do"
+        CloudflareVerificationPolicy.markVerificationGrace(baseURL: base, duration: 30)
+        CloudflareVerificationPolicy.markBackgroundAttemptFailed(baseURL: base)
+        XCTAssertTrue(CloudflareVerificationPolicy.isInVerificationGrace(baseURL: base))
+        XCTAssertFalse(CloudflareVerificationPolicy.shouldAttemptBackgroundVerification(baseURL: base))
+
+        CloudflareVerificationPolicy.noteNetworkPathChanged()
+
+        // 新网络出口不同，旧 grace / 冷却都不能继续复用。
+        XCTAssertFalse(CloudflareVerificationPolicy.isInVerificationGrace(baseURL: base))
+        XCTAssertTrue(CloudflareVerificationPolicy.shouldAttemptBackgroundVerification(baseURL: base))
+        XCTAssertTrue(CloudflareVerificationPolicy.isNetworkChangeSettling())
+        XCTAssertFalse(
+            CloudflareVerificationPolicy.shouldAutoPresentVerificationSheet(
+                isInGrace: false,
+                isShieldSuppressed: false,
+                isAutoPresentBlocked: false,
+                isNetworkChangeSettling: true
+            )
+        )
+        XCTAssertFalse(
+            CloudflareVerificationPolicy.isNetworkChangeSettling(now: Date().addingTimeInterval(121))
+        )
+        CloudflareVerificationPolicy.resetForTests()
+    }
+
+    func testForegroundVerificationSuppressesGateRearming() {
+        CloudflareVerificationPolicy.resetForTests()
+        let base = "https://linux.do"
+        XCTAssertFalse(CloudflareVerificationPolicy.isForegroundVerificationActive(baseURL: base))
+        CloudflareVerificationPolicy.markForegroundVerificationActive(baseURL: base)
+        XCTAssertTrue(
+            CloudflareVerificationPolicy.isForegroundVerificationActive(baseURL: "https://LINUX.DO/")
+        )
+        CloudflareVerificationPolicy.clearForegroundVerificationActive(baseURL: base)
+        XCTAssertFalse(CloudflareVerificationPolicy.isForegroundVerificationActive(baseURL: base))
+        CloudflareVerificationPolicy.resetForTests()
+    }
+
     func testRepeatedApiChallengesClearVerificationGrace() {
         let base = "https://linux.do"
         CloudflareVerificationPolicy.clearVerificationGrace(baseURL: base)
