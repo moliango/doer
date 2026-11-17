@@ -97,10 +97,6 @@ enum ExternalImageFetcher {
                 return
             }
 
-            defer {
-                // signal happens in task completion; if we return before creating a task, signal here.
-            }
-
             if !forceRetry, let cached = AvatarImageLoader.imageFromDiskCacheIfAvailable(for: url) {
                 networkSemaphore.signal()
                 finish(cacheKey: coalescedKey, image: cached)
@@ -140,38 +136,75 @@ enum ExternalImageFetcher {
             }
             request = DohGatewayRewrite.applyIfNeeded(request)
 
-            let task = session.dataTask(with: request) { data, response, _ in
-                defer { networkSemaphore.signal() }
-
-                if let http = response as? HTTPURLResponse,
-                   let detection = DiscourseAPI.cloudflareChallengeDetection(http, data: data) {
-                    let base = refererBaseURL
-                        ?? CloudflareImageGate.originString(for: url)
-                        ?? url.absoluteString
-                    Task { @MainActor in
-                        CloudflareImageGate.reportImageChallenge(
-                            baseURL: base,
-                            responseURL: http.url,
-                            source: "image.content",
-                            detection: detection
+            // 冷启动时 DoH 代理端口可能还没 ready，第一张图会拿到 310 或连接被
+            // 重置；一次失败后直接显示重试图标，用户只能退出帖子再进。这里在
+            // 传输层失败（没有任何 HTTP 响应）时自动重试一次，不消耗 CF 闸门
+            // 解除后的那次重拉。
+            func perform(_ attempt: Int) {
+                let task = session.dataTask(with: request) { data, response, error in
+                    if attempt == 1,
+                       Self.isTransientTransportFailure(error: error, response: response),
+                       !CloudflareImageGate.shouldBlockNetworkLoad(
+                           url: url,
+                           cloudflareBaseURL: refererBaseURL
+                       ) {
+                        DohDebugLog.record(
+                            "external image transport retry host=\(url.host ?? "?") error=\(error?.localizedDescription ?? "none")",
+                            subsystem: "Avatar"
                         )
+                        // 保留信号量槽位，重试结束后统一归还一次。
+                        networkQueue.asyncAfter(deadline: .now() + 0.8) {
+                            perform(attempt + 1)
+                        }
+                        return
                     }
-                    finish(cacheKey: coalescedKey, image: nil)
-                    return
-                }
+                    networkSemaphore.signal()
 
-                let image: UIImage? = decodeImage(data: data, response: response)
-                if let image {
-                    AvatarImageLoader.storeProcessCache(image, for: url)
-                    SDImageCache.shared.store(image, forKey: cacheKey, completion: nil)
-                    // Success: make sure SD's failed-URL set cannot block avatar/other paths.
-                    AvatarImageLoader.clearFailedLoad(for: url)
-                }
+                    if let http = response as? HTTPURLResponse,
+                       let detection = DiscourseAPI.cloudflareChallengeDetection(http, data: data) {
+                        let base = refererBaseURL
+                            ?? CloudflareImageGate.originString(for: url)
+                            ?? url.absoluteString
+                        Task { @MainActor in
+                            CloudflareImageGate.reportImageChallenge(
+                                baseURL: base,
+                                responseURL: http.url,
+                                source: "image.content",
+                                detection: detection
+                            )
+                        }
+                        finish(cacheKey: coalescedKey, image: nil)
+                        return
+                    }
 
-                finish(cacheKey: coalescedKey, image: image)
+                    let image: UIImage? = decodeImage(data: data, response: response)
+                    if let image {
+                        AvatarImageLoader.storeProcessCache(image, for: url)
+                        SDImageCache.shared.store(image, forKey: cacheKey, completion: nil)
+                        // Success: make sure SD's failed-URL set cannot block avatar/other paths.
+                        AvatarImageLoader.clearFailedLoad(for: url)
+                    }
+
+                    finish(cacheKey: coalescedKey, image: image)
+                }
+                task.resume()
             }
-            task.resume()
+            perform(1)
         }
+    }
+
+    /// 只有「没有任何 HTTP 响应」才算传输层失败：代理端口未就绪、连接被
+    /// 重置、超时等。已经拿到响应的 4xx/5xx 重试没有意义，取消也不该重试。
+    private static func isTransientTransportFailure(
+        error: Error?,
+        response: URLResponse?
+    ) -> Bool {
+        guard response == nil, let error else { return false }
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain, ns.code == NSURLErrorCancelled {
+            return false
+        }
+        return true
     }
 
     private static func decodeImage(data: Data?, response: URLResponse?) -> UIImage? {
