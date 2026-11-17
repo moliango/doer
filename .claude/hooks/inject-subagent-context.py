@@ -32,6 +32,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# Hook hosts send UTF-8 JSON regardless of the process locale.
+_stdin_reconfigure = getattr(sys.stdin, "reconfigure", None)
+if callable(_stdin_reconfigure):
+    try:
+        _stdin_reconfigure(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        pass
+
 # IMPORTANT: Force stdout to use UTF-8 on Windows
 # This fixes UnicodeEncodeError when outputting non-ASCII characters
 if sys.platform.startswith("win"):
@@ -80,10 +88,20 @@ def find_repo_root(start_path: str) -> str | None:
 
 
 def _detect_platform(input_data: dict) -> str | None:
+    if _hook_event_name(input_data) == "SubagentStart":
+        return "codex"
     if isinstance(input_data.get("cursor_version"), str):
         return "cursor"
+    # CLAUDE_PROJECT_DIR is a compatibility alias that several hosts set
+    # alongside their own variable — CodeBuddy, ZCode and Trae all do. It must
+    # therefore be checked LAST, or every one of them is detected as claude and
+    # the context key becomes `claude_<their-session-id>`. That key does not
+    # match the session file `task.py start` wrote under the host's real name,
+    # so the sub-agent starts with no task context while the pointer exists on
+    # disk. Same fix as inject-workflow-state.py and session-start.py; this
+    # third copy was missed when those two were corrected.
     env_map = {
-        "CLAUDE_PROJECT_DIR": "claude",
+        "ZCODE_PROJECT_DIR": "zcode",
         "CURSOR_PROJECT_DIR": "cursor",
         "CODEBUDDY_PROJECT_DIR": "codebuddy",
         "FACTORY_PROJECT_DIR": "droid",
@@ -91,6 +109,9 @@ def _detect_platform(input_data: dict) -> str | None:
         "QODER_PROJECT_DIR": "qoder",
         "KIRO_PROJECT_DIR": "kiro",
         "COPILOT_PROJECT_DIR": "copilot",
+        "TRAE_PROJECT_DIR": "trae",
+        # Last: the shared alias, only meaningful once no vendor key matched.
+        "CLAUDE_PROJECT_DIR": "claude",
     }
     for env_name, platform in env_map.items():
         if os.environ.get(env_name):
@@ -110,10 +131,20 @@ def _detect_platform(input_data: dict) -> str | None:
         return "droid"
     if ".kiro" in script_parts:
         return "kiro"
+    if ".zcode" in script_parts:
+        return "zcode"
     return None
 
 
-def get_current_task(repo_root: str, input_data: dict) -> str | None:
+def get_current_task(
+    repo_root: str,
+    input_data: dict,
+    *,
+    platform: str | None = None,
+    allow_single_session_fallback: bool = True,
+    allow_environment_context: bool = True,
+    require_existing: bool = False,
+) -> str | None:
     """Resolve current task directory through the unified active task resolver."""
     scripts_dir = Path(repo_root) / DIR_WORKFLOW / "scripts"
     if str(scripts_dir) not in sys.path:
@@ -126,83 +157,257 @@ def get_current_task(repo_root: str, input_data: dict) -> str | None:
     active = resolve_active_task(
         Path(repo_root),
         input_data,
-        platform=_detect_platform(input_data),
+        platform=platform or _detect_platform(input_data),
+        allow_single_session_fallback=allow_single_session_fallback,
+        allow_environment_context=allow_environment_context,
     )
+    if require_existing and active.stale:
+        return None
     return active.task_path
 
 
-def read_file_content(base_path: str, file_path: str) -> str | None:
-    """Read file content, return None if file doesn't exist"""
+# =============================================================================
+# Context Injection Limits (issue #441)
+#
+# Notice text and behavior mirrored byte-for-byte in the Pi TS extension
+# (templates/pi/extensions/trellis/index.ts.txt). Changing wording here
+# requires changing it there too.
+# =============================================================================
+
+DEFAULT_MAX_FILE_BYTES = 32768
+DEFAULT_MAX_ARTIFACT_BYTES = 65536
+DEFAULT_MAX_TOTAL_BYTES = 131072
+
+DEFAULT_LIMITS: dict[str, int] = {
+    "max_file_bytes": DEFAULT_MAX_FILE_BYTES,
+    "max_artifact_bytes": DEFAULT_MAX_ARTIFACT_BYTES,
+    "max_total_bytes": DEFAULT_MAX_TOTAL_BYTES,
+}
+
+
+def _get_limits(repo_root: str) -> dict[str, int]:
+    """Load context-injection byte limits from config.yaml, with safe fallback."""
+    scripts_dir = Path(repo_root) / DIR_WORKFLOW / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    try:
+        from common.config import get_context_injection_limits  # type: ignore[import-not-found]
+
+        return get_context_injection_limits(Path(repo_root))
+    except Exception:
+        return dict(DEFAULT_LIMITS)
+
+
+def truncate_utf8(data: bytes, cap: int) -> bytes:
+    """Truncate ``data`` to at most ``cap`` bytes without splitting a UTF-8
+    multi-byte sequence.
+
+    ``cap <= 0`` means "no limit" — returns ``data`` unchanged.
+    """
+    if cap <= 0 or len(data) <= cap:
+        return data
+
+    truncated = data[:cap]
+    i = len(truncated)
+    # Back off over continuation bytes (10xxxxxx) to find the lead byte.
+    while i > 0 and (truncated[i - 1] & 0xC0) == 0x80:
+        i -= 1
+    if i == 0:
+        return b""
+
+    lead = truncated[i - 1]
+    if lead & 0x80:
+        if (lead & 0xE0) == 0xC0:
+            seq_len = 2
+        elif (lead & 0xF0) == 0xE0:
+            seq_len = 3
+        elif (lead & 0xF8) == 0xF0:
+            seq_len = 4
+        else:
+            seq_len = 1
+        # Drop the lead byte too if its full sequence didn't fit.
+        if (i - 1) + seq_len > len(truncated):
+            i -= 1
+
+    return truncated[:i]
+
+
+class _Budget:
+    """Tracks the running total of bytes emitted into the sub-agent context."""
+
+    def __init__(self, max_total_bytes: int) -> None:
+        self.max_total_bytes = max_total_bytes
+        self.used = 0
+
+    def has_room(self, size: int) -> bool:
+        if self.max_total_bytes <= 0:
+            return True
+        return self.used + size <= self.max_total_bytes
+
+    def add(self, size: int) -> None:
+        self.used += size
+
+
+def _real_path_contained(base_real: str, target_real: str) -> bool:
+    """Whether an already-realpath'd target sits under an already-realpath'd base.
+
+    ValueError on Windows when the two sit on different drives; that is
+    outside the base by definition, so it fails closed.
+    """
+    try:
+        return os.path.commonpath([base_real, target_real]) == base_real
+    except ValueError:
+        return False
+
+
+def _read_file_bytes(base_path: str, file_path: str) -> bytes | None:
+    """Read raw file bytes, return None if file doesn't exist."""
     full_path = os.path.join(base_path, file_path)
+    try:
+        root_real = os.path.realpath(base_path)
+        # `.trellis` may itself be a symlink into a store outside the repo
+        # (#567); its real location is a second legitimate containment base.
+        workflow_real = os.path.realpath(os.path.join(base_path, ".trellis"))
+        full_real = os.path.realpath(full_path)
+        if not _real_path_contained(root_real, full_real) and not (
+            _real_path_contained(workflow_real, full_real)
+        ):
+            return None
+    except OSError:
+        return None
     if os.path.exists(full_path) and os.path.isfile(full_path):
         try:
-            with open(full_path, "r", encoding="utf-8") as f:
+            with open(full_path, "rb") as f:
                 return f.read()
         except Exception:
             return None
     return None
 
 
-def read_directory_contents(
-    base_path: str, dir_path: str, max_files: int = 20
-) -> list[tuple[str, str]]:
-    """
-    Read all .md files in a directory
+def _truncate_notice(path: str, cap: int) -> str:
+    return f"\n[Trellis: truncated at {cap} bytes — read {path} for the full content]"
 
-    Args:
-        base_path: Base path (usually repo_root)
-        dir_path: Directory relative path
-        max_files: Max files to read (prevent huge directories)
 
-    Returns:
-        [(file_path, content), ...]
-    """
+def _is_binary_content(data: bytes) -> bool:
+    """Return True when raw bytes should not be decoded into model context."""
+    if b"\x00" in data:
+        return True
+    try:
+        data.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return True
+    return False
+
+
+def _binary_notice(path: str, size: int, reason: str) -> str:
+    return (
+        f"[Trellis: not inlined (binary file) — "
+        f"{path} ({size} bytes): {reason}]"
+    )
+
+
+def _index_notice(path: str, size: int, reason: str) -> str:
+    return (
+        f"[Trellis: not inlined (total context limit reached) — "
+        f"{path} ({size} bytes): {reason}]"
+    )
+
+
+def _budgeted_block(
+    budget: _Budget,
+    header: str,
+    plain_path: str,
+    content: str,
+    reason: str,
+    size_for_index: int,
+) -> str:
+    """Return an inlined ``=== header ===`` block, or degrade to an index
+    notice once the total context budget is exhausted."""
+    block = f"=== {header} ===\n{content}"
+    block_bytes = len(block.encode("utf-8"))
+    if not budget.has_room(block_bytes):
+        notice = _index_notice(plain_path, size_for_index, reason)
+        budget.add(len(notice.encode("utf-8")))
+        return notice
+    budget.add(block_bytes)
+    return block
+
+
+def _materialize_file(
+    base_path: str,
+    file_path: str,
+    reason: str,
+    limits: dict[str, int],
+    budget: _Budget,
+) -> str | None:
+    """Read a JSONL-referenced file, apply the per-file cap, then budget it."""
+    data = _read_file_bytes(base_path, file_path)
+    if data is None:
+        return None
+
+    size = len(data)
+    if _is_binary_content(data):
+        notice = _binary_notice(file_path, size, reason)
+        budget.add(len(notice.encode("utf-8")))
+        return notice
+
+    cap = limits["max_file_bytes"]
+    truncated_bytes = truncate_utf8(data, cap)
+    content = truncated_bytes.decode("utf-8", errors="replace")
+    if len(truncated_bytes) < size:
+        content += _truncate_notice(file_path, cap)
+
+    return _budgeted_block(budget, file_path, file_path, content, reason, size)
+
+
+def _materialize_directory(
+    base_path: str,
+    dir_path: str,
+    reason: str,
+    limits: dict[str, int],
+    budget: _Budget,
+    max_files: int = 20,
+) -> list[str]:
+    """Read all .md files in a directory, applying the same per-file and
+    total caps as a single-file JSONL entry."""
     full_path = os.path.join(base_path, dir_path)
     if not os.path.exists(full_path) or not os.path.isdir(full_path):
         return []
 
-    results = []
+    blocks: list[str] = []
     try:
-        # Only read .md files, sorted by filename
         md_files = sorted(
-            [
-                f
-                for f in os.listdir(full_path)
-                if f.endswith(".md") and os.path.isfile(os.path.join(full_path, f))
-            ]
+            f
+            for f in os.listdir(full_path)
+            if f.endswith(".md") and os.path.isfile(os.path.join(full_path, f))
         )
-
         for filename in md_files[:max_files]:
-            file_full_path = os.path.join(full_path, filename)
             relative_path = os.path.join(dir_path, filename)
-            try:
-                with open(file_full_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    results.append((relative_path, content))
-            except Exception:
-                continue
+            block = _materialize_file(base_path, relative_path, reason, limits, budget)
+            if block:
+                blocks.append(block)
     except Exception:
         pass
 
-    return results
+    return blocks
 
 
-def read_jsonl_entries(base_path: str, jsonl_path: str) -> list[tuple[str, str]]:
+def read_jsonl_entries(base_path: str, jsonl_path: str) -> list[dict]:
     """
-    Read all file/directory contents referenced in jsonl file
+    Parse all file/directory entries referenced in a jsonl context file.
 
     Schema:
         {"file": "path/to/file.md", "reason": "..."}
         {"file": "path/to/dir/", "type": "directory", "reason": "..."}
-        {"_example": "..."}          # seed row — skipped (no `file` field)
+        {"_example": "..."}          # legacy placeholder — skipped (no `file` field)
 
-    Rows without a ``file`` field (e.g. the self-describing seed line written
-    by ``task.py create`` before the agent has curated entries) are skipped
-    silently. If the resulting entry list is empty, a stderr warning is
-    emitted so the operator can debug missing context.
+    Rows without a ``file`` field (e.g. the placeholder line older Trellis
+    versions wrote at ``task.py create`` time) are skipped silently. If the
+    resulting entry list is empty, a stderr warning is emitted so the operator
+    can debug missing context.
 
     Returns:
-        [(path, content), ...]
+        [{"file": path, "type": "file" | "directory", "reason": reason}, ...]
     """
     full_path = os.path.join(base_path, jsonl_path)
     if not os.path.exists(full_path):
@@ -213,7 +418,7 @@ def read_jsonl_entries(base_path: str, jsonl_path: str) -> list[tuple[str, str]]
         )
         return []
 
-    results = []
+    entries: list[dict] = []
     saw_real_entry = False
     try:
         with open(full_path, "r", encoding="utf-8") as f:
@@ -224,22 +429,19 @@ def read_jsonl_entries(base_path: str, jsonl_path: str) -> list[tuple[str, str]]
                 try:
                     item = json.loads(line)
                     file_path = item.get("file") or item.get("path")
-                    entry_type = item.get("type", "file")
 
                     if not file_path:
                         # Seed / comment row — skip silently
                         continue
 
                     saw_real_entry = True
-                    if entry_type == "directory":
-                        # Read all .md files in directory
-                        dir_contents = read_directory_contents(base_path, file_path)
-                        results.extend(dir_contents)
-                    else:
-                        # Read single file
-                        content = read_file_content(base_path, file_path)
-                        if content:
-                            results.append((file_path, content))
+                    entries.append(
+                        {
+                            "file": file_path,
+                            "type": item.get("type", "file"),
+                            "reason": item.get("reason") or "-",
+                        }
+                    )
                 except json.JSONDecodeError:
                     continue
     except Exception:
@@ -253,23 +455,80 @@ def read_jsonl_entries(base_path: str, jsonl_path: str) -> list[tuple[str, str]]
             file=sys.stderr,
         )
 
-    return results
+    return entries
 
 
+def _materialize_jsonl_entries(
+    base_path: str, jsonl_path: str, limits: dict[str, int], budget: _Budget
+) -> list[str]:
+    """Materialize every entry in a jsonl context file into context blocks,
+    applying per-file and total budget caps."""
+    blocks: list[str] = []
+    for entry in read_jsonl_entries(base_path, jsonl_path):
+        if entry["type"] == "directory":
+            blocks.extend(
+                _materialize_directory(
+                    base_path, entry["file"], entry["reason"], limits, budget
+                )
+            )
+        else:
+            block = _materialize_file(
+                base_path, entry["file"], entry["reason"], limits, budget
+            )
+            if block:
+                blocks.append(block)
+    return blocks
 
 
-def get_agent_context(repo_root: str, task_dir: str, agent_type: str) -> str:
+def get_agent_context(
+    repo_root: str,
+    task_dir: str,
+    agent_type: str,
+    limits: dict[str, int],
+    budget: _Budget,
+) -> str:
     """
     Get context from {agent_type}.jsonl for the specified agent.
     Only reads implement.jsonl or check.jsonl (the two JSONL files the task system creates).
     """
-    context_parts = []
-
     agent_jsonl = f"{task_dir}/{agent_type}.jsonl"
-    for file_path, content in read_jsonl_entries(repo_root, agent_jsonl):
-        context_parts.append(f"=== {file_path} ===\n{content}")
+    blocks = _materialize_jsonl_entries(repo_root, agent_jsonl, limits, budget)
+    if not blocks:
+        # Zero curated context reaches the model silently otherwise — the
+        # stderr WARN above never enters any session (#573). Put the fact in
+        # the prompt itself so the sub-agent compensates instead of assuming
+        # the spec context was complete.
+        return (
+            f"[Trellis] {agent_jsonl} has no curated entries, so no spec/research "
+            "context was injected. Before working, read the guidelines relevant "
+            "to the code you will touch under .trellis/spec/, and treat the task "
+            "artifacts below as the only prepared context."
+        )
+    return "\n\n".join(blocks)
 
-    return "\n\n".join(context_parts)
+
+def _materialize_artifact(
+    base_path: str,
+    file_path: str,
+    header_label: str,
+    reason: str,
+    limits: dict[str, int],
+    budget: _Budget,
+) -> str | None:
+    """Read a task artifact (prd/design/implement.md), apply the per-artifact
+    cap, then budget it."""
+    data = _read_file_bytes(base_path, file_path)
+    if data is None:
+        return None
+
+    size = len(data)
+    cap = limits["max_artifact_bytes"]
+    truncated_bytes = truncate_utf8(data, cap)
+    content = truncated_bytes.decode("utf-8", errors="replace")
+    if len(truncated_bytes) < size:
+        content += _truncate_notice(file_path, cap)
+
+    return _budgeted_block(budget, header_label, file_path, content, reason, size)
 
 
 def get_implement_context(repo_root: str, task_dir: str) -> str:
@@ -282,31 +541,50 @@ def get_implement_context(repo_root: str, task_dir: str) -> str:
     3. design.md if present (technical design)
     4. implement.md if present (execution plan)
     """
+    limits = _get_limits(repo_root)
+    budget = _Budget(limits["max_total_bytes"])
     context_parts = []
 
     # 1. Read implement.jsonl
-    base_context = get_agent_context(repo_root, task_dir, "implement")
+    base_context = get_agent_context(repo_root, task_dir, "implement", limits, budget)
     if base_context:
         context_parts.append(base_context)
 
     # 2. Requirements document
-    prd_content = read_file_content(repo_root, f"{task_dir}/prd.md")
-    if prd_content:
-        context_parts.append(f"=== {task_dir}/prd.md (Requirements) ===\n{prd_content}")
+    prd_block = _materialize_artifact(
+        repo_root,
+        f"{task_dir}/prd.md",
+        f"{task_dir}/prd.md (Requirements)",
+        "Requirements document",
+        limits,
+        budget,
+    )
+    if prd_block:
+        context_parts.append(prd_block)
 
     # 3. Technical design for complex tasks
-    design_content = read_file_content(repo_root, f"{task_dir}/design.md")
-    if design_content:
-        context_parts.append(
-            f"=== {task_dir}/design.md (Technical Design) ===\n{design_content}"
-        )
+    design_block = _materialize_artifact(
+        repo_root,
+        f"{task_dir}/design.md",
+        f"{task_dir}/design.md (Technical Design)",
+        "Technical design document",
+        limits,
+        budget,
+    )
+    if design_block:
+        context_parts.append(design_block)
 
     # 4. Execution plan for complex tasks
-    implement_plan_content = read_file_content(repo_root, f"{task_dir}/implement.md")
-    if implement_plan_content:
-        context_parts.append(
-            f"=== {task_dir}/implement.md (Execution Plan) ===\n{implement_plan_content}"
-        )
+    implement_plan_block = _materialize_artifact(
+        repo_root,
+        f"{task_dir}/implement.md",
+        f"{task_dir}/implement.md (Execution Plan)",
+        "Execution plan document",
+        limits,
+        budget,
+    )
+    if implement_plan_block:
+        context_parts.append(implement_plan_block)
 
     return "\n\n".join(context_parts)
 
@@ -315,26 +593,46 @@ def get_check_context(repo_root: str, task_dir: str) -> str:
     """
     Context for Check Agent: check.jsonl + task artifacts.
     """
+    limits = _get_limits(repo_root)
+    budget = _Budget(limits["max_total_bytes"])
     context_parts = []
 
-    for file_path, content in read_jsonl_entries(repo_root, f"{task_dir}/check.jsonl"):
-        context_parts.append(f"=== {file_path} ===\n{content}")
+    base_context = get_agent_context(repo_root, task_dir, "check", limits, budget)
+    if base_context:
+        context_parts.append(base_context)
 
-    prd_content = read_file_content(repo_root, f"{task_dir}/prd.md")
-    if prd_content:
-        context_parts.append(f"=== {task_dir}/prd.md (Requirements) ===\n{prd_content}")
+    prd_block = _materialize_artifact(
+        repo_root,
+        f"{task_dir}/prd.md",
+        f"{task_dir}/prd.md (Requirements)",
+        "Requirements document",
+        limits,
+        budget,
+    )
+    if prd_block:
+        context_parts.append(prd_block)
 
-    design_content = read_file_content(repo_root, f"{task_dir}/design.md")
-    if design_content:
-        context_parts.append(
-            f"=== {task_dir}/design.md (Technical Design) ===\n{design_content}"
-        )
+    design_block = _materialize_artifact(
+        repo_root,
+        f"{task_dir}/design.md",
+        f"{task_dir}/design.md (Technical Design)",
+        "Technical design document",
+        limits,
+        budget,
+    )
+    if design_block:
+        context_parts.append(design_block)
 
-    implement_plan_content = read_file_content(repo_root, f"{task_dir}/implement.md")
-    if implement_plan_content:
-        context_parts.append(
-            f"=== {task_dir}/implement.md (Execution Plan) ===\n{implement_plan_content}"
-        )
+    implement_plan_block = _materialize_artifact(
+        repo_root,
+        f"{task_dir}/implement.md",
+        f"{task_dir}/implement.md (Execution Plan)",
+        "Execution plan document",
+        limits,
+        budget,
+    )
+    if implement_plan_block:
+        context_parts.append(implement_plan_block)
 
     return "\n\n".join(context_parts)
 
@@ -574,6 +872,105 @@ def _string_value(value: Any) -> str:
     return ""
 
 
+def _hook_event_name(input_data: dict) -> str:
+    """Return a hook event name from the documented snake/camel-case fields."""
+    return _string_value(
+        input_data.get("hook_event_name") or input_data.get("hookEventName")
+    )
+
+
+def _codex_subagent_type(input_data: dict) -> str:
+    """Return a Trellis Codex agent type only for a native start event."""
+    if _hook_event_name(input_data) != "SubagentStart":
+        return ""
+    agent_type = _string_value(
+        input_data.get("agent_type") or input_data.get("agentType")
+    )
+    return agent_type if agent_type in AGENTS_ALL else ""
+
+
+def build_codex_subagent_context(
+    subagent_type: str,
+    task_dir: str,
+    context: str,
+) -> str:
+    """Build developer context for a native, already-dispatched Codex role."""
+    role = subagent_type.removeprefix("trellis-")
+    return f"""<!-- trellis-hook-injected -->
+# Trellis Native {role.title()} Subagent
+
+You are the dispatched `{subagent_type}` role for this task. Perform that role
+directly; do not follow main-session dispatch or wait instructions, and do not
+spawn another Trellis subagent.
+
+Active task: {task_dir}
+
+## Curated Context
+
+{context}"""
+
+
+def _handle_codex_subagent_start(input_data: dict) -> None:
+    """Emit Codex developer context for a recognised native Trellis subagent.
+
+    The event supplies the parent session id. Disabling the generic
+    single-session fallback is essential here: native starts must never borrow
+    a task from another Codex window when that parent id is absent or stale.
+    """
+    subagent_type = _codex_subagent_type(input_data)
+    parent_session_id = _string_value(input_data.get("session_id"))
+    if not subagent_type or not parent_session_id:
+        return
+
+    # Payload cwd first, then our own — some hosts (CodeBuddy IDE 4.10.4)
+    # report "/" for every hook event. See inject-workflow-state.py.
+    repo_root = None
+    for candidate in (_string_value(input_data.get("cwd")), os.getcwd()):
+        if not candidate:
+            continue
+        repo_root = find_repo_root(candidate)
+        if repo_root:
+            break
+    if not repo_root:
+        return
+
+    task_dir = get_current_task(
+        repo_root,
+        {"session_id": parent_session_id},
+        platform="codex",
+        allow_single_session_fallback=False,
+        allow_environment_context=False,
+        require_existing=True,
+    )
+    if not task_dir:
+        return
+
+    if subagent_type in AGENTS_REQUIRE_TASK:
+        task_dir_full = Path(repo_root) / task_dir
+        if not task_dir_full.is_dir():
+            return
+
+    if subagent_type == AGENT_IMPLEMENT:
+        context = get_implement_context(repo_root, task_dir)
+    elif subagent_type == AGENT_CHECK:
+        context = get_check_context(repo_root, task_dir)
+    else:
+        context = get_research_context(repo_root, task_dir)
+
+    if not context:
+        return
+
+    output = {
+        "hookSpecificOutput": {
+            "hookEventName": "SubagentStart",
+            "additionalContext": build_codex_subagent_context(
+                subagent_type, task_dir, context
+            ),
+        }
+    }
+    print(json.dumps(output, ensure_ascii=False))
+
+
 def _extract_subagent_name(value: Any) -> str:
     """Extract a sub-agent name from common platform encodings.
 
@@ -634,6 +1031,8 @@ def _extract_subagent_type(tool_input: dict) -> str:
         "subagentType",
         "subagent_type_name",
         "subagentTypeName",
+        "subagent_name",
+        "subagentName",
         "agent_type",
         "agentType",
         "name",
@@ -649,13 +1048,19 @@ def _parse_hook_input(input_data: dict) -> tuple[str, str, dict]:
 
     Returns (subagent_type, original_prompt, tool_input).
     Handles:
-    - Claude Code / Qoder / CodeBuddy / Droid: tool_name=Task|Agent, tool_input.subagent_type
+    - Claude Code / Qoder / Droid: tool_name=Task|Agent, tool_input.subagent_type
+    - CodeBuddy: tool_name=task (IDE) or Task (CLI), tool_input.subagent_name
     - Cursor: tool_name=Task|Subagent, tool_input.subagent_type
     - Copilot CLI: toolName=task (camelCase key, lowercase value)
+    - ZCode: toolName=Agent, toolInput/tool_input.subagent_type
     - Gemini CLI: tool_name IS the agent name (BeforeTool matcher already filtered)
     - Kiro: agentSpawn hook, agent_name field at top level
     """
     tool_input = input_data.get("tool_input", {})
+    if not isinstance(tool_input, dict):
+        tool_input = input_data.get("toolInput", {})
+    if not isinstance(tool_input, dict):
+        tool_input = {}
 
     # Standard format: Task/Agent tool with subagent_type
     tool_name = input_data.get("tool_name", "") or input_data.get("toolName", "")
@@ -692,6 +1097,17 @@ def main():
         input_data = json.load(sys.stdin)
     except json.JSONDecodeError:
         sys.exit(0)
+    if not isinstance(input_data, dict):
+        sys.exit(0)
+
+    if _hook_event_name(input_data) == "SubagentStart":
+        try:
+            _handle_codex_subagent_start(input_data)
+        except Exception:
+            # A native context hook must never prevent Codex from spawning the
+            # requested child when its runtime state is unavailable or stale.
+            pass
+        sys.exit(0)
 
     subagent_type, original_prompt, tool_input = _parse_hook_input(input_data)
     cwd = input_data.get("cwd", os.getcwd())
@@ -706,14 +1122,34 @@ def main():
         sys.exit(0)
 
     # Get current task directory (research doesn't require it)
-    task_dir = get_current_task(repo_root, input_data)
+    task_dir = get_current_task(
+        repo_root,
+        input_data,
+        allow_single_session_fallback=True,
+    )
 
     # implement/check need task directory
     if subagent_type in AGENTS_REQUIRE_TASK:
         if not task_dir:
             sys.exit(0)
-        # Check if task directory exists
-        task_dir_full = os.path.join(repo_root, task_dir)
+        # Contain the pointer before reading anything through it. `task.py` now
+        # refuses to store a ref that leaves the repo, but a session file
+        # written before that fix can still hold one, and `trellis update`
+        # does not rewrite session files — so a poisoned pointer outlives the
+        # upgrade that closed the writer. This is the last hop before the
+        # task's prd.md/design.md reach the model prompt, so it checks again.
+        try:
+            root_real = os.path.realpath(repo_root)
+            # `.trellis` may itself be a symlink into a store outside the
+            # repo (#567); its real location is a second legitimate base.
+            workflow_real = os.path.realpath(os.path.join(repo_root, ".trellis"))
+            task_dir_full = os.path.realpath(os.path.join(repo_root, task_dir))
+            if not _real_path_contained(root_real, task_dir_full) and not (
+                _real_path_contained(workflow_real, task_dir_full)
+            ):
+                sys.exit(0)
+        except OSError:
+            sys.exit(0)
         if not os.path.exists(task_dir_full):
             sys.exit(0)
 
@@ -745,23 +1181,32 @@ def main():
     if not context:
         sys.exit(0)
 
-    # Return updated input — use a multi-format output that covers all platforms.
-    # Most platforms ignore unrecognized fields, so we include multiple formats.
-    # The platform picks whichever fields it understands.
+    # Return updated input. Most platforms ignore unrecognized fields, so we
+    # include multiple formats. ZCode is stricter; live probing confirmed the
+    # nested Claude-compatible shape below reaches the sub-agent prompt.
     updated = {**tool_input, "prompt": new_prompt}
-    output = {
-        # Claude Code / Qoder / CodeBuddy / Droid format
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow",
+    if _detect_platform(input_data) == "zcode":
+        output = {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "updatedInput": updated,
+            }
+        }
+    else:
+        output = {
+            # Claude Code / Qoder / CodeBuddy / Droid format
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "updatedInput": updated,
+            },
+            # Cursor format
+            "permission": "allow",
+            "updated_input": updated,
+            # Gemini format
             "updatedInput": updated,
-        },
-        # Cursor format
-        "permission": "allow",
-        "updated_input": updated,
-        # Gemini format
-        "updatedInput": updated,
-    }
+        }
 
     print(json.dumps(output, ensure_ascii=False))
     sys.exit(0)

@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Cursor beforeShellExecution hook: bridge conversation identity to task.py.
+"""Pre-shell hook: bridge the host's session identity into task.py.
 
-Cursor's shell command environment does not inherit SessionStart data. This
-hook writes a short-lived runtime ticket before Cursor runs a shell command
-that calls `task.py start/current/finish`. The task script then consumes the
-ticket only when it has no native session environment.
+No researched platform exports a session id into its shell tool's child
+process, but every hook-capable one puts that id on hook stdin. So the hook
+that fires just before a shell command writes a short-lived runtime ticket
+whenever the pending command calls `task.py start/current/finish`, and the
+task script consumes it when it has no native session environment.
+
+Registered on whichever pre-shell event the host provides — Cursor's
+`beforeShellExecution`, Claude-shaped `PreToolUse`, Gemini's `BeforeTool` —
+which is why the only thing here that knows about payload variation is
+`_pending_shell_command`.
 """
 from __future__ import annotations
 
@@ -17,10 +23,18 @@ import time
 from pathlib import Path
 from typing import Any
 
+# Hook hosts send UTF-8 JSON regardless of the process locale.
+_stdin_reconfigure = getattr(sys.stdin, "reconfigure", None)
+if callable(_stdin_reconfigure):
+    try:
+        _stdin_reconfigure(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        pass
+
 
 DIR_WORKFLOW = ".trellis"
 DIR_RUNTIME = ".runtime"
-DIR_CURSOR_SHELL = "cursor-shell"
+DIR_SHELL_TICKETS = "shell-tickets"
 SESSION_SUBCOMMANDS = {"start", "current", "finish"}
 TICKET_TTL_SECONDS = 30
 CONTEXT_IDENTITY_KEYS = (
@@ -34,12 +48,51 @@ CONTEXT_IDENTITY_KEYS = (
     "transcriptPath",
     "transcript",
 )
+# Tool-call payloads nest the command one level down; same casing spread as
+# CONTEXT_IDENTITY_KEYS above.
+TOOL_INPUT_KEYS = ("tool_input", "toolInput")
+# Answering a shell-execution event with an explicit allow is what keeps
+# Cursor from re-prompting for a command Trellis itself asked for. Tool-call
+# hosts read a different response schema, so they get no answer at all rather
+# than a key they would have to ignore.
+SHELL_EVENT_RESPONSE = {"permission": "allow"}
 
 
 def _string_value(value: Any) -> str | None:
     if isinstance(value, str):
         stripped = value.strip()
         return stripped or None
+    return None
+
+
+def _resolve_trellis_root(hook_input: dict[str, Any]) -> Path | None:
+    """Locate the project root, trying the payload cwd and then our own.
+
+    Hosts disagree about what `cwd` means. CodeBuddy IDE 4.10.4 sends `"/"` for
+    every PreToolUse event, so trusting the payload alone finds no `.trellis`
+    and the bridge silently does nothing — the hook is invoked, writes no
+    ticket, and `task.py start` degrades. Observed with a wildcard probe:
+
+        {"cwd": "/", "tool_name": "Bash", "tool_input": {"command": "ls …"}}
+
+    The hook's own cwd is reliable where the payload is not: hosts launch it
+    from the project root, which is why a relative `command` in settings.json
+    resolves at all. Try the payload first (it is right on hosts that set it,
+    and survives a host that runs hooks from elsewhere), then fall back.
+    """
+    candidates: list[Path] = []
+    payload_cwd = _string_value(hook_input.get("cwd"))
+    if payload_cwd:
+        candidates.append(Path(payload_cwd))
+    try:
+        candidates.append(Path(os.getcwd()))
+    except OSError:
+        pass
+
+    for candidate in candidates:
+        root = _find_trellis_root(candidate)
+        if root is not None:
+            return root
     return None
 
 
@@ -54,7 +107,51 @@ def _find_trellis_root(start: Path) -> Path | None:
 
 
 def _runtime_ticket_dir(root: Path) -> Path:
-    return root / DIR_WORKFLOW / DIR_RUNTIME / DIR_CURSOR_SHELL
+    return root / DIR_WORKFLOW / DIR_RUNTIME / DIR_SHELL_TICKETS
+
+
+def _pending_shell_command(hook_input: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
+    """Read the pending shell command out of either hook payload shape.
+
+    Returns the command plus the response envelope that shape expects:
+
+    - shell-execution event (Cursor `beforeShellExecution`) — the command sits
+      at the top level and the host wants a permission decision back;
+    - tool-call event (`PreToolUse`, `BeforeTool`) — the command sits under
+      `tool_input`, and the host reads a schema this hook has no opinion on.
+
+    An ordered fallback, not a platform switch: a third payload shape extends
+    the same function. Anything else yields ("", None) so main() no-ops.
+    """
+    command = _string_value(hook_input.get("command"))
+    if command:
+        return command, SHELL_EVENT_RESPONSE
+
+    for key in TOOL_INPUT_KEYS:
+        tool_input = hook_input.get(key)
+        if not isinstance(tool_input, dict):
+            continue
+        command = _string_value(tool_input.get("command"))
+        if command:
+            return command, None
+
+    return "", None
+
+
+def _host_platform_name() -> str | None:
+    """Name the host from the config directory this hook was installed into.
+
+    Every platform puts its hooks under its own dotted directory
+    (`.cursor/hooks/`, `.factory/hooks/`, …), so the deepest dotted path
+    segment identifies the host without a table of platform names here. It
+    matters because the context key must agree with the one the platform's
+    other hooks compute — a ticket keyed differently would write a session
+    file no later hook ever reads.
+    """
+    for part in reversed(Path(sys.argv[0]).parts):
+        if part.startswith(".") and part not in (".", "..") and len(part) > 1:
+            return part[1:]
+    return None
 
 
 def _load_active_task_resolver(root: Path):
@@ -110,6 +207,8 @@ def _write_ticket(
     root: Path,
     hook_input: dict[str, Any],
     context_key: str,
+    command: str,
+    platform_name: str | None,
     subcommands: list[dict[str, str]],
 ) -> None:
     now = time.time()
@@ -117,19 +216,28 @@ def _write_ticket(
     ticket_dir.mkdir(parents=True, exist_ok=True)
     _cleanup_expired_tickets(ticket_dir, now)
 
-    command = _string_value(hook_input.get("command")) or ""
     digest = hashlib.sha256(
         f"{context_key}\0{command}\0{now}".encode("utf-8"),
     ).hexdigest()[:16]
     ticket_path = ticket_dir / f"{int(now * 1000)}-{digest}.json"
 
     payload = {
-        "platform": "cursor",
+        # Debugging metadata. The consumer accepts a ticket on freshness, repo
+        # and subcommand — never on this field.
+        "platform": platform_name,
         "context_key": context_key,
         "conversation_id": _string_value(hook_input.get("conversation_id")),
         "session_id": _string_value(hook_input.get("session_id")),
         "generation_id": _string_value(hook_input.get("generation_id")),
-        "cwd": _string_value(hook_input.get("cwd")),
+        # The resolved project root, not the payload's cwd. The consumer
+        # rejects a ticket whose cwd is outside the repo, and CodeBuddy IDE
+        # 4.10.4 reports "/" for every PreToolUse event — a ticket carrying
+        # that is written correctly and then discarded on arrival. Recording
+        # the root we actually resolved keeps the containment check meaningful
+        # without trusting a field the host may not populate.
+        "cwd": str(root),
+        # Kept separately so a wrong host cwd stays visible when debugging.
+        "host_cwd": _string_value(hook_input.get("cwd")),
         "command": command,
         "subcommands": subcommands,
         "created_at_epoch": now,
@@ -152,30 +260,31 @@ def main() -> int:
     if not isinstance(hook_input, dict):
         hook_input = {}
 
-    command = _string_value(hook_input.get("command")) or ""
+    command, response = _pending_shell_command(hook_input)
     subcommands = _extract_task_subcommands(command)
     if not subcommands:
         return 0
 
-    cwd = Path(_string_value(hook_input.get("cwd")) or os.getcwd())
-    root = _find_trellis_root(cwd)
+    root = _resolve_trellis_root(hook_input)
     if root is None:
         return 0
 
     if not _has_context_identity(hook_input):
         return 0
 
+    platform_name = _host_platform_name()
     resolve_context_key = _load_active_task_resolver(root)
-    context_key = resolve_context_key(hook_input, platform="cursor")
+    context_key = resolve_context_key(hook_input, platform=platform_name)
     if not context_key:
         return 0
 
     try:
-        _write_ticket(root, hook_input, context_key, subcommands)
+        _write_ticket(root, hook_input, context_key, command, platform_name, subcommands)
     except OSError:
         return 0
 
-    print(json.dumps({"permission": "allow"}, ensure_ascii=False))
+    if response is not None:
+        print(json.dumps(response, ensure_ascii=False))
     return 0
 
 

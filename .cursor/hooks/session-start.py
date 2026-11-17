@@ -67,10 +67,40 @@ def _normalize_windows_shell_path(path_str: str) -> str:
     return path_str
 
 
-FIRST_REPLY_NOTICE = """<first-reply-notice>
-First visible reply: say once in Chinese that Trellis SessionStart context is loaded, then answer directly.
-This notice is one-shot: do not repeat it after the first assistant reply in the same session.
+_FIRST_REPLY_NOTICE_HEAD = """<first-reply-notice>
+On the first visible assistant reply in this session, briefly acknowledge that Trellis SessionStart context loaded."""
+
+_FIRST_REPLY_NOTICE_TAIL = """Choose the acknowledgment language in this order:
+1. Use the language of the user's current request (the user message that triggered this reply).
+2. If that request has no clear natural language, use an explicitly established project communication language.
+3. If neither provides a language, output the language-neutral fallback exactly: `Trellis SessionStart ✓`.
+Continue directly with the user's request after the acknowledgment.
+The acknowledgment must not alter the language used for the remainder of the response.
+This notice is one-shot: do not repeat it after the first visible assistant reply in this session.
 </first-reply-notice>"""
+
+FIRST_REPLY_NOTICE = f"{_FIRST_REPLY_NOTICE_HEAD}\n{_FIRST_REPLY_NOTICE_TAIL}"
+
+
+def _build_first_reply_notice(update_hint: str | None) -> str:
+    """First-reply notice, carrying the Trellis update reminder when there is one.
+
+    The reminder has to reach the *user*, not just the model's context — a line
+    buried in SessionStart context is exactly how the update step kept getting
+    skipped. This block is already the payload's one "say it out loud" channel,
+    so the hint rides along instead of growing a second mechanism.
+
+    With no hint the notice is byte-identical to the plain constant: no empty
+    block, no placeholder line.
+    """
+    if not update_hint:
+        return FIRST_REPLY_NOTICE
+    return (
+        f"{_FIRST_REPLY_NOTICE_HEAD}\n"
+        f"Also relay this Trellis maintenance notice on its own line in that same reply: {update_hint}\n"
+        f"{_FIRST_REPLY_NOTICE_TAIL}"
+    )
+
 
 # Force UTF-8 on stdin/stdout/stderr on Windows. Default codepage there is
 # cp936 / cp1252 / etc. — non-ASCII content (Chinese task names, prd snippets)
@@ -87,22 +117,22 @@ if sys.platform.startswith("win"):
             try:
                 _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
             except Exception:
-                pass
+                pass  # Optional Windows stream setup; keep hook startup non-fatal.
         elif hasattr(_stream, "detach"):
             try:
                 setattr(sys, _stream_name, _io.TextIOWrapper(_stream.detach(), encoding="utf-8", errors="replace"))
             except Exception:
-                pass
+                pass  # Optional Windows stream setup; keep hook startup non-fatal.
 
 
 
 def _has_curated_jsonl_entry(jsonl_path: Path) -> bool:
     """Return True iff jsonl has at least one row with a ``file`` field.
 
-    A freshly seeded jsonl only contains a ``{"_example": ...}`` row (no
-    ``file`` key) — that is NOT "ready". Readiness requires at least one
-    curated entry. Matches the contract used by hook-inject and pull-based
-    sub-agent context loaders.
+    A newly created jsonl is empty, and older tasks may still carry a
+    ``{"_example": ...}`` placeholder row (no ``file`` key) — neither is
+    "ready". Readiness requires at least one curated entry. Matches the
+    contract used by hook-inject and pull-based sub-agent context loaders.
     """
     try:
         for line in jsonl_path.read_text(encoding="utf-8").splitlines():
@@ -137,6 +167,8 @@ def should_skip_injection() -> bool:
         "GEMINI_NON_INTERACTIVE",
         "KIRO_NON_INTERACTIVE",
         "COPILOT_NON_INTERACTIVE",
+        "TRAE_NON_INTERACTIVE",
+        "ZCODE_NON_INTERACTIVE",
     ]
     return any(os.environ.get(var) == "1" for var in non_interactive_vars)
 
@@ -186,8 +218,16 @@ def _format_git_state(repo_root: Path) -> str:
 def _detect_platform(input_data: dict) -> str | None:
     if isinstance(input_data.get("cursor_version"), str):
         return "cursor"
+    # CLAUDE_PROJECT_DIR is a compatibility alias that several hosts set
+    # alongside their own variable — CodeBuddy, ZCode and Trae all do. It must
+    # therefore be checked LAST, or every one of them is detected as claude and
+    # the context key becomes `claude_<their-session-id>`. That key does not
+    # match the session file `task.py start` wrote under the host's real name,
+    # so every turn reports no_task while the pointer exists on disk.
+    # Observed on CodeBuddy IDE 4.10.4: session file `codebuddy_ae54840e….json`
+    # alongside marker `update-check-claude_ae54840e….marker`, same id.
     env_map = {
-        "CLAUDE_PROJECT_DIR": "claude",
+        "ZCODE_PROJECT_DIR": "zcode",
         "CURSOR_PROJECT_DIR": "cursor",
         "CODEBUDDY_PROJECT_DIR": "codebuddy",
         "FACTORY_PROJECT_DIR": "droid",
@@ -195,6 +235,9 @@ def _detect_platform(input_data: dict) -> str | None:
         "QODER_PROJECT_DIR": "qoder",
         "KIRO_PROJECT_DIR": "kiro",
         "COPILOT_PROJECT_DIR": "copilot",
+        "TRAE_PROJECT_DIR": "trae",
+        # Last: the shared alias, only meaningful once no vendor key matched.
+        "CLAUDE_PROJECT_DIR": "claude",
     }
     for env_name, platform in env_map.items():
         if os.environ.get(env_name):
@@ -216,6 +259,10 @@ def _detect_platform(input_data: dict) -> str | None:
         return "droid"
     if ".kiro" in script_parts:
         return "kiro"
+    if ".trae" in script_parts:
+        return "trae"
+    if ".zcode" in script_parts:
+        return "zcode"
     return None
 
 
@@ -235,17 +282,71 @@ def _persist_context_key_for_bash(context_key: str | None) -> None:
     variables are then available to Bash tools in the same conversation. Without
     this bridge, `task.py start` has hook stdin during SessionStart but no
     session identity when the AI later runs it as a normal shell command.
+
+    CLAUDE_ENV_FILE is user-owned (conda init, proxy settings, ...) and the host
+    shell sources it for every command, so an unconditional append grows it
+    without bound — one line per SessionStart forever. Skip the write when the
+    *last* existing TRELLIS_CONTEXT_ID export already assigns this value. Last
+    wins in shell, so only the final assignment describes the effective state:
+    "the value appears somewhere in the file" would wrongly skip after a switch
+    A -> B -> A, leaving the shell on B.
     """
     if not context_key:
         return
     env_file = os.environ.get("CLAUDE_ENV_FILE")
     if not env_file:
         return
+    export_line = f"export TRELLIS_CONTEXT_ID={shlex.quote(context_key)}"
     try:
+        if _last_context_key_export(env_file) == export_line:
+            return
         with open(env_file, "a", encoding="utf-8") as handle:
-            handle.write(f"export TRELLIS_CONTEXT_ID={shlex.quote(context_key)}\n")
+            handle.write(f"{export_line}\n")
     except OSError:
-        pass
+        pass  # Optional shell bridge; keep session-start non-fatal.
+
+
+def _last_context_key_export(env_file: str) -> str | None:
+    """Return the last `export TRELLIS_CONTEXT_ID=` line in env_file, if any.
+
+    A missing file means "no previous export" (the caller then creates it).
+    `errors="replace"` matters: a user env file with non-UTF-8 bytes would
+    otherwise raise UnicodeDecodeError, which is a ValueError — not an OSError —
+    and would escape the caller's non-fatal guard.
+    """
+    last_export = None
+    try:
+        with open(env_file, "r", encoding="utf-8", errors="replace") as handle:
+            for raw_line in handle:
+                stripped = raw_line.strip()
+                if stripped.startswith("export TRELLIS_CONTEXT_ID="):
+                    last_export = stripped
+    except FileNotFoundError:
+        return None
+    return last_export
+
+
+def _resolve_update_hint(trellis_dir: Path, context_key: str | None) -> str | None:
+    """Ask common.session_context whether a Trellis update is available.
+
+    Throttling lives there: the first SessionStart of a session writes a marker
+    under `.trellis/.runtime/`, and later ones (clear, compact) return without
+    spawning `trellis --version`. The resolved `context_key` is passed through so
+    the marker is scoped to the same session identity the rest of the hook uses,
+    rather than session_context's environment-only fallback.
+
+    Best-effort: a missing scripts dir, an import error, or anything raised while
+    probing versions leaves the rest of the payload untouched.
+    """
+    scripts_dir = trellis_dir / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    try:
+        from common.session_context import get_update_hint  # type: ignore[import-not-found]
+
+        return get_update_hint(trellis_dir.parent, context_key)
+    except Exception:
+        return None  # Optional reminder; keep session-start non-fatal.
 
 
 def _resolve_active_task(trellis_dir: Path, input_data: dict):
@@ -347,7 +448,7 @@ def _get_task_status(trellis_dir: Path, input_data: dict) -> str:
         try:
             task_data = json.loads(task_json_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, PermissionError):
-            pass
+            pass  # Optional task metadata; fall back to generic status.
 
     task_title = task_data.get("title", task_ref)
     task_status = task_data.get("status", "unknown")
@@ -449,7 +550,7 @@ def _load_trellis_config(trellis_dir: Path, input_data: dict) -> tuple:
                         if isinstance(tp, str) and tp:
                             task_pkg = tp
                 except (json.JSONDecodeError, OSError):
-                    pass
+                    pass  # Optional package metadata; fall back to default scope.
 
         default_pkg = get_default_package(repo_root)
         return is_mono, packages, scope, task_pkg, default_pkg
@@ -626,7 +727,7 @@ def _build_compact_current_state(
                 if isinstance(data, dict):
                     status = str(data.get("status") or "unknown")
             except (json.JSONDecodeError, OSError):
-                pass
+                pass  # Optional task metadata; fall back to generic status.
         lines.append(f"Current task: {_repo_relative(repo_root, task_dir)}; status={status}.")
     else:
         lines.append("Current task: none.")
@@ -638,7 +739,7 @@ def _build_compact_current_state(
                 f"Active tasks: {task_count} total. Use `python3 ./.trellis/scripts/task.py list --mine` only if needed."
             )
         except Exception:
-            pass
+            pass  # Optional task summary; keep compact state available.
 
     if get_active_journal_file and count_lines:
         journal = get_active_journal_file(repo_root)
@@ -739,6 +840,8 @@ def main():
         "GEMINI_PROJECT_DIR",
         "KIRO_PROJECT_DIR",
         "COPILOT_PROJECT_DIR",
+        "TRAE_PROJECT_DIR",
+        "ZCODE_PROJECT_DIR",
     ]
     project_dir = None
     for var in project_dir_env_vars:
@@ -769,7 +872,7 @@ Trellis compact SessionStart context. Use it to orient the session; load details
 </session-context>
 
 """)
-    output.write(FIRST_REPLY_NOTICE)
+    output.write(_build_first_reply_notice(_resolve_update_hint(trellis_dir, context_key)))
     output.write("\n\n")
 
     # Legacy migration warning
@@ -813,15 +916,30 @@ Context loaded. Follow <task-status>. Load workflow/spec/task details only when 
 </ready>""")
 
     context_text = output.getvalue()
-    result = {
-        # Claude Code / Qoder / CodeBuddy / Droid / Gemini / Copilot format
+
+    # Kiro (CLI trellis agent agentSpawn) adds a hook's stdout directly to the
+    # conversation context — no JSON envelope. Emit the bare overview text.
+    # Conditionally isolated: all other platforms keep the JSON path below.
+    if _detect_platform(hook_input) == "kiro":
+        print(context_text, flush=True)
+        return
+
+    platform = _detect_platform(hook_input)
+    result: dict[str, object] = {
+        # Claude Code / Qoder / CodeBuddy / Droid / Gemini / Copilot / Trae /
+        # ZCode format.
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
             "additionalContext": context_text,
         },
-        # Cursor sessionStart format (top-level snake_case per Cursor docs)
-        "additional_context": context_text,
     }
+    # Cursor sessionStart format (top-level snake_case per Cursor docs).
+    # ZCode reads BOTH `hookSpecificOutput.additionalContext` and top-level
+    # `additional_context` without deduplication, so emitting both keys would
+    # duplicate the context in the conversation. Keep the previous shared output
+    # shape for every other platform.
+    if platform != "zcode":
+        result["additional_context"] = context_text
 
     # Output JSON - stdout is already configured for UTF-8
     print(json.dumps(result, ensure_ascii=False), flush=True)

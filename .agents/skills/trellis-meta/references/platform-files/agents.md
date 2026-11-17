@@ -32,10 +32,13 @@ Agent files should not become generic chat prompts. They should define input sou
 | CodeBuddy | `.codebuddy/agents/trellis-*.md` |
 | Factory Droid | `.factory/droids/trellis-*.md` |
 | Pi Agent | `.pi/agents/trellis-*.md` |
+| Reasonix | `.reasonix/skills/trellis-*/SKILL.md` (subagent frontmatter) |
+| ZCode | `.zcode/agents/trellis-*.md` |
+| Kimi Code | `.kimi-code/agents/trellis-*.md` (custom sub-agents; the same prompts also ship as `.kimi-code/skills/trellis-*/SKILL.md`) |
 
 GitHub Copilot agent/prompt support is provided by a combination of directories such as `.github/agents/`, `.github/prompts/`, and `.github/skills/`; inspect the files actually generated in the user project.
 
-Main-session workflow platforms such as Kilo, Antigravity, and Windsurf may not have Trellis sub-agent files. They usually rely on workflows/skills to guide the main session.
+Main-session workflow platforms such as Kilo, Antigravity, and Devin may not have Trellis sub-agent files. They usually rely on workflows/skills to guide the main session.
 
 ## Two Context Loading Modes
 
